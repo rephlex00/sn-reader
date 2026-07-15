@@ -1,0 +1,60 @@
+Supernote Reader
+Copyright 2026 rephlex00
+
+This product includes software developed by third parties, listed below.
+
+--------------------------------------------------------------------------------
+jsoup — MIT License
+https://jsoup.org/
+Copyright (c) 2009-2026 Jonathan Hedley
+
+Used to parse EPUB container, package (OPF), navigation, and chapter documents.
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+IMPORTANT — PLANNED NON-FREE DEPENDENCY: junrar (UnRAR license)
+--------------------------------------------------------------------------------
+
+CBR (RAR-compressed comic) support is a stated requirement of this project. The
+only practical RAR reader for the JVM is junrar, which is distributed under
+Alexander Roshal's UnRAR license — NOT a permissive or OSI-approved license.
+
+What that means, stated plainly:
+
+  * Redistribution inside other software IS permitted. Shipping junrar in this
+    app's APK is legal.
+
+  * The license carries a FIELD-OF-USE RESTRICTION: the sources may not be used
+    to re-create the RAR compression algorithm.
+
+  * Because of that restriction, Debian and Fedora classify UnRAR-licensed code
+    as NON-FREE, and F-Droid's main repository will not accept a binary that
+    contains it.
+
+  * The restriction is also incompatible with the GPL, which forbids adding
+    restrictions beyond its own. This project is Apache-2.0 licensed, which does
+    not have that conflict.
+
+Consequences you should understand before depending on this project:
+
+  * The Apache-2.0 license above covers THIS project's own source code. It does
+    NOT extend to junrar, which remains under its own terms.
+
+  * A build that includes CBR support is therefore not composed entirely of free
+    software, and cannot be redistributed as if it were.
+
+  * If you need a fully-free build, omit CBR support. CBZ (ZIP-compressed comic)
+    support requires no third-party dependency at all — it uses java.util.zip
+    from the platform — and is unaffected by any of the above.
+
+This dependency is not yet present in the source tree. It arrives with comics
+support. This notice is written ahead of it deliberately: the decision was made
+with the trade-off understood rather than discovered later, and it should be
+equally visible to anyone who packages, forks, or redistributes this project.
+
+See docs/superpowers/specs/2026-07-15-supernote-reader-design.md, section
+"Licensing", for the full reasoning.
+--------------------------------------------------------------------------------
+
+Bundled fonts, when added, will be licensed under the SIL Open Font License
+(OFL) and listed here individually at that time.
