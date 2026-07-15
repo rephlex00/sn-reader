@@ -66,3 +66,28 @@ fun standardEpub(file: File): ZipResourceSource = buildEpub(file) {
 </ol></nav></body></html>""")
     entry("OEBPS/images/cover.jpg", "not-really-a-jpeg")
 }
+
+/**
+ * A well-formed EPUB with [chapterCount] chapters, all listed in the spine — used by
+ * cache-capacity tests that need more spine entries than [standardEpub]'s two.
+ */
+fun multiChapterEpub(file: File, chapterCount: Int): ZipResourceSource = buildEpub(file) {
+    entry("META-INF/container.xml", CONTAINER_XML)
+    val items = (0 until chapterCount).joinToString("\n") { i ->
+        """<item id="ch$i" href="ch$i.xhtml" media-type="application/xhtml+xml"/>"""
+    }
+    val itemrefs = (0 until chapterCount).joinToString("\n") { i -> """<itemref idref="ch$i"/>""" }
+    entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Multi</dc:title></metadata>
+  <manifest>
+$items
+  </manifest>
+  <spine>
+$itemrefs
+  </spine>
+</package>""")
+    for (i in 0 until chapterCount) {
+        entry("OEBPS/ch$i.xhtml", "<html><body><p>Chapter $i content.</p></body></html>")
+    }
+}
