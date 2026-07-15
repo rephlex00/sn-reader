@@ -262,6 +262,44 @@ class XhtmlBlockParserTest {
         assertThat((blocks.single() as Block.Quote).text.text).isEqualTo("Quoted text.")
     }
 
+    // --- Wave 2, finding 1: blockquote must walk ALL children in document order, not just p/div ---
+
+    @Test
+    fun `blockquote preserves lead text before a paragraph child`() {
+        val blocks = parse("<blockquote>lead text<p>A</p></blockquote>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Quote).text.text).isEqualTo("lead text")
+        assertThat((blocks[1] as Block.Quote).text.text).isEqualTo("A")
+    }
+
+    @Test
+    fun `blockquote preserves a heading child instead of dropping it`() {
+        val blocks = parse("<blockquote><h2>T</h2><p>A</p></blockquote>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Quote).text.text).isEqualTo("T")
+        assertThat((blocks[1] as Block.Quote).text.text).isEqualTo("A")
+    }
+
+    @Test
+    fun `blockquote preserves an image sibling instead of dropping it`() {
+        val blocks = parse("""<blockquote><p>A</p><img src="x.png"/></blockquote>""")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Quote).text.text).isEqualTo("A")
+        assertThat((blocks[1] as Block.Image).href).isEqualTo("OEBPS/text/x.png")
+    }
+
+    @Test
+    fun `blockquote recurses into a nested div so its paragraphs stay separate`() {
+        val blocks = parse("<blockquote><div><p>A</p><p>B</p></div></blockquote>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Quote).text.text).isEqualTo("A")
+        assertThat((blocks[1] as Block.Quote).text.text).isEqualTo("B")
+    }
+
     // --- Finding 5: bare text directly inside a container must not be dropped ---
 
     @Test
@@ -279,6 +317,25 @@ class XhtmlBlockParserTest {
         assertThat(blocks).hasSize(2)
         assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("x")
         assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("tail text")
+    }
+
+    // --- Wave 2, finding 2: bare text directly inside <body> must not be dropped ---
+
+    @Test
+    fun `bare text directly inside body becomes a paragraph`() {
+        val blocks = parser.parse("<html><body>Bare body text</body></html>", "OEBPS/text/ch1.xhtml")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Paragraph).text.text).isEqualTo("Bare body text")
+    }
+
+    @Test
+    fun `tail text directly inside body after an element is not dropped`() {
+        val blocks = parser.parse("<html><body><p>x</p>tail body text</body></html>", "OEBPS/text/ch1.xhtml")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("x")
+        assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("tail body text")
     }
 
     @Test
@@ -319,5 +376,54 @@ class XhtmlBlockParserTest {
     fun `image whose resolved href collapses to blank is silently dropped`() {
         val blocks = parse("""<img src=".."/>""", chapterPath = "ch1.xhtml")
         assertThat(blocks).isEmpty()
+    }
+
+    // --- Wave 2, minor 4: nested styles across a flush, the hardest shape the style stack supports ---
+
+    @Test
+    fun `nested styles survive an image flush in the middle of the innermost style`() {
+        val blocks = parse("""<p><b>a<i>b<img src="x.png"/>c</i>d</b></p>""")
+
+        assertThat(blocks).hasSize(3)
+        val before = (blocks[0] as Block.Paragraph).text
+        assertThat(before.text).isEqualTo("ab")
+        assertThat(before.spans).containsExactly(
+            StyleSpan(0, 2, InlineStyle.BOLD),
+            StyleSpan(1, 2, InlineStyle.ITALIC),
+        )
+
+        assertThat(blocks[1]).isInstanceOf(Block.Image::class.java)
+
+        val after = (blocks[2] as Block.Paragraph).text
+        assertThat(after.text).isEqualTo("cd")
+        assertThat(after.spans).containsExactly(
+            StyleSpan(0, 1, InlineStyle.ITALIC),
+            StyleSpan(0, 2, InlineStyle.BOLD),
+        )
+    }
+
+    // --- Wave 2, minor 5: the `leading != 0` shift arm of build(), untested with an actual span ---
+
+    @Test
+    fun `a leading line break shifts a later span's offsets`() {
+        val blocks = parse("<p><br/>Hi <b>bold</b></p>")
+        val text = (blocks.single() as Block.Paragraph).text
+
+        assertThat(text.text).isEqualTo("Hi bold")
+        assertThat(text.spans).containsExactly(StyleSpan(3, 7, InlineStyle.BOLD))
+    }
+
+    // --- Wave 2, minor 6: zero-length style at a flush must not throw and must not appear ---
+
+    @Test
+    fun `a style open for zero characters at a flush produces no span for that piece`() {
+        val blocks = parse("""<p><b><img src="x.png"/>x</b></p>""")
+
+        assertThat(blocks).hasSize(2)
+        assertThat(blocks[0]).isInstanceOf(Block.Image::class.java)
+
+        val after = (blocks[1] as Block.Paragraph).text
+        assertThat(after.text).isEqualTo("x")
+        assertThat(after.spans).containsExactly(StyleSpan(0, 1, InlineStyle.BOLD))
     }
 }

@@ -9,9 +9,6 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
 
-/** Block-level tags that, as direct children of a `blockquote`, make it split per-child. */
-private val BLOCKQUOTE_CHILD_TAGS = setOf("p", "div")
-
 /**
  * Reduces chapter XHTML to the [Block] whitelist. Publisher CSS, embedded fonts and
  * every unlisted element are discarded — the reader's own typography is applied later,
@@ -25,7 +22,11 @@ class XhtmlBlockParser {
     fun parse(xhtml: String, chapterPath: String): List<Block> {
         val body = Jsoup.parse(xhtml).body()
         val out = mutableListOf<Block>()
-        body.children().forEach { visit(it, chapterPath, out) }
+        // body is itself just another container: route it through the same childNodes()
+        // walk as any other transparent container, so bare text sitting directly inside
+        // <body> (no wrapping element) isn't dropped the way children()-only iteration
+        // would drop it. See visitContainerChildren.
+        visitContainerChildren(body, chapterPath, out)
         return out
     }
 
@@ -74,39 +75,92 @@ class XhtmlBlockParser {
 
             "style", "script", "head", "title", "link", "meta" -> Unit
 
-            // Containers are transparent: keep looking for whitelisted content inside,
-            // including bare text nodes that sit directly inside the container (not
-            // wrapped in any element) rather than only its child *elements* — e.g. the
-            // "tail text" after a `<p>` inside a `<div>`.
-            else -> el.childNodes().forEach { child ->
-                when {
-                    child is Element -> visit(child, chapterPath, out)
-                    child is TextNode && child.wholeText.isNotBlank() -> {
-                        val builder = InlineBuilder()
-                        builder.appendText(child.wholeText)
-                        val text = builder.build()
-                        if (text.text.isNotBlank()) out += Block.Paragraph(text)
-                    }
+            // Containers are transparent: keep looking for whitelisted content inside.
+            else -> visitContainerChildren(el, chapterPath, out)
+        }
+    }
+
+    /**
+     * Walks [el]'s child *nodes* (not just its child *elements*) so that bare text sitting
+     * directly inside a transparent container — no wrapping element — isn't dropped, e.g.
+     * the "tail text" after a `<p>` inside a `<div>`, or the whole chapter when a chapter's
+     * `<body>` has no wrapping element at all. Shared by [dispatch]'s container branch and
+     * by [parse], since `<body>` is itself just another container: `Elements`-only iteration
+     * (`children()`) would silently drop bare text in either place the same way.
+     */
+    private fun visitContainerChildren(el: Element, chapterPath: String, out: MutableList<Block>) {
+        el.childNodes().forEach { child ->
+            when {
+                child is Element -> visit(child, chapterPath, out)
+                child is TextNode && child.wholeText.isNotBlank() -> {
+                    val builder = InlineBuilder()
+                    builder.appendText(child.wholeText)
+                    val text = builder.build()
+                    if (text.text.isNotBlank()) out += Block.Paragraph(text)
                 }
             }
         }
     }
 
     /**
-     * A blockquote wrapping block-level children (`<p>`/`<div>`) is really several
-     * quoted paragraphs, not one run of text — concatenating them loses the paragraph
-     * break between "A" and "B" in `<blockquote><p>A</p><p>B</p></blockquote>`. A
-     * blockquote with only inline content (routine short quotes) keeps the single-Quote
-     * behavior.
+     * A blockquote is walked in document order rather than filtered down to an allowlist
+     * of child tags: an allowlist makes every *other* child — lead text before the first
+     * `<p>`, a heading, an `<img>` — unreachable and silently dropped the moment any
+     * allowed child exists. Instead: bare text and inline runs (`<b>`, `<i>`, ...)
+     * accumulate into a running `Quote`; a block-level child (`<p>`, any heading) flushes
+     * that run and becomes its own `Quote`, still splitting around any `<img>` nested
+     * inside it via the normal [emitTextBlock]/[walkInline] machinery; an `<img>` flushes
+     * and becomes its own `Block.Image`; any other container (`<div>`, etc.) flushes and
+     * is recursed into with this same walk — so `<div><p>A</p><p>B</p></div>` still
+     * yields two Quotes rather than re-collapsing into one concatenated "AB".
      */
     private fun emitBlockquote(el: Element, chapterPath: String, out: MutableList<Block>) {
-        val blockChildren = el.children().filter { it.tagName().lowercase() in BLOCKQUOTE_CHILD_TAGS }
-        if (blockChildren.isNotEmpty()) {
-            blockChildren.forEach { child ->
-                emitTextBlock(child, chapterPath, out) { Block.Quote(it) }
+        val builder = InlineBuilder()
+        val flush = {
+            builder.closeOpenStyles()
+            val text = builder.build()
+            if (text.text.isNotBlank()) out += Block.Quote(text)
+            builder.reset()
+        }
+        walkBlockquote(el, chapterPath, builder, flush, out)
+        flush()
+    }
+
+    private fun walkBlockquote(
+        el: Element,
+        chapterPath: String,
+        builder: InlineBuilder,
+        flush: () -> Unit,
+        out: MutableList<Block>,
+    ) {
+        el.childNodes().forEach { node ->
+            when (node) {
+                is TextNode -> builder.appendText(node.wholeText)
+                is Element -> when (val tag = node.tagName().lowercase()) {
+                    "br" -> builder.appendLineBreak()
+                    "style", "script" -> Unit
+                    "img" -> {
+                        flush()
+                        emitImage(node, chapterPath, out)
+                    }
+                    "p", "h1", "h2", "h3", "h4", "h5", "h6" -> {
+                        flush()
+                        emitTextBlock(node, chapterPath, out) { Block.Quote(it) }
+                    }
+                    else -> {
+                        val style = inlineStyleOf(tag)
+                        if (style != null) {
+                            builder.pushStyle(style)
+                            node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out) }
+                            builder.popStyle()
+                        } else {
+                            flush()
+                            walkBlockquote(node, chapterPath, builder, flush, out)
+                        }
+                    }
+                }
+                else -> Unit
             }
-        } else {
-            emitTextBlock(el, chapterPath, out) { Block.Quote(it) }
         }
     }
 
@@ -126,10 +180,7 @@ class XhtmlBlockParser {
 
     /**
      * Walks [el]'s inline content into [factory]'s block type (Paragraph/Heading/Quote/
-     * ListItem). An `<img>` nested inside — real EPUBs routinely wrap a figure in `<p>` —
-     * is not text: it splits the surrounding run, flushing whatever text came before it
-     * as one block, emitting `Block.Image` as its own block, then resuming text
-     * accumulation from a fresh (zero-based) offset for whatever follows.
+     * ListItem), via [walkInline] — see its kdoc for how a nested `<img>` splits the run.
      */
     private fun emitTextBlock(
         el: Element,
@@ -214,8 +265,6 @@ private class InlineBuilder {
     private val sb = StringBuilder()
     private val spans = mutableListOf<StyleSpan>()
     private val openStyles = ArrayDeque<OpenStyle>()
-
-    val length: Int get() = sb.length
 
     fun appendText(raw: String) {
         for (ch in raw) {
