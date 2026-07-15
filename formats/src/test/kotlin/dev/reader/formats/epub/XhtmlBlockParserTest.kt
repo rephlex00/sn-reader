@@ -625,4 +625,133 @@ class XhtmlBlockParserTest {
         val blocks = parse("<h1>Title</h1>", CssRules.EMPTY)
         assertThat((blocks.single() as Block.Heading).level).isEqualTo(1)
     }
+
+    // --- Fix wave 1, finding 1: a CSS-emphasised block container must not collapse
+    // block structure. `blockquote { font-style: italic }` used to make the styles-first
+    // branch of walkRun treat the whole blockquote as one inline run, losing its <p>
+    // children as separate Quotes. ---
+
+    @Test
+    fun `css emphasis on a blockquote does not collapse its paragraph children`() {
+        val css = CssRules.parse("blockquote { font-style: italic }")
+        val blocks = parse("<blockquote><p>A</p><p>B</p></blockquote>", css)
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Quote).text.text).isEqualTo("A")
+        assertThat((blocks[1] as Block.Quote).text.text).isEqualTo("B")
+    }
+
+    @Test
+    fun `css emphasis on a div does not collapse its paragraph children`() {
+        val css = CssRules.parse("div { font-weight: bold }")
+        val blocks = parse("<div><p>A</p><p>B</p></div>", css)
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("A")
+        assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("B")
+    }
+
+    @Test
+    fun `css emphasis on a container with only inline content still applies as one run`() {
+        // No block-level child here (just bare text), so this container is legitimately
+        // an inline run, unlike the two cases above.
+        val css = CssRules.parse(".epigraph { font-style: italic }")
+        val blocks = parse("""<div class="epigraph">A line of verse.</div>""", css)
+
+        assertThat(blocks).hasSize(1)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.text).isEqualTo("A line of verse.")
+        assertThat(text.spans).containsExactly(StyleSpan(0, 16, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `css emphasis on a section with paragraph children does not collapse them`() {
+        val css = CssRules.parse("section { font-style: italic }")
+        val blocks = parse("<section><p>A</p><p>B</p></section>", css)
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("A")
+        assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("B")
+    }
+
+    // --- Fix wave 1, minor 6: the same InlineStyle recovered at two nested levels
+    // (tag + CSS) must not produce two identical, redundant spans. ---
+
+    @Test
+    fun `an already-open style from an ancestor is not duplicated by a redundant css rule`() {
+        val css = CssRules.parse(".italic { font-style: italic }")
+        val blocks = parse("""<p><i><span class="italic">x</span></i></p>""", css)
+        val text = (blocks.single() as Block.Paragraph).text
+
+        assertThat(text.text).isEqualTo("x")
+        assertThat(text.spans).containsExactly(StyleSpan(0, 1, InlineStyle.ITALIC))
+    }
+
+    // --- Fix wave 1, finding 2: heading inference must look through a sole text-bearing
+    // descendant chain when the <p>/<div> itself carries no size/weight signal — the real
+    // shape calibre-style EPUBs use, per The Dark Forest. ---
+
+    @Test
+    fun `a calibre-style title wrapped in a nested span is inferred as a heading`() {
+        val css = CssRules.parse(
+            ".calibre_7 { text-align: center } .calibre2 { font-size: 1.29167em }",
+        )
+        val blocks = parse(
+            """<p class="calibre_7"><a href="x"><span class="calibre2">Year 3, Crisis Era</span></a></p>""",
+            css,
+        )
+        val h = blocks.single() as Block.Heading
+        assertThat(h.level).isEqualTo(4)
+        assertThat(h.text.text).isEqualTo("Year 3, Crisis Era")
+    }
+
+    @Test
+    fun `a larger calibre-style title wrapped in a nested span infers a higher level`() {
+        val css = CssRules.parse(
+            ".calibre_2 { text-align: center } .calibre7 { font-size: 1.66667em }",
+        )
+        val blocks = parse(
+            """<p class="calibre_2"><a href="x"><span class="calibre7">THE WALLFACERS</span></a></p>""",
+            css,
+        )
+        assertThat((blocks.single() as Block.Heading).level).isEqualTo(2)
+    }
+
+    @Test
+    fun `a doubly-nested span carrying size and bold separately is still inferred as a heading`() {
+        val css = CssRules.parse(
+            ".calibre_7 { text-align: center } .calibre2 { font-size: 1.29167em } .bold { font-weight: bold }",
+        )
+        val blocks = parse(
+            """<p class="calibre_7"><a href="x"><span class="calibre2">""" +
+                """<span class="bold">PART I</span></span></a></p>""",
+            css,
+        )
+        assertThat(blocks.single()).isInstanceOf(Block.Heading::class.java)
+    }
+
+    @Test
+    fun `ordinary body prose with an inner span but no size signal is not promoted`() {
+        val css = CssRules.parse(".calibre3 { color: black }")
+        val blocks = parse(
+            """<p class="calibre_13">Ordinary prose with a <span class="calibre3">span</span> inside.</p>""",
+            css,
+        )
+        assertThat(blocks.single()).isInstanceOf(Block.Paragraph::class.java)
+    }
+
+    @Test
+    fun `a long paragraph with a large inner span is never inferred as a heading`() {
+        val css = CssRules.parse(".big { font-size: 2em }")
+        val longText = "x".repeat(200)
+        val blocks = parse("""<p><span class="big">$longText</span></p>""", css)
+        assertThat(blocks.single()).isInstanceOf(Block.Paragraph::class.java)
+    }
+
+    @Test
+    fun `a sole-child wrapper carrying no signal at all is still not promoted`() {
+        val css = CssRules.parse(".wrap { color: red }")
+        val blocks = parse("""<p><a href="x"><span class="wrap">Ordinary short link.</span></a></p>""", css)
+        assertThat(blocks.single()).isInstanceOf(Block.Paragraph::class.java)
+    }
 }

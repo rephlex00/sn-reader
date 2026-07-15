@@ -5,6 +5,7 @@ import dev.reader.engine.InlineStyle
 import dev.reader.engine.StyleSpan
 import dev.reader.engine.StyledText
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
@@ -33,8 +34,21 @@ class XhtmlBlockParser {
         chapterPath: String,
         css: CssRules = CssRules.EMPTY,
         inferHeadings: Boolean = true,
+    ): List<Block> = parse(Jsoup.parse(xhtml), chapterPath, css, inferHeadings)
+
+    /**
+     * Same as the `String` overload, but takes an already-parsed [Document] so a caller
+     * that also needs to inspect the document for something else (e.g. [EpubDocument]
+     * mining it for `<link rel="stylesheet">`/`<style>` references) doesn't pay for a
+     * second `Jsoup.parse` of the same chapter.
+     */
+    fun parse(
+        doc: Document,
+        chapterPath: String,
+        css: CssRules = CssRules.EMPTY,
+        inferHeadings: Boolean = true,
     ): List<Block> {
-        val body = Jsoup.parse(xhtml).body()
+        val body = doc.body()
         val out = mutableListOf<Block>()
         // body is itself just another container: route it through the same childNodes()
         // walk as any other transparent container, so bare text sitting directly inside
@@ -198,12 +212,29 @@ class XhtmlBlockParser {
                         }
                     }
                     else -> {
+                        // CSS emphasis is only ever taken as an inline run for elements
+                        // that are inline BY TAG, or that carry no block-level descendant
+                        // of their own — never for an arbitrary container. A publisher
+                        // stylesheet routinely puts `font-style: italic` on a bare tag
+                        // selector (`blockquote { ... }`, `div.epigraph { ... }`); treating
+                        // every such element as one inline run would flatten its <p>/
+                        // heading/list children into a single merged block, silently
+                        // losing their structure. Containers that DO qualify (a `<span>`,
+                        // or a `<div>` whose only content is text/inline elements) still
+                        // take the inline path exactly as before.
                         val styles = effectiveStyles(node, css)
+                        val emphasiseAsInlineRun = styles.isNotEmpty() &&
+                            (isInlineByTag(tag) || !containsBlockLevelDescendant(node))
                         when {
-                            styles.isNotEmpty() -> {
-                                styles.forEach { builder.pushStyle(it) }
+                            emphasiseAsInlineRun -> {
+                                // Skip pushing (and later popping) any style already open
+                                // from an ancestor — e.g. `<i><span class="italic">` — so
+                                // the same InlineStyle doesn't produce two identical,
+                                // redundant spans over the same text.
+                                val newStyles = styles.filterNot { builder.hasOpenStyle(it) }
+                                newStyles.forEach { builder.pushStyle(it) }
                                 node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
-                                styles.forEach { builder.popStyle() }
+                                newStyles.forEach { builder.popStyle() }
                             }
                             // Lists have no "Quote" equivalent, so even a flattening walk
                             // routes them through normal dispatch (see emitBlockquote's kdoc).
@@ -301,13 +332,35 @@ class XhtmlBlockParser {
                     emitImage(node, chapterPath, out)
                 }
                 else -> {
-                    val styles = effectiveStyles(node, css)
+                    // See the matching comment in walkRun: don't re-push a style an
+                    // ancestor already has open.
+                    val styles = effectiveStyles(node, css).filterNot { builder.hasOpenStyle(it) }
                     styles.forEach { builder.pushStyle(it) }
                     node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
                     styles.forEach { builder.popStyle() }
                 }
             }
         }
+    }
+
+    /**
+     * True for a tag that is inline by nature — safe to treat wholesale as one text run
+     * even when CSS gives it emphasis. Deliberately does NOT include container tags like
+     * `div`/`section`/`blockquote`/`td`: those may or may not hold block-level content,
+     * so [containsBlockLevelDescendant] decides for them instead.
+     */
+    private fun isInlineByTag(tag: String): Boolean = tag in INLINE_TAGS
+
+    /**
+     * True if [el] itself, or anything nested inside it, is one of the tags [dispatch]
+     * gives its own [Block]: a `<p>`/heading/`<blockquote>`/`<ul>`/`<ol>`/`<img>`. Used to
+     * decide whether a CSS-emphasised container is safe to flatten into one inline run
+     * (no such descendant) or must instead recurse so those children keep their own
+     * [Block] type (see the call site in [walkRun]).
+     */
+    private fun containsBlockLevelDescendant(el: Element): Boolean {
+        if (el.tagName().lowercase() in BLOCK_LEVEL_TAGS) return true
+        return el.children().any { containsBlockLevelDescendant(it) }
     }
 
     private fun inlineStyleOf(tag: String): InlineStyle? = when (tag) {
@@ -368,11 +421,16 @@ class XhtmlBlockParser {
      * relative to the body baseline, or centered text that is also bold (with no size
      * signal, that combination lands at level 3). Returns null — "no heading signal" —
      * rather than guessing, so an unusable size (see [sizeRatioFor]) never promotes.
+     *
+     * The style consulted is [effectiveHeadingDeclarations], not just [el]'s own: a
+     * calibre-style export routinely puts the actual size/weight several wrapper elements
+     * below the `<p>` (`<p class="calibre_7"><a><span class="calibre2">Title</span></a>`),
+     * with the `<p>` itself carrying only layout declarations like `text-align: center`.
      */
     private fun headingLevelFor(el: Element, text: StyledText, css: CssRules): Int? {
         if (text.text.isEmpty() || text.text.length > 120) return null
 
-        val declarations = declarationsFor(el, css)
+        val declarations = effectiveHeadingDeclarations(el, css)
         val ratio = declarations["font-size"]?.let { sizeRatioFor(it, css) }
         if (ratio != null && ratio >= 1.2f) return levelForRatio(ratio)
 
@@ -382,12 +440,54 @@ class XhtmlBlockParser {
         return null
     }
 
+    /**
+     * Merges [el]'s own resolved declarations with those of the sole text-bearing
+     * descendant chain beneath it (see [soleTextBearingChain]): descendant declarations
+     * are layered on top (inner wins on a shared property, e.g. `font-size`), the same
+     * direction real CSS inheritance would resolve it in. A property only [el] itself
+     * sets — commonly `text-align: center` on the `<p>`, with no equivalent on the
+     * wrapper chain below it — is still visible in the result even though the chain never
+     * repeats it.
+     */
+    private fun effectiveHeadingDeclarations(el: Element, css: CssRules): Map<String, String> {
+        val merged = LinkedHashMap(declarationsFor(el, css))
+        for (descendant in soleTextBearingChain(el)) {
+            merged.putAll(declarationsFor(descendant, css))
+        }
+        return merged
+    }
+
+    /**
+     * The chain of wrapper elements strictly below [el] that, between them, carry ALL of
+     * [el]'s text and nothing else - the `<a>`/`<span>` nesting calibre (and many other)
+     * EPUB exports wrap a chapter title's actual text in. Stops descending the moment a
+     * level has any text of its own directly inside it (not delegated to a single child),
+     * or doesn't have exactly one element child to descend into - a paragraph with real
+     * mixed inline content (prose plus an incidental `<span>`) never engages this at all.
+     */
+    private fun soleTextBearingChain(el: Element): List<Element> {
+        val chain = mutableListOf<Element>()
+        var current = el
+        while (true) {
+            val hasOwnText = current.childNodes().any { it is TextNode && it.wholeText.isNotBlank() }
+            if (hasOwnText) break
+            val children = current.children()
+            if (children.size != 1) break
+            current = children[0]
+            // Not `chain += current`: Element implements Iterable<Element> (over its own
+            // children), which makes `+=` ambiguous between appending current itself vs.
+            // spreading its children — .add() is unambiguous.
+            chain.add(current)
+        }
+        return chain
+    }
+
     private fun levelForRatio(ratio: Float): Int = when {
         ratio >= 2.0f -> 1
         ratio >= 1.6f -> 2
         ratio >= 1.4f -> 3
         else -> 4
-    }.coerceIn(1, 6)
+    }
 
     /**
      * Resolves a `font-size` value to a ratio relative to normal body text. `em`/`rem`,
@@ -430,6 +530,16 @@ class XhtmlBlockParser {
 
     companion object {
         private val ITALIC_KEYWORDS = setOf("italic", "oblique")
+
+        // See isInlineByTag/containsBlockLevelDescendant.
+        private val INLINE_TAGS = setOf(
+            "span", "a", "small", "sub", "sup", "font",
+            "b", "strong", "i", "em", "cite", "dfn",
+            "code", "kbd", "samp", "tt",
+        )
+        private val BLOCK_LEVEL_TAGS = setOf(
+            "p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "ul", "ol", "img",
+        )
 
         private val emOrRemRegex = Regex("^(-?\\d*\\.?\\d+)(em|rem)$")
         private val percentRegex = Regex("^(-?\\d*\\.?\\d+)%$")
@@ -489,6 +599,14 @@ private class InlineBuilder {
     fun pushStyle(style: InlineStyle) {
         openStyles.addLast(OpenStyle(style, sb.length))
     }
+
+    /**
+     * True if [style] is already open from an enclosing element — e.g. an outer `<i>`
+     * around an inner `<span class="italic">`. Callers use this to skip re-pushing (and
+     * later re-popping) a style an ancestor already contributes, so the same run doesn't
+     * get two identical, redundant spans over the same text.
+     */
+    fun hasOpenStyle(style: InlineStyle): Boolean = openStyles.any { it.style == style }
 
     /** Closes the innermost still-open style, recording its span if it covered any text. */
     fun popStyle() {

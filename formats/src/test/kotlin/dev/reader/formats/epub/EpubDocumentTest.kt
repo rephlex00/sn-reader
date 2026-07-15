@@ -1,7 +1,11 @@
 package dev.reader.formats.epub
 
+import android.graphics.Typeface
+import android.text.Spanned
+import android.text.style.StyleSpan
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.RenderConfig
+import dev.reader.formats.render.AndroidMeasuredChapter
 import dev.reader.formats.render.AndroidTextMeasurer
 import dev.reader.formats.render.SpannedChapterBuilder
 import dev.reader.formats.render.TypefaceProvider
@@ -216,6 +220,75 @@ class EpubDocumentTest {
             val e = runCatching { doc.chapter(0, config) }.exceptionOrNull()
             assertThat(e).isInstanceOf(EpubException.Malformed::class.java)
             assertThat(e).isNotInstanceOf(java.io.IOException::class.java)
+        }
+    }
+
+    // --- Fix wave 1, finding 3: nothing pinned the stylesheet-loading plumbing end to
+    // end. Every unit test above would still pass if extractStylesheetRefs matched
+    // nothing at all — this project has already shipped exactly that failure mode once. ---
+
+    @Test
+    fun `css emphasis from a linked external stylesheet survives end-to-end to the laid-out text`() {
+        val file = temp.newFile("styled.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Styled</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+            entry(
+                "OEBPS/text/ch1.xhtml",
+                """<html><head><link rel="stylesheet" href="../styles/s.css"/></head>""" +
+                    """<body><p>A <span class="italic">word</span>.</p></body></html>""",
+            )
+            entry("OEBPS/styles/s.css", ".italic { font-style: italic }")
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            val chapter = doc.chapter(0, config)
+            val text = (chapter.measured as AndroidMeasuredChapter).layout.text as Spanned
+            val italicSpans = text.getSpans(0, text.length, StyleSpan::class.java)
+                .filter { it.style == Typeface.ITALIC }
+
+            assertThat(italicSpans).isNotEmpty()
+            val span = italicSpans.first()
+            assertThat(text.subSequence(text.getSpanStart(span), text.getSpanEnd(span)).toString())
+                .isEqualTo("word")
+        }
+    }
+
+    @Test
+    fun `a chapter referencing a missing stylesheet degrades to no emphasis rather than throwing`() {
+        val file = temp.newFile("missing-css.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Missing CSS</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+            entry(
+                "OEBPS/text/ch1.xhtml",
+                """<html><head><link rel="stylesheet" href="../styles/missing.css"/></head>""" +
+                    """<body><p>A <span class="italic">word</span>.</p></body></html>""",
+            )
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            val chapter = runCatching { doc.chapter(0, config) }.getOrThrow()
+            val text = (chapter.measured as AndroidMeasuredChapter).layout.text as Spanned
+            val italicSpans = text.getSpans(0, text.length, StyleSpan::class.java)
+                .filter { it.style == Typeface.ITALIC }
+
+            assertThat(italicSpans).isEmpty()
+            assertThat(text.toString()).contains("word")
         }
     }
 }
