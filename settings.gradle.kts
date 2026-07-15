@@ -14,4 +14,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Reader"
-include(":app", ":engine", ":formats")
+include(":app", ":engine", ":formats", ":data")
