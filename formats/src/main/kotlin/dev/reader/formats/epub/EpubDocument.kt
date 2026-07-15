@@ -1,5 +1,6 @@
 package dev.reader.formats.epub
 
+import dev.reader.engine.Block
 import dev.reader.engine.BookMetadata
 import dev.reader.engine.MeasuredChapter
 import dev.reader.engine.Page
@@ -81,7 +82,7 @@ class EpubDocument private constructor(
         }
     }
 
-    private fun readBlocks(spineIndex: Int): List<dev.reader.engine.Block> {
+    private fun readBlocks(spineIndex: Int): List<Block> {
         // Unreachable by construction: EpubPackageParser.parseSpine already filters the
         // spine down to idrefs present in the manifest, so this lookup can never miss.
         // Kept as defense-in-depth, not as a live case.
