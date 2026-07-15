@@ -9,6 +9,9 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
 
+/** Block-level tags that, as direct children of a `blockquote`, make it split per-child. */
+private val BLOCKQUOTE_CHILD_TAGS = setOf("p", "div")
+
 /**
  * Reduces chapter XHTML to the [Block] whitelist. Publisher CSS, embedded fonts and
  * every unlisted element are discarded — the reader's own typography is applied later,
@@ -26,9 +29,29 @@ class XhtmlBlockParser {
         return out
     }
 
+    /**
+     * Dispatches [el] into [out], then gates that content behind a page break: a
+     * break-requesting element that ends up contributing nothing (an empty div, say)
+     * must not leave a stray `Block.PageBreak` with no content after it, and nested
+     * break-requesting containers wrapping the same content must not each add their own
+     * break. [addBlock] enforces both by refusing to stack a `PageBreak` directly on
+     * top of another one already at the tail of [out].
+     */
     private fun visit(el: Element, chapterPath: String, out: MutableList<Block>) {
-        if (requestsPageBreak(el)) out += Block.PageBreak
+        val produced = mutableListOf<Block>()
+        dispatch(el, chapterPath, produced)
+        if (produced.isEmpty()) return
 
+        if (requestsPageBreak(el)) addBlock(out, Block.PageBreak)
+        produced.forEach { addBlock(out, it) }
+    }
+
+    private fun addBlock(out: MutableList<Block>, block: Block) {
+        if (block == Block.PageBreak && out.lastOrNull() == Block.PageBreak) return
+        out += block
+    }
+
+    private fun dispatch(el: Element, chapterPath: String, out: MutableList<Block>) {
         when (el.tagName().lowercase()) {
             "p" -> emitTextBlock(el, chapterPath, out) { Block.Paragraph(it) }
 
@@ -37,7 +60,7 @@ class XhtmlBlockParser {
                 emitTextBlock(el, chapterPath, out) { Block.Heading(level, it) }
             }
 
-            "blockquote" -> emitTextBlock(el, chapterPath, out) { Block.Quote(it) }
+            "blockquote" -> emitBlockquote(el, chapterPath, out)
 
             "ul" -> listItems(el).forEach { li ->
                 emitTextBlock(li, chapterPath, out) { Block.ListItem(it, ordinal = null) }
@@ -51,8 +74,39 @@ class XhtmlBlockParser {
 
             "style", "script", "head", "title", "link", "meta" -> Unit
 
-            // Containers are transparent: keep looking for whitelisted content inside.
-            else -> el.children().forEach { visit(it, chapterPath, out) }
+            // Containers are transparent: keep looking for whitelisted content inside,
+            // including bare text nodes that sit directly inside the container (not
+            // wrapped in any element) rather than only its child *elements* — e.g. the
+            // "tail text" after a `<p>` inside a `<div>`.
+            else -> el.childNodes().forEach { child ->
+                when {
+                    child is Element -> visit(child, chapterPath, out)
+                    child is TextNode && child.wholeText.isNotBlank() -> {
+                        val builder = InlineBuilder()
+                        builder.appendText(child.wholeText)
+                        val text = builder.build()
+                        if (text.text.isNotBlank()) out += Block.Paragraph(text)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * A blockquote wrapping block-level children (`<p>`/`<div>`) is really several
+     * quoted paragraphs, not one run of text — concatenating them loses the paragraph
+     * break between "A" and "B" in `<blockquote><p>A</p><p>B</p></blockquote>`. A
+     * blockquote with only inline content (routine short quotes) keeps the single-Quote
+     * behavior.
+     */
+    private fun emitBlockquote(el: Element, chapterPath: String, out: MutableList<Block>) {
+        val blockChildren = el.children().filter { it.tagName().lowercase() in BLOCKQUOTE_CHILD_TAGS }
+        if (blockChildren.isNotEmpty()) {
+            blockChildren.forEach { child ->
+                emitTextBlock(child, chapterPath, out) { Block.Quote(it) }
+            }
+        } else {
+            emitTextBlock(el, chapterPath, out) { Block.Quote(it) }
         }
     }
 
@@ -64,8 +118,10 @@ class XhtmlBlockParser {
     }
 
     private fun emitImage(el: Element, chapterPath: String, out: MutableList<Block>) {
-        el.attr("src").takeIf { it.isNotEmpty() }
-            ?.let { out += Block.Image(resolveHref(chapterPath, it)) }
+        val src = el.attr("src")
+        if (src.isBlank()) return
+        val resolved = resolveHref(chapterPath, src)
+        if (resolved.isNotBlank()) out += Block.Image(resolved)
     }
 
     /**
@@ -83,6 +139,10 @@ class XhtmlBlockParser {
     ) {
         val builder = InlineBuilder()
         val flush = {
+            // Close every style still open at this boundary so the block being
+            // flushed keeps it (see the `<img>` case in walkInline below and
+            // InlineBuilder's kdoc), then build and reset for whatever follows.
+            builder.closeOpenStyles()
             val text = builder.build()
             if (text.text.isNotBlank()) out += factory(text)
             builder.reset()
@@ -91,6 +151,16 @@ class XhtmlBlockParser {
         flush()
     }
 
+    /**
+     * An `<img>` nested inside a text run — real EPUBs routinely wrap a figure in `<p>`,
+     * including inside a `<b>`/`<i>` run — is not text: it splits the surrounding run,
+     * flushing whatever text came before it as one block, emitting `Block.Image` as its
+     * own block, then resuming text accumulation from a fresh (zero-based) offset for
+     * whatever follows. Open inline styles are tracked on [builder] itself (not as a
+     * local `start` here) precisely so a `flush()` triggered mid-recursion — from an
+     * `<img>` nested inside this element — doesn't strand a stale offset: the builder
+     * closes and rebases them itself.
+     */
     private fun walkInline(
         node: Node,
         chapterPath: String,
@@ -110,11 +180,9 @@ class XhtmlBlockParser {
                 }
                 else -> {
                     val style = inlineStyleOf(tag)
-                    val start = builder.length
+                    if (style != null) builder.pushStyle(style)
                     node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out) }
-                    if (style != null && builder.length > start) {
-                        builder.addSpan(start, builder.length, style)
-                    }
+                    if (style != null) builder.popStyle()
                 }
             }
         }
@@ -132,10 +200,20 @@ class XhtmlBlockParser {
  * Accumulates inline text, collapsing whitespace as it appends so that recorded span
  * offsets always index the final string. Collapsing afterwards would silently shift
  * every span.
+ *
+ * Open inline styles (`<b>`, `<i>`, ...) are tracked here as a [openStyles] stack rather
+ * than as a local variable in the caller's recursion, so that an `<img>` nested inside a
+ * style run can flush the builder (resetting it to offset 0) without stranding a stale
+ * start offset in some outer stack frame: [closeOpenStyles] closes every currently-open
+ * style at the flush boundary, and [reset] rebases each one back to 0 so the run that
+ * resumes after the image keeps the style from its first character.
  */
 private class InlineBuilder {
+    private class OpenStyle(val style: InlineStyle, var start: Int)
+
     private val sb = StringBuilder()
     private val spans = mutableListOf<StyleSpan>()
+    private val openStyles = ArrayDeque<OpenStyle>()
 
     val length: Int get() = sb.length
 
@@ -152,25 +230,48 @@ private class InlineBuilder {
         sb.append('\n')
     }
 
-    fun addSpan(start: Int, end: Int, style: InlineStyle) {
-        spans += StyleSpan(start, end, style)
+    /** Marks [style] as open from the current offset; matched by a later [popStyle]. */
+    fun pushStyle(style: InlineStyle) {
+        openStyles.addLast(OpenStyle(style, sb.length))
     }
 
-    /** Clears accumulated text and spans so offsets for the next run start at zero. */
+    /** Closes the innermost still-open style, recording its span if it covered any text. */
+    fun popStyle() {
+        val open = openStyles.removeLastOrNull() ?: return
+        if (sb.length > open.start) spans += StyleSpan(open.start, sb.length, open.style)
+    }
+
+    /**
+     * Records a span for every style still open at the current offset without popping
+     * it off the stack — the enclosing element hasn't closed yet, so the style is still
+     * "in effect" for whatever text follows (on the far side of an `<img>` flush, once
+     * [reset] rebases it to 0).
+     */
+    fun closeOpenStyles() {
+        for (open in openStyles) {
+            if (sb.length > open.start) spans += StyleSpan(open.start, sb.length, open.style)
+        }
+    }
+
+    /**
+     * Clears accumulated text and spans so offsets for the next run start at zero, and
+     * rebases any still-open styles to that new zero — they resume covering text from
+     * the very first character of the resumed run.
+     */
     fun reset() {
         sb.setLength(0)
         spans.clear()
+        openStyles.forEach { it.start = 0 }
     }
 
     fun build(): StyledText {
         val trimmed = sb.toString().trim()
-        // Trimming the head would invalidate span offsets, so only trim when it cannot.
+        // Trimming the head would invalidate span offsets, so shift them by however much
+        // was trimmed there; `shift` also clamps each span's end to the trimmed length
+        // and drops any span that collapses to nothing (e.g. a trailing space before a
+        // closing `</b>` at the end of the run) rather than let it exceed the text.
         val leading = sb.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
-        return if (leading == 0) {
-            StyledText(sb.toString().trimEnd(), spans.filter { it.start < sb.length })
-        } else {
-            StyledText(trimmed, spans.mapNotNull { shift(it, leading, trimmed.length) })
-        }
+        return StyledText(trimmed, spans.mapNotNull { shift(it, leading, trimmed.length) })
     }
 
     private fun shift(span: StyleSpan, by: Int, max: Int): StyleSpan? {

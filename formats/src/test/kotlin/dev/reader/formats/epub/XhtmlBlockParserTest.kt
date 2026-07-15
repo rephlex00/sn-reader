@@ -10,8 +10,8 @@ class XhtmlBlockParserTest {
 
     private val parser = XhtmlBlockParser()
 
-    private fun parse(body: String) =
-        parser.parse("<html><body>$body</body></html>", "OEBPS/text/ch1.xhtml")
+    private fun parse(body: String, chapterPath: String = "OEBPS/text/ch1.xhtml") =
+        parser.parse("<html><body>$body</body></html>", chapterPath)
 
     @Test
     fun `extracts paragraphs`() {
@@ -144,5 +144,180 @@ class XhtmlBlockParserTest {
     @Test
     fun `empty body yields no blocks`() {
         assertThat(parse("")).isEmpty()
+    }
+
+    // --- Finding 1: trailing space inside a trailing inline element must not throw ---
+
+    @Test
+    fun `trailing space before closing bold tag does not throw`() {
+        val blocks = parse("<p><b>text </b></p>")
+        val text = (blocks.single() as Block.Paragraph).text
+
+        assertThat(text.text).isEqualTo("text")
+        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle.BOLD))
+    }
+
+    @Test
+    fun `trailing space before closing italic tag does not throw`() {
+        val blocks = parse("<p><i>The end. </i></p>")
+        val text = (blocks.single() as Block.Paragraph).text
+
+        assertThat(text.text).isEqualTo("The end.")
+        assertThat(text.spans).containsExactly(StyleSpan(0, 8, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `trailing space before closing bold tag with leading text does not throw`() {
+        val blocks = parse("<p>x<b>y </b></p>")
+        val text = (blocks.single() as Block.Paragraph).text
+
+        assertThat(text.text).isEqualTo("xy")
+        assertThat(text.spans).containsExactly(StyleSpan(1, 2, InlineStyle.BOLD))
+    }
+
+    // --- Finding 2: inline style spans must survive an <img> flush mid-run ---
+
+    @Test
+    fun `bold span survives an image splitting the run in the middle`() {
+        val blocks = parse("""<p>Hello <b>wo<img src="a.png"/>rld</b>!</p>""")
+
+        assertThat(blocks).hasSize(3)
+        val first = (blocks[0] as Block.Paragraph).text
+        assertThat(first.text).isEqualTo("Hello wo")
+        assertThat(first.spans).containsExactly(StyleSpan(6, 8, InlineStyle.BOLD))
+
+        assertThat(blocks[1]).isInstanceOf(Block.Image::class.java)
+
+        val second = (blocks[2] as Block.Paragraph).text
+        assertThat(second.text).isEqualTo("rld!")
+        assertThat(second.spans).containsExactly(StyleSpan(0, 3, InlineStyle.BOLD))
+    }
+
+    @Test
+    fun `bold span reopens at zero after an image and covers the whole resumed run`() {
+        val blocks = parse("""<p>a<b>b<img src="a.png"/>this is a long bold run</b></p>""")
+
+        assertThat(blocks).hasSize(3)
+        val after = (blocks[2] as Block.Paragraph).text
+        assertThat(after.text).isEqualTo("this is a long bold run")
+        assertThat(after.spans).containsExactly(StyleSpan(0, 23, InlineStyle.BOLD))
+    }
+
+    @Test
+    fun `text before an image becomes its own paragraph`() {
+        val blocks = parse("""<p>Before text<img src="a.png"/></p>""")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("Before text")
+        assertThat(blocks[1]).isInstanceOf(Block.Image::class.java)
+    }
+
+    @Test
+    fun `text after an image becomes its own paragraph`() {
+        val blocks = parse("""<p><img src="a.png"/>After text</p>""")
+
+        assertThat(blocks).hasSize(2)
+        assertThat(blocks[0]).isInstanceOf(Block.Image::class.java)
+        assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("After text")
+    }
+
+    @Test
+    fun `text on both sides of an image becomes two paragraphs`() {
+        val blocks = parse("""<p>Before<img src="a.png"/>After</p>""")
+
+        assertThat(blocks).hasSize(3)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("Before")
+        assertThat(blocks[1]).isInstanceOf(Block.Image::class.java)
+        assertThat((blocks[2] as Block.Paragraph).text.text).isEqualTo("After")
+    }
+
+    @Test
+    fun `multiple images in one paragraph each split the run`() {
+        val blocks = parse("""<p>A<img src="1.png"/>B<img src="2.png"/>C</p>""")
+
+        assertThat(blocks).hasSize(5)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("A")
+        assertThat((blocks[1] as Block.Image).href).isEqualTo("OEBPS/text/1.png")
+        assertThat((blocks[2] as Block.Paragraph).text.text).isEqualTo("B")
+        assertThat((blocks[3] as Block.Image).href).isEqualTo("OEBPS/text/2.png")
+        assertThat((blocks[4] as Block.Paragraph).text.text).isEqualTo("C")
+    }
+
+    // --- Finding 4: blockquote with block-level children emits one Quote per child ---
+
+    @Test
+    fun `blockquote with paragraph children emits one quote per paragraph`() {
+        val blocks = parse("<blockquote><p>A</p><p>B</p></blockquote>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Quote).text.text).isEqualTo("A")
+        assertThat((blocks[1] as Block.Quote).text.text).isEqualTo("B")
+    }
+
+    @Test
+    fun `blockquote with only inline content stays a single quote`() {
+        val blocks = parse("<blockquote>Quoted <b>text</b>.</blockquote>")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Quote).text.text).isEqualTo("Quoted text.")
+    }
+
+    // --- Finding 5: bare text directly inside a container must not be dropped ---
+
+    @Test
+    fun `bare text directly inside a container becomes a paragraph`() {
+        val blocks = parse("<div>Bare text</div>")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Paragraph).text.text).isEqualTo("Bare text")
+    }
+
+    @Test
+    fun `tail text after an element inside a container is not dropped`() {
+        val blocks = parse("<div><p>x</p>tail text</div>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("x")
+        assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("tail text")
+    }
+
+    @Test
+    fun `whitespace-only text nodes between elements do not become empty paragraphs`() {
+        val blocks = parse("<div>   <p>x</p>   </div>")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Paragraph).text.text).isEqualTo("x")
+    }
+
+    // --- Finding 6: PageBreak must not be emitted for content-free elements or duplicated ---
+
+    @Test
+    fun `no page break is emitted for an empty break-requesting element`() {
+        val blocks = parse(
+            """<div style="page-break-before:always"></div><p>After</p>""",
+        )
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Paragraph).text.text).isEqualTo("After")
+    }
+
+    @Test
+    fun `nested break-requesting containers do not duplicate the page break`() {
+        val blocks = parse(
+            """<div style="page-break-before:always">""" +
+                """<div style="page-break-before:always"><p>Text</p></div></div>""",
+        )
+
+        assertThat(blocks).hasSize(2)
+        assertThat(blocks[0]).isEqualTo(Block.PageBreak)
+        assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("Text")
+    }
+
+    // --- Finding 7: an image whose resolved href collapses to blank must not throw ---
+
+    @Test
+    fun `image whose resolved href collapses to blank is silently dropped`() {
+        val blocks = parse("""<img src=".."/>""", chapterPath = "ch1.xhtml")
+        assertThat(blocks).isEmpty()
     }
 }
