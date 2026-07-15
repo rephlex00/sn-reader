@@ -1,5 +1,24 @@
 package dev.reader.formats.epub
 
+import dev.reader.formats.ResourceSource
+import java.io.IOException
+
+/**
+ * [ResourceSource.readText] throws a raw, format-neutral [IOException] when an entry
+ * trips the size cap (a zip-bombed container/OPF/nav/NCX/etc. document). `EpubException`
+ * does not extend `IOException`, so left uncaught that would escape a `parse` call and
+ * break the documented `catch (e: EpubException)` contract. This is the format layer's
+ * job to translate — [ResourceSource] itself must stay ignorant of the EPUB exception
+ * hierarchy. Shared here (rather than duplicated per caller) because every reader of an
+ * untrusted zip entry in this package needs the identical translation.
+ */
+internal fun readTextChecked(source: ResourceSource, path: String): String? =
+    try {
+        source.readText(path)
+    } catch (e: IOException) {
+        throw EpubException.Malformed("Failed to read \"$path\": ${e.message}")
+    }
+
 /**
  * Resolves a manifest/TOC href against the file that declared it, producing a path
  * usable as a zip entry name. Parent traversal is clamped at the archive root — a

@@ -2,7 +2,6 @@ package dev.reader.formats.epub
 
 import dev.reader.engine.BookMetadata
 import dev.reader.formats.ResourceSource
-import java.io.IOException
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
@@ -109,21 +108,6 @@ class EpubPackageParser {
             .map { it.attr("Algorithm") }
             .filter { it.isNotEmpty() }
     }.getOrNull()
-
-    /**
-     * [ResourceSource.readText] throws a raw, format-neutral [IOException] when an entry
-     * trips the size cap (a zip-bombed container/OPF/encryption file). `EpubException`
-     * does not extend `IOException`, so left uncaught that would escape [parse] and break
-     * the documented `catch (e: EpubException)` contract. This is the format layer's job
-     * to translate — [ResourceSource] itself must stay ignorant of the EPUB exception
-     * hierarchy.
-     */
-    private fun readTextChecked(source: ResourceSource, path: String): String? =
-        try {
-            source.readText(path)
-        } catch (e: IOException) {
-            throw EpubException.Malformed("Failed to read \"$path\": ${e.message}")
-        }
 
     private fun parseContainer(xml: String): String {
         val rootfile = Jsoup.parse(xml, "", Parser.xmlParser()).selectFirst("rootfile")
