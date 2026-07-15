@@ -10,8 +10,12 @@ class XhtmlBlockParserTest {
 
     private val parser = XhtmlBlockParser()
 
-    private fun parse(body: String, chapterPath: String = "OEBPS/text/ch1.xhtml") =
-        parser.parse("<html><body>$body</body></html>", chapterPath)
+    private fun parse(
+        body: String,
+        css: CssRules = CssRules.EMPTY,
+        inferHeadings: Boolean = true,
+        chapterPath: String = "OEBPS/text/ch1.xhtml",
+    ) = parser.parse("<html><body>$body</body></html>", chapterPath, css, inferHeadings)
 
     @Test
     fun `extracts paragraphs`() {
@@ -468,5 +472,157 @@ class XhtmlBlockParserTest {
         assertThat((blocks[0] as Block.ListItem).text.text).isEqualTo("A")
         assertThat((blocks[0] as Block.ListItem).ordinal).isNull()
         assertThat((blocks[1] as Block.ListItem).text.text).isEqualTo("B")
+    }
+
+    // --- Plan 1b Task 2: emphasis recovered from CSS ---
+
+    @Test
+    fun `span with an italic class becomes an italic span`() {
+        val css = CssRules.parse(".italic { font-style: italic }")
+        val blocks = parse("""<p>A <span class="italic">word</span>.</p>""", css)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.text).isEqualTo("A word.")
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `numeric font-weight of 600 or more is bold`() {
+        val css = CssRules.parse(".b { font-weight: 700 }")
+        val blocks = parse("""<p>A <span class="b">word</span>.</p>""", css)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.BOLD))
+    }
+
+    @Test
+    fun `numeric font-weight below 600 is not bold`() {
+        val css = CssRules.parse(".n { font-weight: 400 }")
+        val blocks = parse("""<p>A <span class="n">word</span>.</p>""", css)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.spans).isEmpty()
+    }
+
+    @Test
+    fun `oblique is italic`() {
+        val css = CssRules.parse(".o { font-style: oblique }")
+        val blocks = parse("""<p>A <span class="o">word</span>.</p>""", css)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `inline style attribute produces emphasis`() {
+        val blocks = parse("""<p>A <span style="font-style:italic">word</span>.</p>""")
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `css emphasis and tag emphasis combine`() {
+        val css = CssRules.parse(".italic { font-style: italic }")
+        val blocks = parse("""<p><b class="italic">x</b></p>""", css)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.text).isEqualTo("x")
+        assertThat(text.spans).containsExactly(
+            StyleSpan(0, 1, InlineStyle.BOLD),
+            StyleSpan(0, 1, InlineStyle.ITALIC),
+        )
+    }
+
+    @Test
+    fun `an empty css-emphasised span produces no span`() {
+        val css = CssRules.parse(".italic { font-style: italic }")
+        val blocks = parse("""<p>A<span class="italic"></span>B</p>""", css)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.text).isEqualTo("AB")
+        assertThat(text.spans).isEmpty()
+    }
+
+    // --- Plan 1b Task 2: heading inference from CSS ---
+
+    @Test
+    fun `a short large centered paragraph is inferred as a heading`() {
+        val css = CssRules.parse(".t { font-size: 2em; text-align: center }")
+        val blocks = parse("""<p class="t">Prologue</p>""", css, inferHeadings = true)
+        val h = blocks.single() as Block.Heading
+        assertThat(h.level).isEqualTo(1)
+        assertThat(h.text.text).isEqualTo("Prologue")
+    }
+
+    @Test
+    fun `heading level follows the size ratio`() {
+        val css = CssRules.parse(
+            ".r1 { font-size: 2em } .r2 { font-size: 1.6em } " +
+                ".r3 { font-size: 1.4em } .r4 { font-size: 1.2em }",
+        )
+        assertThat((parse("""<p class="r1">A</p>""", css).single() as Block.Heading).level).isEqualTo(1)
+        assertThat((parse("""<p class="r2">A</p>""", css).single() as Block.Heading).level).isEqualTo(2)
+        assertThat((parse("""<p class="r3">A</p>""", css).single() as Block.Heading).level).isEqualTo(3)
+        assertThat((parse("""<p class="r4">A</p>""", css).single() as Block.Heading).level).isEqualTo(4)
+    }
+
+    @Test
+    fun `centered and bold with no size signal infers level 3`() {
+        val css = CssRules.parse(".t { text-align: center; font-weight: bold }")
+        val blocks = parse("""<p class="t">Title</p>""", css)
+        assertThat((blocks.single() as Block.Heading).level).isEqualTo(3)
+    }
+
+    @Test
+    fun `a long paragraph is never inferred as a heading`() {
+        val css = CssRules.parse(".t { font-size: 2em }")
+        val longText = "x".repeat(200)
+        val blocks = parse("""<p class="t">$longText</p>""", css)
+        assertThat(blocks.single()).isInstanceOf(Block.Paragraph::class.java)
+    }
+
+    @Test
+    fun `body text is never inferred as a heading`() {
+        val css = CssRules.parse(".calibre_13 { font-size: 1em }")
+        val blocks = parse("""<p class="calibre_13">Just ordinary prose.</p>""", css)
+        assertThat(blocks.single()).isInstanceOf(Block.Paragraph::class.java)
+    }
+
+    @Test
+    fun `inference is off when inferHeadings is false`() {
+        val css = CssRules.parse(".t { font-size: 2em; text-align: center }")
+        val blocks = parse("""<p class="t">Prologue</p>""", css, inferHeadings = false)
+        assertThat(blocks.single()).isInstanceOf(Block.Paragraph::class.java)
+    }
+
+    @Test
+    fun `emphasis still works when inferHeadings is false`() {
+        val css = CssRules.parse(".italic { font-style: italic }")
+        val blocks = parse("""<p>A <span class="italic">word</span>.</p>""", css, inferHeadings = false)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `an absolute px size with no baseline gives no heading signal`() {
+        val css = CssRules.parse(".t { font-size: 24px }")
+        val blocks = parse("""<p class="t">Prologue</p>""", css)
+        assertThat(blocks.single()).isInstanceOf(Block.Paragraph::class.java)
+    }
+
+    @Test
+    fun `a px size is usable relative to a body baseline`() {
+        val css = CssRules.parse("body { font-size: 12px } .t { font-size: 24px }")
+        val blocks = parse("""<p class="t">Prologue</p>""", css)
+        assertThat((blocks.single() as Block.Heading).level).isEqualTo(1)
+    }
+
+    @Test
+    fun `an inferred heading keeps its inline spans`() {
+        val css = CssRules.parse(".t { font-size: 2em } .italic { font-style: italic }")
+        val blocks = parse("""<p class="t">A <span class="italic">word</span></p>""", css)
+        val h = blocks.single() as Block.Heading
+        assertThat(h.text.text).isEqualTo("A word")
+        assertThat(h.text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `semantic h1 still wins without any css`() {
+        val blocks = parse("<h1>Title</h1>", CssRules.EMPTY)
+        assertThat((blocks.single() as Block.Heading).level).isEqualTo(1)
     }
 }

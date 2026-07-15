@@ -12,21 +12,35 @@ import org.jsoup.nodes.TextNode
 /**
  * Reduces chapter XHTML to the [Block] whitelist. Publisher CSS, embedded fonts and
  * every unlisted element are discarded — the reader's own typography is applied later,
- * from RenderConfig.
+ * from RenderConfig. The one exception is [CssRules]: it is mined for exactly two
+ * semantic signals — is a run italic/bold, and is a short paragraph actually a heading —
+ * never for presentation. See [CssRules]'s kdoc for why that split exists.
  *
  * Parsed with jsoup's lenient HTML parser rather than its XML parser: real-world EPUBs
  * are frequently not well-formed XML, and a book must open anyway.
  */
 class XhtmlBlockParser {
 
-    fun parse(xhtml: String, chapterPath: String): List<Block> {
+    /**
+     * @param css Resolves emphasis (always applied) and, when [inferHeadings] is set,
+     *   heading candidacy for CSS-encoded structure. Defaults to [CssRules.EMPTY] so tag
+     *   emphasis (`<b>`, `<i>`, ...) still works with no stylesheet at all.
+     * @param inferHeadings Whether a short, visually-heading-like `<p>`/`<div>` is
+     *   promoted to [Block.Heading]. Independent of emphasis, which is always on.
+     */
+    fun parse(
+        xhtml: String,
+        chapterPath: String,
+        css: CssRules = CssRules.EMPTY,
+        inferHeadings: Boolean = true,
+    ): List<Block> {
         val body = Jsoup.parse(xhtml).body()
         val out = mutableListOf<Block>()
         // body is itself just another container: route it through the same childNodes()
         // walk as any other transparent container, so bare text sitting directly inside
         // <body> (no wrapping element) isn't dropped the way children()-only iteration
         // would drop it. See visitContainerChildren.
-        visitContainerChildren(body, chapterPath, out)
+        visitContainerChildren(body, chapterPath, out, css, inferHeadings)
         return out
     }
 
@@ -38,9 +52,9 @@ class XhtmlBlockParser {
      * break. [addBlock] enforces both by refusing to stack a `PageBreak` directly on
      * top of another one already at the tail of [out].
      */
-    private fun visit(el: Element, chapterPath: String, out: MutableList<Block>) {
+    private fun visit(el: Element, chapterPath: String, out: MutableList<Block>, css: CssRules, inferHeadings: Boolean) {
         val produced = mutableListOf<Block>()
-        dispatch(el, chapterPath, produced)
+        dispatch(el, chapterPath, produced, css, inferHeadings)
         if (produced.isEmpty()) return
 
         if (requestsPageBreak(el)) addBlock(out, Block.PageBreak)
@@ -52,23 +66,23 @@ class XhtmlBlockParser {
         out += block
     }
 
-    private fun dispatch(el: Element, chapterPath: String, out: MutableList<Block>) {
+    private fun dispatch(el: Element, chapterPath: String, out: MutableList<Block>, css: CssRules, inferHeadings: Boolean) {
         when (el.tagName().lowercase()) {
-            "p" -> emitTextBlock(el, chapterPath, out) { Block.Paragraph(it) }
+            "p" -> emitTextBlock(el, chapterPath, out, css) { text -> paragraphOrHeading(el, text, css, inferHeadings) }
 
             "h1", "h2", "h3", "h4", "h5", "h6" -> {
                 val level = el.tagName()[1].digitToInt()
-                emitTextBlock(el, chapterPath, out) { Block.Heading(level, it) }
+                emitTextBlock(el, chapterPath, out, css) { Block.Heading(level, it) }
             }
 
-            "blockquote" -> emitBlockquote(el, chapterPath, out)
+            "blockquote" -> emitBlockquote(el, chapterPath, out, css, inferHeadings)
 
             "ul" -> listItems(el).forEach { li ->
-                emitTextBlock(li, chapterPath, out) { Block.ListItem(it, ordinal = null) }
+                emitTextBlock(li, chapterPath, out, css) { Block.ListItem(it, ordinal = null) }
             }
 
             "ol" -> listItems(el).forEachIndexed { index, li ->
-                emitTextBlock(li, chapterPath, out) { Block.ListItem(it, ordinal = index + 1) }
+                emitTextBlock(li, chapterPath, out, css) { Block.ListItem(it, ordinal = index + 1) }
             }
 
             "img" -> emitImage(el, chapterPath, out)
@@ -76,7 +90,7 @@ class XhtmlBlockParser {
             "style", "script", "head", "title", "link", "meta" -> Unit
 
             // Containers are transparent: keep looking for whitelisted content inside.
-            else -> visitContainerChildren(el, chapterPath, out)
+            else -> visitContainerChildren(el, chapterPath, out, css, inferHeadings)
         }
     }
 
@@ -93,9 +107,19 @@ class XhtmlBlockParser {
      * bare text ran before it and then re-entering the normal [visit] dispatch — this is
      * what lets a heading nested three `<div>`s deep still come out as `Block.Heading`
      * rather than degrading to plain text.
+     *
+     * The factory bound here is [el]'s own — a `<div class="chapterTitle">` that owns its
+     * text directly (no wrapping `<p>`) is just as eligible for heading promotion as a
+     * literal `<p class="...">`, per [paragraphOrHeading].
      */
-    private fun visitContainerChildren(el: Element, chapterPath: String, out: MutableList<Block>) {
-        emitRun(el, chapterPath, out, { Block.Paragraph(it) }, flatten = false)
+    private fun visitContainerChildren(
+        el: Element,
+        chapterPath: String,
+        out: MutableList<Block>,
+        css: CssRules,
+        inferHeadings: Boolean,
+    ) {
+        emitRun(el, chapterPath, out, { text -> paragraphOrHeading(el, text, css, inferHeadings) }, flatten = false, css, inferHeadings)
     }
 
     /**
@@ -113,13 +137,15 @@ class XhtmlBlockParser {
      * This shares [walkRun] with [visitContainerChildren], differing only in the `Block`
      * factory (`Block.Quote` here) and in `flatten = true`: unlike a plain container, a
      * blockquote *flattens* every text-bearing descendant — including headings — down to
-     * `Block.Quote`, rather than letting them keep their natural type. `<ul>`/`<ol>` are the
-     * one exception: routing them through normal dispatch is what they'd do anyway (there's
-     * no "Quote" equivalent of a list item), so nesting a list in a blockquote now correctly
-     * keeps `Block.ListItem` with its ordinal instead of losing it.
+     * `Block.Quote`, rather than letting them keep their natural type. Heading inference
+     * never applies here (only a `<p>`/`<div>` that would become a `Paragraph` is
+     * eligible), so the factory is fixed regardless of [inferHeadings]. `<ul>`/`<ol>` are
+     * the one exception: routing them through normal dispatch is what they'd do anyway
+     * (there's no "Quote" equivalent of a list item), so nesting a list in a blockquote
+     * now correctly keeps `Block.ListItem` with its ordinal instead of losing it.
      */
-    private fun emitBlockquote(el: Element, chapterPath: String, out: MutableList<Block>) {
-        emitRun(el, chapterPath, out, { Block.Quote(it) }, flatten = true)
+    private fun emitBlockquote(el: Element, chapterPath: String, out: MutableList<Block>, css: CssRules, inferHeadings: Boolean) {
+        emitRun(el, chapterPath, out, { Block.Quote(it) }, flatten = true, css, inferHeadings)
     }
 
     /**
@@ -133,10 +159,12 @@ class XhtmlBlockParser {
         out: MutableList<Block>,
         factory: (StyledText) -> Block,
         flatten: Boolean,
+        css: CssRules,
+        inferHeadings: Boolean,
     ) {
         val builder = InlineBuilder()
         val flush = flushClosure(builder, out, factory)
-        walkRun(el, chapterPath, builder, flush, out, factory, flatten)
+        walkRun(el, chapterPath, builder, flush, out, factory, flatten, css, inferHeadings)
         flush()
     }
 
@@ -148,6 +176,8 @@ class XhtmlBlockParser {
         out: MutableList<Block>,
         factory: (StyledText) -> Block,
         flatten: Boolean,
+        css: CssRules,
+        inferHeadings: Boolean,
     ) {
         el.childNodes().forEach { node ->
             when (node) {
@@ -157,29 +187,33 @@ class XhtmlBlockParser {
                     "style", "script" -> Unit
                     "img" -> {
                         flush()
-                        if (flatten) emitImage(node, chapterPath, out) else visit(node, chapterPath, out)
+                        if (flatten) emitImage(node, chapterPath, out) else visit(node, chapterPath, out, css, inferHeadings)
                     }
                     "p", "h1", "h2", "h3", "h4", "h5", "h6" -> {
                         flush()
-                        if (flatten) emitTextBlock(node, chapterPath, out, factory) else visit(node, chapterPath, out)
+                        if (flatten) {
+                            emitTextBlock(node, chapterPath, out, css, factory)
+                        } else {
+                            visit(node, chapterPath, out, css, inferHeadings)
+                        }
                     }
                     else -> {
-                        val style = inlineStyleOf(tag)
+                        val styles = effectiveStyles(node, css)
                         when {
-                            style != null -> {
-                                builder.pushStyle(style)
-                                node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out) }
-                                builder.popStyle()
+                            styles.isNotEmpty() -> {
+                                styles.forEach { builder.pushStyle(it) }
+                                node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
+                                styles.forEach { builder.popStyle() }
                             }
                             // Lists have no "Quote" equivalent, so even a flattening walk
                             // routes them through normal dispatch (see emitBlockquote's kdoc).
                             flatten && tag != "ul" && tag != "ol" -> {
                                 flush()
-                                walkRun(node, chapterPath, builder, flush, out, factory, flatten)
+                                walkRun(node, chapterPath, builder, flush, out, factory, flatten, css, inferHeadings)
                             }
                             else -> {
                                 flush()
-                                visit(node, chapterPath, out)
+                                visit(node, chapterPath, out, css, inferHeadings)
                             }
                         }
                     }
@@ -211,11 +245,12 @@ class XhtmlBlockParser {
         el: Element,
         chapterPath: String,
         out: MutableList<Block>,
+        css: CssRules,
         factory: (StyledText) -> Block,
     ) {
         val builder = InlineBuilder()
         val flush = flushClosure(builder, out, factory)
-        el.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out) }
+        el.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
         flush()
     }
 
@@ -253,6 +288,7 @@ class XhtmlBlockParser {
         builder: InlineBuilder,
         flush: () -> Unit,
         out: MutableList<Block>,
+        css: CssRules,
     ) {
         when (node) {
             is TextNode -> builder.appendText(node.wholeText)
@@ -265,10 +301,10 @@ class XhtmlBlockParser {
                     emitImage(node, chapterPath, out)
                 }
                 else -> {
-                    val style = inlineStyleOf(tag)
-                    if (style != null) builder.pushStyle(style)
-                    node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out) }
-                    if (style != null) builder.popStyle()
+                    val styles = effectiveStyles(node, css)
+                    styles.forEach { builder.pushStyle(it) }
+                    node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
+                    styles.forEach { builder.popStyle() }
                 }
             }
         }
@@ -279,6 +315,141 @@ class XhtmlBlockParser {
         "i", "em", "cite", "dfn" -> InlineStyle.ITALIC
         "code", "kbd", "samp", "tt" -> InlineStyle.MONOSPACE
         else -> null
+    }
+
+    /**
+     * An element's effective emphasis is its tag mapping (`b`/`strong`/`i`/`em`/`code`...)
+     * **unioned** with what [css] resolves for it — never replaced by it. A calibre-style
+     * `<span class="italic">` and a hand-authored `<i>` both recover the same authorial
+     * intent; `<b class="italic">` recovers both. Each style pushed here goes through
+     * [InlineBuilder]'s own zero-length guard when popped, exactly like tag-based
+     * emphasis — a `<span class="italic"></span>` must not throw.
+     */
+    private fun effectiveStyles(el: Element, css: CssRules): List<InlineStyle> {
+        val styles = LinkedHashSet<InlineStyle>()
+        inlineStyleOf(el.tagName().lowercase())?.let { styles += it }
+        styles += cssEmphasisStyles(declarationsFor(el, css))
+        return styles.toList()
+    }
+
+    private fun declarationsFor(el: Element, css: CssRules): Map<String, String> =
+        css.declarationsFor(el.tagName().lowercase(), el.classNames().toList(), el.attr("style").ifBlank { null })
+
+    private fun cssEmphasisStyles(declarations: Map<String, String>): Set<InlineStyle> {
+        val out = mutableSetOf<InlineStyle>()
+        if (declarations["font-style"] in ITALIC_KEYWORDS) out += InlineStyle.ITALIC
+        if (isBoldValue(declarations["font-weight"])) out += InlineStyle.BOLD
+        return out
+    }
+
+    private fun isBoldValue(value: String?): Boolean {
+        if (value == null) return false
+        if (value == "bold" || value == "bolder") return true
+        return (value.toIntOrNull() ?: return false) >= 600
+    }
+
+    /**
+     * Promotes [text] from a plain paragraph to a [Block.Heading] when [inferHeadings] is
+     * on and [el]'s resolved style says it visually reads as one — see [headingLevelFor].
+     * This is the ONLY place a [Block.Heading] is produced from non-semantic markup; a
+     * literal `<h1>`..`<h6>` always wins regardless of CSS (handled directly in
+     * [dispatch]) and is never routed through here.
+     */
+    private fun paragraphOrHeading(el: Element, text: StyledText, css: CssRules, inferHeadings: Boolean): Block {
+        if (inferHeadings) {
+            headingLevelFor(el, text, css)?.let { return Block.Heading(it, text) }
+        }
+        return Block.Paragraph(text)
+    }
+
+    /**
+     * A `<p>`/`<div>` reads as a heading when its text is short (≤120 chars, non-empty)
+     * AND its resolved style is visually heading-like: either a font-size ratio ≥ 1.2
+     * relative to the body baseline, or centered text that is also bold (with no size
+     * signal, that combination lands at level 3). Returns null — "no heading signal" —
+     * rather than guessing, so an unusable size (see [sizeRatioFor]) never promotes.
+     */
+    private fun headingLevelFor(el: Element, text: StyledText, css: CssRules): Int? {
+        if (text.text.isEmpty() || text.text.length > 120) return null
+
+        val declarations = declarationsFor(el, css)
+        val ratio = declarations["font-size"]?.let { sizeRatioFor(it, css) }
+        if (ratio != null && ratio >= 1.2f) return levelForRatio(ratio)
+
+        val centered = declarations["text-align"] == "center"
+        if (centered && isBoldValue(declarations["font-weight"])) return 3
+
+        return null
+    }
+
+    private fun levelForRatio(ratio: Float): Int = when {
+        ratio >= 2.0f -> 1
+        ratio >= 1.6f -> 2
+        ratio >= 1.4f -> 3
+        else -> 4
+    }.coerceIn(1, 6)
+
+    /**
+     * Resolves a `font-size` value to a ratio relative to normal body text. `em`/`rem`,
+     * `%`, and the CSS size keywords are self-contained and always usable. `px`/`pt` are
+     * only meaningful relative to a baseline — see [baselineFontSizePx] — because this
+     * reader has no notion of a root/browser default font size; without one, an absolute
+     * size is unusable and this returns 1.0 ("no signal"), never a guess.
+     */
+    private fun sizeRatioFor(rawValue: String, css: CssRules): Float? {
+        relativeSizeRatio(rawValue)?.let { return it }
+        val px = absolutePx(rawValue) ?: return null
+        val baselinePx = baselineFontSizePx(css) ?: return 1.0f
+        return px / baselinePx
+    }
+
+    private fun relativeSizeRatio(value: String): Float? {
+        emOrRemRegex.matchEntire(value)?.let { return it.groupValues[1].toFloatOrNull() }
+        percentRegex.matchEntire(value)?.let { m -> return m.groupValues[1].toFloatOrNull()?.div(100f) }
+        return keywordSizeRatios[value]
+    }
+
+    private fun absolutePx(value: String): Float? {
+        pxRegex.matchEntire(value)?.let { return it.groupValues[1].toFloatOrNull() }
+        ptRegex.matchEntire(value)?.let { m -> return m.groupValues[1].toFloatOrNull()?.times(4f / 3f) }
+        return null
+    }
+
+    /**
+     * The absolute pixel baseline that a `px`/`pt` font-size is judged against: the
+     * resolved `font-size` of `body`, else of `p`, else no baseline at all. Itself must
+     * resolve to an absolute size (not `1em`/`100%`/a keyword) — a relative baseline has
+     * no fixed meaning here — so [absolutePx] is reused rather than [relativeSizeRatio].
+     */
+    private fun baselineFontSizePx(css: CssRules): Float? {
+        val bodySize = css.declarationsFor("body", emptyList(), null)["font-size"]
+        val pSize = css.declarationsFor("p", emptyList(), null)["font-size"]
+        val raw = bodySize ?: pSize ?: return null
+        return absolutePx(raw)
+    }
+
+    companion object {
+        private val ITALIC_KEYWORDS = setOf("italic", "oblique")
+
+        private val emOrRemRegex = Regex("^(-?\\d*\\.?\\d+)(em|rem)$")
+        private val percentRegex = Regex("^(-?\\d*\\.?\\d+)%$")
+        private val pxRegex = Regex("^(-?\\d*\\.?\\d+)px$")
+        private val ptRegex = Regex("^(-?\\d*\\.?\\d+)pt$")
+
+        // Conventional CSS absolute-size-keyword ratios (CSS3 §Absolute Size Keywords),
+        // relative to "medium" = 1. "larger"/"smaller" are the relative-keyword ratios
+        // browsers conventionally use for a single step up/down from the parent.
+        private val keywordSizeRatios = mapOf(
+            "xx-small" to 0.6f,
+            "x-small" to 0.75f,
+            "small" to 0.889f,
+            "medium" to 1.0f,
+            "large" to 1.2f,
+            "x-large" to 1.5f,
+            "xx-large" to 2.0f,
+            "larger" to 1.2f,
+            "smaller" to 0.83f,
+        )
     }
 }
 

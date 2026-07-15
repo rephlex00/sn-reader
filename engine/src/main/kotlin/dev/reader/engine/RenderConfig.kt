@@ -13,6 +13,14 @@ data class RenderConfig(
     val hyphenated: Boolean,
     val viewportWidthPx: Int,
     val viewportHeightPx: Int,
+    /**
+     * Promote short, visually-heading-like paragraphs to headings on books that encode
+     * structure as CSS classes instead of <h1>..<h6> (calibre conversions, overwhelmingly).
+     * A heuristic, so it is a reader setting; emphasis recovery is a direct mapping and is
+     * always on. Lives here because it changes the produced Blocks and RenderConfig already
+     * keys the pagination cache — so toggling it invalidates cached chapters for free.
+     */
+    val inferHeadings: Boolean = true,
 ) {
     val contentWidthPx: Int get() = viewportWidthPx - marginPx * 2
     val contentHeightPx: Int get() = viewportHeightPx - marginPx * 2
