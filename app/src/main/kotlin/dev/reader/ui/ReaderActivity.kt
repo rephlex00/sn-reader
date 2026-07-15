@@ -221,15 +221,34 @@ class ReaderActivity : AppCompatActivity() {
         val cfg = config ?: return
         val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
 
-        val next = when (zone) {
-            TapZone.NEXT -> advance(nav, state, pageCountFor)
-            TapZone.PREVIOUS -> retreat(nav, state, pageCountFor)
-            // The overlay arrives with the reading chrome in Plan 4.
-            TapZone.TOGGLE_OVERLAY -> null
+        // Chapter bytes are read lazily (EpubDocument.chapter -> readBlocks -> readTextChecked),
+        // so any chapter past the one openFirstBook already paginated can throw EpubException here
+        // for the first time — a corrupt deflate stream, a truncated archive, the zip-bomb guard.
+        // This runs synchronously inside View.onTouchEvent with nothing else on the stack to catch
+        // it, so it must be handled right here or the app dies on a page turn. `state` is only
+        // ever reassigned below in showPage, after its own chapter() call has already succeeded,
+        // so a failure anywhere in advance()/retreat()/showPage() leaves `state` untouched — the
+        // reader simply stays on the page it was already showing.
+        //
+        // Not a coroutine, so no CancellationException can arise here; none is caught.
+        try {
+            val next = when (zone) {
+                TapZone.NEXT -> advance(nav, state, pageCountFor)
+                TapZone.PREVIOUS -> retreat(nav, state, pageCountFor)
+                // The overlay arrives with the reading chrome in Plan 4.
+                TapZone.TOGGLE_OVERLAY -> null
+            }
+            // null = nowhere to go (start/end of book, or everything beyond is empty): stay put and
+            // draw nothing, so a tap at the end of the book costs no invalidate.
+            if (next != null) showPage(next)
+        } catch (e: EpubException) {
+            showMessage("Couldn't turn the page: ${e.message}")
+        } catch (e: Exception) {
+            // Mirrors openFirstBook's defense-in-depth catch: chapter() is documented to throw
+            // only EpubException, but that promise is only as good as every path inside the
+            // format parsers honouring it. A malformed book must never crash the app here either.
+            showMessage("Couldn't turn the page: ${e.message ?: e.javaClass.simpleName}")
         }
-        // null = nowhere to go (start/end of book, or everything beyond is empty): stay put and
-        // draw nothing, so a tap at the end of the book costs no invalidate.
-        if (next != null) showPage(next)
     }
 
     private fun showPage(next: ReadingState) {
