@@ -38,4 +38,54 @@ class PathsTest {
     fun `cannot escape above the archive root`() {
         assertThat(resolveHref("content.opf", "../../etc/passwd")).isEqualTo("etc/passwd")
     }
+
+    @Test
+    fun `does not treat a literal plus as a space`() {
+        assertThat(resolveHref("OEBPS/content.opf", "text/chapter+one.xhtml"))
+            .isEqualTo("OEBPS/text/chapter+one.xhtml")
+    }
+
+    @Test
+    fun `preserves a plus in a real filename`() {
+        assertThat(resolveHref("OEBPS/content.opf", "text/C++ Primer.xhtml"))
+            .isEqualTo("OEBPS/text/C++ Primer.xhtml")
+    }
+
+    @Test
+    fun `tolerates a stray percent without throwing`() {
+        assertThat(resolveHref("OEBPS/content.opf", "text/100%.xhtml"))
+            .isEqualTo("OEBPS/text/100%.xhtml")
+    }
+
+    @Test
+    fun `tolerates an invalid hex escape without throwing`() {
+        assertThat(resolveHref("OEBPS/content.opf", "text/%zz.xhtml"))
+            .isEqualTo("OEBPS/text/%zz.xhtml")
+    }
+
+    @Test
+    fun `percent-encoded traversal is still clamped at the archive root`() {
+        assertThat(resolveHref("content.opf", "%2e%2e%2f%2e%2e%2fetc%2fpasswd"))
+            .isEqualTo("etc/passwd")
+    }
+
+    @Test
+    fun `percentDecode leaves plus literal`() {
+        assertThat(percentDecode("chapter+one")).isEqualTo("chapter+one")
+    }
+
+    @Test
+    fun `percentDecode decodes percent20 to a space`() {
+        assertThat(percentDecode("chapter%20one")).isEqualTo("chapter one")
+    }
+
+    @Test
+    fun `percentDecode degrades a stray percent literally`() {
+        assertThat(percentDecode("100%.xhtml")).isEqualTo("100%.xhtml")
+    }
+
+    @Test
+    fun `percentDecode degrades an invalid hex escape literally`() {
+        assertThat(percentDecode("%zz.xhtml")).isEqualTo("%zz.xhtml")
+    }
 }

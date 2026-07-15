@@ -123,15 +123,92 @@ class EpubPackageParserTest {
     }
 
     @Test
-    fun `detects DRM by the presence of encryption xml`() {
+    fun `detects real DRM by encryption algorithm`() {
         val source = buildEpub(file()) {
             entry("META-INF/container.xml", CONTAINER_XML)
-            entry("META-INF/encryption.xml", "<encryption/>")
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+    <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/>
+  </EncryptedData>
+</encryption>""")
             entry("OEBPS/content.opf", "<package/>")
         }
         val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
 
         assertThat(e).isInstanceOf(EpubException.DrmProtected::class.java)
+    }
+
+    @Test
+    fun `treats an unparseable encryption xml as DRM (fail closed)`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", "not even xml <<<")
+            entry("OEBPS/content.opf", "<package/>")
+        }
+        val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.DrmProtected::class.java)
+    }
+
+    @Test
+    fun `opens normally when encryption xml only records font obfuscation`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+    <EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/>
+    <CipherData><CipherReference URI="OEBPS/fonts/font.otf"/></CipherData>
+  </EncryptedData>
+</encryption>""")
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Obfuscated Fonts</dc:title></metadata>
+  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+        }
+        val pkg = source.use(parser::parse)
+
+        assertThat(pkg.metadata.title).isEqualTo("Obfuscated Fonts")
+    }
+
+    @Test
+    fun `nulls a dangling ncx id not present in the manifest`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title></metadata>
+  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine toc="ghost-ncx"><itemref idref="ch1"/></spine>
+</package>""")
+        }
+        val pkg = source.use(parser::parse)
+
+        assertThat(pkg.ncxItemId).isNull()
+    }
+
+    @Test
+    fun `percent-decodes the container full-path`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS%20Files/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""")
+            entry("OEBPS Files/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title></metadata>
+  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+        }
+        val pkg = source.use(parser::parse)
+
+        assertThat(pkg.opfPath).isEqualTo("OEBPS Files/content.opf")
     }
 
     @Test

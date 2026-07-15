@@ -27,11 +27,29 @@ data class EpubPackage(
 private const val CONTAINER_PATH = "META-INF/container.xml"
 private const val ENCRYPTION_PATH = "META-INF/encryption.xml"
 
+/**
+ * `encryption.xml` algorithms that mean "font obfuscation", not DRM. InDesign, Sigil and
+ * calibre all emit one of these routinely to obscure embedded font files — the XHTML
+ * itself is never touched, and the book is fully readable without decrypting anything.
+ */
+private val FONT_OBFUSCATION_ALGORITHMS = setOf(
+    "http://www.idpf.org/2008/embedding",
+    "http://ns.adobe.com/pdf/enc#RC4",
+)
+
 class EpubPackageParser {
 
+    /**
+     * Parses [source] into an [EpubPackage].
+     *
+     * This method does not take ownership of [source]: it never closes it, on any path,
+     * including every throw path. The caller opened the source (typically via
+     * `ZipResourceSource(file).use { parser.parse(it) }`) and the caller remains
+     * responsible for closing it.
+     */
     fun parse(source: ResourceSource): EpubPackage {
         if (source.exists(ENCRYPTION_PATH)) {
-            throw EpubException.DrmProtected("This book is DRM-protected and cannot be opened.")
+            checkEncryption(source)
         }
 
         val containerXml = source.readText(CONTAINER_PATH)
@@ -49,15 +67,43 @@ class EpubPackageParser {
             throw EpubException.Malformed("The spine is empty — the book has no readable content.")
         }
 
+        val ncxId = opf.selectFirst("spine")?.attr("toc")?.takeIf { it.isNotEmpty() }
+
         return EpubPackage(
             opfPath = opfPath,
-            metadata = parseMetadata(opf, manifest, opfPath),
+            metadata = parseMetadata(opf, manifest),
             manifest = manifest,
             spine = spine,
             navItemId = manifest.values.firstOrNull { "nav" in it.properties }?.id,
-            ncxItemId = opf.selectFirst("spine")?.attr("toc")?.takeIf { it.isNotEmpty() },
+            // Symmetric with navItemId: a dangling toc idref is possible in the wild,
+            // same as a dangling spine idref, so validate it against the manifest too.
+            ncxItemId = ncxId?.takeIf { manifest.containsKey(it) },
         )
     }
+
+    /**
+     * Fails closed: an unparseable `encryption.xml`, or one whose only algorithms are
+     * not in the known-benign font-obfuscation set, is treated as real DRM. An unknown
+     * encryption scheme is exactly the case where refusing to guess is the safe choice.
+     */
+    private fun checkEncryption(source: ResourceSource) {
+        val algorithms = source.readText(ENCRYPTION_PATH)?.let { extractEncryptionAlgorithms(it) }
+        val isFontObfuscationOnly = !algorithms.isNullOrEmpty() &&
+            algorithms.all { it in FONT_OBFUSCATION_ALGORITHMS }
+        if (!isFontObfuscationOnly) {
+            throw EpubException.DrmProtected("This book is DRM-protected and cannot be opened.")
+        }
+    }
+
+    private fun extractEncryptionAlgorithms(xml: String): List<String>? = runCatching {
+        Jsoup.parse(xml, "", Parser.xmlParser())
+            .allElements
+            // Match by local name: the namespace prefix on <enc:EncryptionMethod> varies
+            // by tool and isn't worth depending on Jsoup's CSS namespace syntax for.
+            .filter { it.tagName().substringAfter(':') == "EncryptionMethod" }
+            .map { it.attr("Algorithm") }
+            .filter { it.isNotEmpty() }
+    }.getOrNull()
 
     private fun parseContainer(xml: String): String {
         val rootfile = Jsoup.parse(xml, "", Parser.xmlParser()).selectFirst("rootfile")
@@ -66,7 +112,7 @@ class EpubPackageParser {
         if (fullPath.isEmpty()) {
             throw EpubException.Malformed("<rootfile> has no full-path attribute.")
         }
-        return normalizePath(fullPath)
+        return normalizePath(percentDecode(fullPath))
     }
 
     private fun parseManifest(opf: Document, opfPath: String): Map<String, ManifestItem> =
@@ -90,20 +136,15 @@ class EpubPackageParser {
     private fun parseMetadata(
         opf: Document,
         manifest: Map<String, ManifestItem>,
-        opfPath: String,
     ): BookMetadata = BookMetadata(
         title = opf.selectFirst("metadata > dc|title")?.text()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "Untitled",
         author = opf.selectFirst("metadata > dc|creator")?.text()?.trim()?.takeIf { it.isNotEmpty() },
         language = opf.selectFirst("metadata > dc|language")?.text()?.trim()?.takeIf { it.isNotEmpty() },
-        coverHref = findCover(opf, manifest, opfPath),
+        coverHref = findCover(opf, manifest),
     )
 
-    private fun findCover(
-        opf: Document,
-        manifest: Map<String, ManifestItem>,
-        opfPath: String,
-    ): String? {
+    private fun findCover(opf: Document, manifest: Map<String, ManifestItem>): String? {
         // EPUB 3: a manifest item carrying the cover-image property.
         manifest.values.firstOrNull { "cover-image" in it.properties }?.let { return it.href }
 
