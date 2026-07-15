@@ -142,7 +142,7 @@ class LibraryIndexerTest {
         val indexer = LibraryIndexer(dao, listOf(root), extractor)
 
         val first = indexer.sync()
-        assertThat(first.unreadable).isEqualTo(1)
+        assertThat(first.newlyUnreadable).isEqualTo(1)
         val row = dao.getByPath(broken.path)!!
         assertThat(row.unreadable).isTrue()
         assertThat(row.unreadableReason).isEqualTo("Malformed OPF")
@@ -151,7 +151,7 @@ class LibraryIndexerTest {
         val second = indexer.sync()
 
         assertThat(extractor.calls).isEmpty()
-        assertThat(second.unreadable).isEqualTo(0)
+        assertThat(second.newlyUnreadable).isEqualTo(0)
         assertThat(second.added).isEqualTo(0)
         assertThat(second.updated).isEqualTo(0)
     }
@@ -168,7 +168,7 @@ class LibraryIndexerTest {
         val result = indexer.sync()
 
         assertThat(result.added).isEqualTo(3)
-        assertThat(result.unreadable).isEqualTo(1)
+        assertThat(result.newlyUnreadable).isEqualTo(1)
         assertThat(dao.getByPath(good1.path)?.unreadable).isFalse()
         assertThat(dao.getByPath(good2.path)?.unreadable).isFalse()
         assertThat(dao.getByPath(bad.path)?.unreadable).isTrue()
@@ -189,7 +189,7 @@ class LibraryIndexerTest {
         val result = indexer.sync()
 
         assertThat(result.added).isEqualTo(2)
-        assertThat(result.unreadable).isEqualTo(1)
+        assertThat(result.newlyUnreadable).isEqualTo(1)
         val row = dao.getByPath(boom.path)!!
         assertThat(row.unreadable).isTrue()
         assertThat(row.unreadableReason).isEqualTo("denied")
@@ -214,7 +214,9 @@ class LibraryIndexerTest {
     }
 
     @Test
-    fun `re-indexing a changed file preserves its prior reading position`(): Unit = runBlocking {
+    fun `re-indexing a size-changed file resets its prior reading position`(): Unit = runBlocking {
+        // The bytes are genuinely different content now: a stored spineIndex/charOffset is a
+        // coordinate into the OLD book and must not be silently carried into the new one.
         val a = writeEpub("a.epub")
         val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
         indexer.sync()
@@ -225,8 +227,47 @@ class LibraryIndexerTest {
         indexer.sync()
 
         val row = dao.getByPath(a.path)!!
+        assertThat(row.spineIndex).isEqualTo(0)
+        assertThat(row.charOffset).isEqualTo(0)
+    }
+
+    @Test
+    fun `re-indexing a touched file with unchanged bytes preserves its prior reading position`(): Unit = runBlocking {
+        // Same size, bumped mtime only: a re-sync/touch of identical content, not a new book.
+        val a = writeEpub("a.epub")
+        val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
+        indexer.sync()
+        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250)
+
+        a.writeText("stub")
+        a.setLastModified(a.lastModified() + 60_000)
+        indexer.sync()
+
+        val row = dao.getByPath(a.path)!!
         assertThat(row.spineIndex).isEqualTo(4)
         assertThat(row.charOffset).isEqualTo(250)
+    }
+
+    @Test
+    fun `a size-changed file that now fails to crack does not keep the old title`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val extractor = FakeExtractor()
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+        indexer.sync()
+        val oldRow = dao.getByPath(a.path)!!
+        assertThat(oldRow.title).isEqualTo("a")
+        assertThat(oldRow.unreadable).isFalse()
+
+        // Content genuinely changed and the new bytes no longer crack.
+        a.writeText("stub-but-now-corrupt-and-longer")
+        a.setLastModified(a.lastModified() + 60_000)
+        extractor.onPath(a.path, BookMetadataResult.Failure("Malformed OPF"))
+        indexer.sync()
+
+        val row = dao.getByPath(a.path)!!
+        assertThat(row.unreadable).isTrue()
+        assertThat(row.title).isEqualTo(a.name)
+        assertThat(row.author).isNull()
     }
 
     @Test

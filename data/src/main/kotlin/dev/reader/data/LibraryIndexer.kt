@@ -1,22 +1,25 @@
 package dev.reader.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
  * What [MetadataExtractor.extract] found (or didn't) for one candidate file.
  *
- * [Success.coverHref] is a reference *into* the book archive (e.g. an OPF manifest href) — this
- * module never decodes an image. Resolving it into an actual grayscale thumbnail file under
- * `filesDir` is Task 4's job (`EpubCoverExtractor`, in `:formats`/`:app`); `:data` only stores the
- * resulting file path, in [BookEntity.coverPath].
+ * [Success] deliberately has no cover reference yet — Task 4 (`EpubCoverExtractor`, in
+ * `:formats`/`:app`) will add a `coverPath: String? = null` here once it can produce an actual
+ * decoded, downsampled grayscale thumbnail file under `filesDir`; that addition is
+ * source-compatible with every existing caller. `:data` only ever stores a resolved file path, in
+ * [BookEntity.coverPath] — never an archive-internal reference — so there is nothing for this type
+ * to hold in the meantime.
  */
 sealed interface BookMetadataResult {
     data class Success(
         val title: String,
         val author: String? = null,
-        val coverHref: String? = null,
     ) : BookMetadataResult
 
     data class Failure(val reason: String) : BookMetadataResult
@@ -37,12 +40,19 @@ fun interface MetadataExtractor {
     fun extract(file: File): BookMetadataResult
 }
 
-/** Tallies from one [LibraryIndexer.sync] call. */
+/**
+ * Tallies from one [LibraryIndexer.sync] call.
+ *
+ * [newlyUnreadable] counts only the files that *this* sync attempted to open and found broken —
+ * it is not the library's total broken-book count. A book marked unreadable on a prior sync whose
+ * `(size, mtime)` is unchanged is never reopened (see class doc), so it does not contribute here
+ * even though it is still sitting in the index as unreadable.
+ */
 data class IndexResult(
     val added: Int,
     val updated: Int,
     val removed: Int,
-    val unreadable: Int,
+    val newlyUnreadable: Int,
 )
 
 /**
@@ -70,15 +80,25 @@ class LibraryIndexer(
 
         val vanished = known.keys - onDisk.keys
         if (vanished.isNotEmpty()) {
+            // TODO(Task 4): this drops the row but leaks the cover file on disk. The brief's step 4
+            // is "delete vanished rows and their cover files" — once Task 4 populates
+            // BookEntity.coverPath, deleting a row here without also deleting that file is a
+            // storage leak. It's a no-op today only because coverPath is always null.
             dao.deleteByPaths(vanished.toList())
         }
 
         val toUpsert = mutableListOf<BookEntity>()
         var added = 0
         var updated = 0
-        var unreadable = 0
+        var newlyUnreadable = 0
 
         for ((path, stat) in onDisk) {
+            // The only suspension point below is the conditional dao.getByPath, which is skipped
+            // for every newly-discovered file — without this, a large first scan over an
+            // all-new library has no suspend call in the loop at all and can't be cancelled
+            // mid-walk.
+            ensureActive()
+
             val existing = known[path]
             if (existing != null &&
                 existing.sizeBytes == stat.sizeBytes &&
@@ -88,14 +108,23 @@ class LibraryIndexer(
                 continue
             }
 
-            // Carry the prior reading position forward across a re-index (e.g. a re-synced file
-            // with a bumped mtime but the same content). Only fetched for the small changed/new
-            // set, and only when a row already exists.
-            val priorPosition = if (existing != null) dao.getByPath(path) else null
+            // A touch/re-sync that bumps mtime but leaves sizeBytes identical is the same content
+            // (cloud sync, `touch`, a re-copy) — carry the reader's position, and title/author on a
+            // re-break, forward. A changed sizeBytes means the bytes are genuinely different: a
+            // stored spineIndex/charOffset would be a coordinate into a book the reader never
+            // opened, and an old title would misdescribe the new content, so neither is preserved.
+            val sameContent = existing != null && existing.sizeBytes == stat.sizeBytes
+            val priorPosition = if (sameContent) dao.getByPath(path) else null
 
             val file = File(path)
             val result = try {
                 extractor.extract(file)
+            } catch (e: CancellationException) {
+                // Never swallow cancellation into an unreadableReason — this project has already
+                // been bitten by CancellationException (which extends Exception) being caught by a
+                // catch-all below. An :app extractor implemented over runBlocking could let one
+                // escape here.
+                throw e
             } catch (e: SecurityException) {
                 BookMetadataResult.Failure(e.message ?: "Permission denied")
             } catch (e: Exception) {
@@ -135,14 +164,19 @@ class LibraryIndexer(
             toUpsert += entity
 
             if (existing == null) added++ else updated++
-            if (entity.unreadable) unreadable++
+            if (entity.unreadable) newlyUnreadable++
         }
 
         if (toUpsert.isNotEmpty()) {
             dao.upsertAll(toUpsert)
         }
 
-        IndexResult(added = added, updated = updated, removed = vanished.size, unreadable = unreadable)
+        IndexResult(
+            added = added,
+            updated = updated,
+            removed = vanished.size,
+            newlyUnreadable = newlyUnreadable,
+        )
     }
 
     /** `(path, size, mtime)` for every `.epub` file under [roots]. Opens nothing. */
@@ -151,6 +185,8 @@ class LibraryIndexer(
         for (root in roots) {
             try {
                 root.walkTopDown()
+                    .maxDepth(10) // Closes an unbounded symlink-loop walk; unreachable in practice
+                    // on the Nomad's flat /Document layout, but free insurance.
                     .filter { it.isFile && it.extension.equals("epub", ignoreCase = true) }
                     .forEach { file ->
                         result[file.path] = FileStat(file.length(), file.lastModified())
