@@ -23,6 +23,13 @@ class TapZoneTest {
     }
 
     @Test
+    fun `the left quarter boundary is exclusive`() {
+        // fraction == 0.25 exactly must NOT go PREVIOUS (left 25% is the half-open [0, 0.25)),
+        // pinning this boundary the same way the 0.60 boundary is pinned above.
+        assertThat(tapZoneFor(x = 250f, width = 1000)).isEqualTo(TapZone.TOGGLE_OVERLAY)
+    }
+
+    @Test
     fun `zone boundaries are stable across widths`() {
         assertThat(tapZoneFor(x = 350f, width = 1404)).isEqualTo(TapZone.PREVIOUS)
         assertThat(tapZoneFor(x = 843f, width = 1404)).isEqualTo(TapZone.NEXT)

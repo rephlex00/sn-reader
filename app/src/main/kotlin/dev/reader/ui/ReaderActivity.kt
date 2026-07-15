@@ -8,11 +8,13 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.doOnLayout
+import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
-import dev.reader.engine.NavTarget
 import dev.reader.engine.PageNavigator
 import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
+import dev.reader.engine.advance
+import dev.reader.engine.retreat
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
 import dev.reader.formats.epub.PaginatedChapter
@@ -20,6 +22,7 @@ import dev.reader.formats.render.AndroidMeasuredChapter
 import dev.reader.formats.render.AndroidTextMeasurer
 import dev.reader.formats.render.SpannedChapterBuilder
 import dev.reader.formats.render.TypefaceProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,6 +45,23 @@ class ReaderActivity : AppCompatActivity() {
     private var state = ReadingState(0, 0)
     private var config: RenderConfig? = null
 
+    /**
+     * Guards against opening the book twice — set synchronously, before any coroutine starts.
+     *
+     * [openFirstBook] is armed from both [onCreate] and [onResume]. On a cold start with the
+     * permission already granted, onCreate → onStart → onResume all run *before* the first layout
+     * pass, so both `doOnLayout` calls take the deferred path, register two separate
+     * OnLayoutChangeListeners, and both fire on that one layout. A `document != null` check cannot
+     * stop that: `document` is assigned asynchronously, and the first invocation suspends at
+     * `withContext(Dispatchers.IO)` long before assigning anything — so the second invocation sees
+     * `null` and opens the book again. That means two EpubDocument.open calls, two ZipFile handles
+     * and chapter 0 paginated twice, with the loser silently overwritten and never closed.
+     *
+     * Being a plain field written only on the main thread, this flag is set before the `launch`
+     * even has a chance to suspend, which is exactly what makes it airtight here.
+     */
+    private var opening = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pageView = PageView(this)
@@ -56,7 +76,7 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (document == null && Environment.isExternalStorageManager()) {
+        if (document == null && !opening && Environment.isExternalStorageManager()) {
             pageView.doOnLayout { openFirstBook() }
         }
     }
@@ -82,16 +102,22 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun openFirstBook() {
-        if (document != null) return
+        if (document != null || opening) return
 
         // pageView.width/height can still be 0 here in principle (doOnLayout fires on any
         // layout pass, not only one that gave the view real bounds). RenderConfig's init
         // throws on a non-positive content width/height, which would otherwise crash this
         // coroutine and the app. Guard it and simply wait for a layout pass that has bounds.
+        //
+        // doOnNextLayout, not doOnLayout: doOnLayout runs its action SYNCHRONOUSLY when
+        // `isLaidOut && !isLayoutRequested`, and isLaidOut() is true after *any* completed layout
+        // pass — including a 0x0 one. Re-arming with doOnLayout here would therefore recurse
+        // openFirstBook -> doOnLayout -> openFirstBook without bound and blow the stack in exactly
+        // the case this guard exists to survive. doOnNextLayout always defers to a future pass.
         val width = pageView.width
         val height = pageView.height
         if (width <= 0 || height <= 0) {
-            pageView.doOnLayout { openFirstBook() }
+            pageView.doOnNextLayout { openFirstBook() }
             return
         }
 
@@ -107,30 +133,61 @@ class ReaderActivity : AppCompatActivity() {
         )
         config = renderConfig
 
+        // Set synchronously, before launch: see the `opening` field's KDoc. Nothing between here
+        // and the coroutine's first suspension point can run on this thread, so a second
+        // openFirstBook() on this same layout pass is guaranteed to see this and bail.
+        opening = true
+
         lifecycleScope.launch {
-            val file = withContext(Dispatchers.IO) { findFirstEpub() }
-            if (file == null) {
-                showMessage("No EPUB found in /Document.")
-                return@launch
-            }
+            var opened: EpubDocument? = null
             try {
-                val doc = withContext(Dispatchers.IO) {
-                    EpubDocument.open(
+                val file = withContext(Dispatchers.IO) { findFirstEpub() }
+                if (file == null) {
+                    // Not a permanent failure: the user may drop a book in and come back, and
+                    // onResume re-arms only while `opening` is false.
+                    opening = false
+                    showMessage("No EPUB found in /Document.")
+                    return@launch
+                }
+                withContext(Dispatchers.IO) {
+                    opened = EpubDocument.open(
                         file,
                         AndroidTextMeasurer(SpannedChapterBuilder(), TypefaceProvider.Platform),
                     )
                 }
+                val doc = opened!!
                 document = doc
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
-                showPage(ReadingState(0, 0))
+
+                val firstChapter = doc.chapter(0, renderConfig)
+                if (firstChapter.pages.isEmpty()) {
+                    // A missing or empty chapter file paginates to zero pages. showPage() would
+                    // return silently and leave a blank white screen — indistinguishable from a
+                    // broken app — so name the problem, and say that the book may still be
+                    // readable from the next chapter on (advance() skips empty chapters).
+                    showMessage("This book's first chapter is empty. Tap the right edge to read on.")
+                } else {
+                    showPage(ReadingState(0, 0))
+                }
+            } catch (e: CancellationException) {
+                // The activity was destroyed while open() was in flight. lifecycleScope cancelled
+                // us, so `document = doc` never ran and onDestroy saw null — this is the only
+                // thing standing between a back-press during load and a leaked ZipFile. `opened`
+                // is assigned inside the IO block, so it is set here even though withContext threw
+                // on resumption. Rethrown: cancellation must never be swallowed (it would also be
+                // caught by the `Exception` branch below, which is why this branch comes first).
+                opened?.close()
+                throw e
             } catch (e: EpubException) {
+                opening = false
                 showMessage("Couldn't open this book: ${e.message}")
             } catch (e: Exception) {
                 // open() is documented to throw only EpubException, but that promise is only as
                 // good as every path inside EpubPackageParser/EpubTocParser honouring it (e.g. a
                 // raw XmlPullParserException or IOException from a corrupt-but-zip-valid file).
                 // A malformed book must never crash the app, so nothing escapes this boundary.
+                opening = false
                 showMessage("Couldn't open this book: ${e.message ?: e.javaClass.simpleName}")
             }
         }
@@ -147,77 +204,32 @@ class ReaderActivity : AppCompatActivity() {
         null
     }
 
+    /**
+     * Resolves a page turn with [dev.reader.engine.advance] / [dev.reader.engine.retreat], the
+     * pure functions in `:engine` that own the empty-chapter looping and are unit-tested there
+     * (`PageTurnsTest`). Both take everything they need from the document as a single
+     * `spineIndex -> page count` lookup, which is all `PageNavigator`'s two documented traps
+     * require: `next()` cannot know whether the chapter it lands on has pages, and `previous()`
+     * answers `LastPageOf` blindly, which is `-1` on an empty chapter.
+     *
+     * View delivers taps on the main thread, so every `chapter()` call made through the lookup
+     * below is main-thread-confined, as `EpubDocument.chapter()`'s unsynchronized cache requires.
+     */
     private fun onTap(zone: TapZone) {
-        when (zone) {
-            TapZone.NEXT -> advance()
-            TapZone.PREVIOUS -> retreat()
+        val nav = navigator ?: return
+        val doc = document ?: return
+        val cfg = config ?: return
+        val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
+
+        val next = when (zone) {
+            TapZone.NEXT -> advance(nav, state, pageCountFor)
+            TapZone.PREVIOUS -> retreat(nav, state, pageCountFor)
             // The overlay arrives with the reading chrome in Plan 4.
-            TapZone.TOGGLE_OVERLAY -> Unit
+            TapZone.TOGGLE_OVERLAY -> null
         }
-    }
-
-    /**
-     * Turns the page forward, looping past any empty chapters.
-     *
-     * [PageNavigator.next] only knows the *current* chapter's page count, so
-     * `Page(spineIndex + 1, 0)` is not guaranteed to land somewhere with pages (a chapter
-     * missing from the archive parses to zero pages — see `EpubDocument.chapter()`). If the
-     * landed-on chapter turns out to be empty, ask the navigator to advance again from there,
-     * repeating until a chapter with at least one page is found or the book ends.
-     */
-    private fun advance() {
-        val nav = navigator ?: return
-        val doc = document ?: return
-        val cfg = config ?: return
-
-        var current = state
-        while (true) {
-            val pagesInCurrentChapter = doc.chapter(current.spineIndex, cfg).pages.size
-            when (val target = nav.next(current, pagesInCurrentChapter)) {
-                is NavTarget.Page -> {
-                    if (doc.chapter(target.spineIndex, cfg).pages.isEmpty()) {
-                        current = ReadingState(target.spineIndex, 0)
-                        continue
-                    }
-                    showPage(ReadingState(target.spineIndex, target.pageIndex))
-                    return
-                }
-                NavTarget.AtEnd -> return
-                NavTarget.AtStart, is NavTarget.LastPageOf -> return // next() never returns these
-            }
-        }
-    }
-
-    /**
-     * Turns the page backward, skipping past any empty chapters.
-     *
-     * [PageNavigator.previous] cannot know whether the previous chapter has any pages, so it
-     * always answers [NavTarget.LastPageOf] blindly. Resolving that as `pages.size - 1` on an
-     * empty chapter yields a bogus `pageIndex = -1`. Instead, walk backward chapter by chapter
-     * until one with pages turns up, or the book's start is reached.
-     */
-    private fun retreat() {
-        val doc = document ?: return
-        val cfg = config ?: return
-        val nav = navigator ?: return
-
-        when (val first = nav.previous(state)) {
-            is NavTarget.Page -> showPage(ReadingState(first.spineIndex, first.pageIndex))
-            NavTarget.AtStart -> Unit
-            NavTarget.AtEnd -> Unit // previous() never returns this
-            is NavTarget.LastPageOf -> {
-                var spineIndex = first.spineIndex
-                while (true) {
-                    val pages = doc.chapter(spineIndex, cfg).pages
-                    if (pages.isNotEmpty()) {
-                        showPage(ReadingState(spineIndex, pages.lastIndex))
-                        return
-                    }
-                    if (spineIndex == 0) return // every chapter before here was empty too
-                    spineIndex -= 1
-                }
-            }
-        }
+        // null = nowhere to go (start/end of book, or everything beyond is empty): stay put and
+        // draw nothing, so a tap at the end of the book costs no invalidate.
+        if (next != null) showPage(next)
     }
 
     private fun showPage(next: ReadingState) {

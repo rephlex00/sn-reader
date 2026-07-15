@@ -64,3 +64,67 @@ class PageNavigator(private val spineSize: Int) {
         else -> NavTarget.AtStart
     }
 }
+
+/**
+ * Resolves a forward page turn from [state], skipping past any chapters with zero pages.
+ *
+ * [PageNavigator.next] only knows the *current* chapter's page count (see its KDoc), so the
+ * [NavTarget.Page] it returns is not guaranteed to land on a chapter that actually has any pages.
+ * [pageCountFor] is consulted for each landed-on chapter, and [PageNavigator.next] is called again
+ * from there, until a chapter with at least one page is found or the book ends. This is a pure
+ * function over [navigator] and [pageCountFor] so it is unit-testable without a real document.
+ *
+ * Returns `null` when there is nowhere to advance to — the book has ended, or every remaining
+ * chapter turns out to be empty. Never returns a state pointing at an empty chapter.
+ */
+fun advance(navigator: PageNavigator, state: ReadingState, pageCountFor: (Int) -> Int): ReadingState? {
+    var current = state
+    while (true) {
+        val pagesInCurrentChapter = pageCountFor(current.spineIndex)
+        when (val target = navigator.next(current, pagesInCurrentChapter)) {
+            is NavTarget.Page -> {
+                if (pageCountFor(target.spineIndex) == 0) {
+                    current = ReadingState(target.spineIndex, 0)
+                    continue
+                }
+                return ReadingState(target.spineIndex, target.pageIndex)
+            }
+            NavTarget.AtEnd -> return null
+            NavTarget.AtStart, is NavTarget.LastPageOf -> return null // next() never returns these
+        }
+    }
+}
+
+/**
+ * Resolves a backward page turn from [state], skipping past any chapters with zero pages.
+ *
+ * [PageNavigator.previous] cannot know whether the previous chapter has any pages (see its KDoc),
+ * so a returned [NavTarget.LastPageOf] must be resolved by looking it up via [pageCountFor]: if
+ * that chapter has no pages, keep walking backward chapter by chapter until one with pages turns
+ * up, or the start of the book is reached. Computing `pageCount - 1` directly on an empty chapter
+ * would yield a bogus negative `pageIndex`, which this function never does.
+ *
+ * Returns `null` when there is nowhere to retreat to — already at the start of the book, or every
+ * preceding chapter turns out to be empty.
+ */
+fun retreat(navigator: PageNavigator, state: ReadingState, pageCountFor: (Int) -> Int): ReadingState? =
+    when (val first = navigator.previous(state)) {
+        is NavTarget.Page -> ReadingState(first.spineIndex, first.pageIndex)
+        NavTarget.AtStart -> null
+        NavTarget.AtEnd -> null // previous() never returns this
+        is NavTarget.LastPageOf -> {
+            var spineIndex = first.spineIndex
+            var resolved: ReadingState? = null
+            while (resolved == null) {
+                val pageCount = pageCountFor(spineIndex)
+                if (pageCount > 0) {
+                    resolved = ReadingState(spineIndex, pageCount - 1)
+                } else if (spineIndex == 0) {
+                    break // every chapter before here was empty too
+                } else {
+                    spineIndex -= 1
+                }
+            }
+            resolved
+        }
+    }

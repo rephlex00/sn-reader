@@ -1,6 +1,5 @@
 package dev.reader.ui
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -39,7 +38,13 @@ class PageView(context: Context) : View(context) {
     init {
         setBackgroundColor(Color.WHITE)
         // No hardware layer, no animation: e-ink wants one clean full redraw per turn.
-        isClickable = true
+        //
+        // Deliberately NOT isClickable: View's clickable path posts a CheckForTap and a
+        // CheckForLongClick on every ACTION_DOWN, sets a pressed state, and posts a further
+        // delayed runnable to unset it. This view wants none of that — there is no long-press
+        // gesture, a pressed highlight would be a wasted e-ink refresh, and per-touch postDelayed
+        // work is exactly what this reader avoids. Leaving it false means those callbacks are
+        // never posted at all, so there is no pressed state to leak (see onTouchEvent).
     }
 
     fun show(layout: Layout, page: Page, marginPx: Int) {
@@ -61,12 +66,21 @@ class PageView(context: Context) : View(context) {
         canvas.restore()
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.action == MotionEvent.ACTION_UP) {
-            onTap?.invoke(tapZoneFor(event.x, width))
-            return true
+    override fun onTouchEvent(event: MotionEvent): Boolean = when (event.actionMasked) {
+        // With isClickable false, View would not consume ACTION_DOWN and we would never be sent
+        // the matching ACTION_UP. Consume it here instead: this is the whole reason View's
+        // clickable machinery is not needed. Nothing is posted and no pressed state is set, so
+        // there is nothing for ACTION_UP/ACTION_CANCEL to have to clean up.
+        MotionEvent.ACTION_DOWN -> true
+        MotionEvent.ACTION_UP -> {
+            val zone = tapZoneFor(event.x, width)
+            // performClick() is what the old @SuppressLint("ClickableViewAccessibility") was
+            // papering over. It still fires TYPE_VIEW_CLICKED for accessibility services when the
+            // view is not clickable, and posts nothing.
+            performClick()
+            onTap?.invoke(zone)
+            true
         }
-        return super.onTouchEvent(event)
+        else -> super.onTouchEvent(event)
     }
 }
