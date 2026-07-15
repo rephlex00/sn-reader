@@ -9,7 +9,15 @@ data class StyleSpan(val start: Int, val end: Int, val style: InlineStyle) {
     }
 }
 
-data class StyledText(val text: String, val spans: List<StyleSpan> = emptyList())
+data class StyledText(val text: String, val spans: List<StyleSpan> = emptyList()) {
+    init {
+        spans.forEach {
+            require(it.end <= text.length) {
+                "span [${it.start}, ${it.end}) exceeds text length ${text.length}"
+            }
+        }
+    }
+}
 
 /**
  * The format-neutral document model. EPUB XHTML is reduced to this whitelist;
@@ -22,6 +30,8 @@ sealed interface Block {
     }
     data class Quote(val text: StyledText) : Block
     data class ListItem(val text: StyledText, val ordinal: Int? = null) : Block
-    data class Image(val href: String) : Block
+    data class Image(val href: String) : Block {
+        init { require(href.isNotBlank()) { "href must not be blank" } }
+    }
     data object PageBreak : Block
 }

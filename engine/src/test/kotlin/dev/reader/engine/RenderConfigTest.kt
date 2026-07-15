@@ -27,6 +27,44 @@ class RenderConfigTest {
     fun `rejects margins that leave no content`() {
         val e = runCatching { config(margin = 800) }.exceptionOrNull()
         assertThat(e).isInstanceOf(IllegalArgumentException::class.java)
+        assertThat(e).hasMessageThat().contains("margins leave no content width")
+    }
+
+    @Test
+    fun `rejects zero or negative line spacing multiplier`() {
+        val e = runCatching {
+            RenderConfig(
+                fontFamily = "serif",
+                textSizePx = 32f,
+                lineSpacingMultiplier = 0f,
+                marginPx = 40,
+                justified = true,
+                hyphenated = true,
+                viewportWidthPx = 1404,
+                viewportHeightPx = 1872,
+            )
+        }.exceptionOrNull()
+        assertThat(e).isInstanceOf(IllegalArgumentException::class.java)
+        assertThat(e).hasMessageThat().contains("lineSpacingMultiplier")
+        assertThat(e).hasMessageThat().contains("0.0")
+    }
+
+    @Test
+    fun `rejects blank fontFamily`() {
+        val e = runCatching {
+            RenderConfig(
+                fontFamily = "  ",
+                textSizePx = 32f,
+                lineSpacingMultiplier = 1.4f,
+                marginPx = 40,
+                justified = true,
+                hyphenated = true,
+                viewportWidthPx = 1404,
+                viewportHeightPx = 1872,
+            )
+        }.exceptionOrNull()
+        assertThat(e).isInstanceOf(IllegalArgumentException::class.java)
+        assertThat(e).hasMessageThat().contains("fontFamily")
     }
 
     @Test
