@@ -2,6 +2,7 @@ package dev.reader.formats.epub
 
 import dev.reader.engine.BookMetadata
 import dev.reader.formats.ResourceSource
+import java.io.IOException
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
@@ -29,8 +30,12 @@ private const val ENCRYPTION_PATH = "META-INF/encryption.xml"
 
 /**
  * `encryption.xml` algorithms that mean "font obfuscation", not DRM. InDesign, Sigil and
- * calibre all emit one of these routinely to obscure embedded font files — the XHTML
- * itself is never touched, and the book is fully readable without decrypting anything.
+ * calibre all emit one of these routinely to obscure embedded font files. This check only
+ * looks at the algorithm, not at which entry `<CipherReference URI>` names — it trusts the
+ * producer convention that tools emitting these algorithms apply them to font files only.
+ * That convention is not enforced: a file that (mis)declared one of these algorithms over
+ * an XHTML chapter instead of a font would open "successfully" and render as garbage,
+ * since nothing here checks the referenced entry.
  */
 private val FONT_OBFUSCATION_ALGORITHMS = setOf(
     "http://www.idpf.org/2008/embedding",
@@ -52,11 +57,11 @@ class EpubPackageParser {
             checkEncryption(source)
         }
 
-        val containerXml = source.readText(CONTAINER_PATH)
+        val containerXml = readTextChecked(source, CONTAINER_PATH)
             ?: throw EpubException.NotAnEpub("No $CONTAINER_PATH — this is not an EPUB.")
 
         val opfPath = parseContainer(containerXml)
-        val opfXml = source.readText(opfPath)
+        val opfXml = readTextChecked(source, opfPath)
             ?: throw EpubException.Malformed("Container points at $opfPath, which is missing.")
 
         val opf = Jsoup.parse(opfXml, "", Parser.xmlParser())
@@ -87,7 +92,7 @@ class EpubPackageParser {
      * encryption scheme is exactly the case where refusing to guess is the safe choice.
      */
     private fun checkEncryption(source: ResourceSource) {
-        val algorithms = source.readText(ENCRYPTION_PATH)?.let { extractEncryptionAlgorithms(it) }
+        val algorithms = readTextChecked(source, ENCRYPTION_PATH)?.let { extractEncryptionAlgorithms(it) }
         val isFontObfuscationOnly = !algorithms.isNullOrEmpty() &&
             algorithms.all { it in FONT_OBFUSCATION_ALGORITHMS }
         if (!isFontObfuscationOnly) {
@@ -104,6 +109,21 @@ class EpubPackageParser {
             .map { it.attr("Algorithm") }
             .filter { it.isNotEmpty() }
     }.getOrNull()
+
+    /**
+     * [ResourceSource.readText] throws a raw, format-neutral [IOException] when an entry
+     * trips the size cap (a zip-bombed container/OPF/encryption file). `EpubException`
+     * does not extend `IOException`, so left uncaught that would escape [parse] and break
+     * the documented `catch (e: EpubException)` contract. This is the format layer's job
+     * to translate — [ResourceSource] itself must stay ignorant of the EPUB exception
+     * hierarchy.
+     */
+    private fun readTextChecked(source: ResourceSource, path: String): String? =
+        try {
+            source.readText(path)
+        } catch (e: IOException) {
+            throw EpubException.Malformed("Failed to read \"$path\": ${e.message}")
+        }
 
     private fun parseContainer(xml: String): String {
         val rootfile = Jsoup.parse(xml, "", Parser.xmlParser()).selectFirst("rootfile")

@@ -88,4 +88,24 @@ class PathsTest {
     fun `percentDecode degrades an invalid hex escape literally`() {
         assertThat(percentDecode("%zz.xhtml")).isEqualTo("%zz.xhtml")
     }
+
+    @Test
+    fun `percentDecode degrades a signed hex escape literally instead of parsing the sign`() {
+        // toIntOrNull(16) accepts a leading sign; a bare hex-digit check must reject these
+        // as valid escapes so they degrade to literals like any other malformed escape.
+        assertThat(percentDecode("%-1")).isEqualTo("%-1")
+        assertThat(percentDecode("%+a")).isEqualTo("%+a")
+    }
+
+    @Test
+    fun `percentDecode decodes a multi-byte utf-8 sequence`() {
+        assertThat(percentDecode("%C3%A9")).isEqualTo("é")
+    }
+
+    @Test
+    fun `percentDecode preserves an astral character alongside a percent escape`() {
+        // A surrogate pair must survive being batched through the same literal run as
+        // the rest of the string, not be encoded one UTF-16 code unit at a time.
+        assertThat(percentDecode("📚 ch%20one")).isEqualTo("📚 ch one")
+    }
 }

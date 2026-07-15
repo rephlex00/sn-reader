@@ -26,20 +26,36 @@ internal fun percentDecode(s: String): String {
     val out = java.io.ByteArrayOutputStream(s.length)
     var i = 0
     while (i < s.length) {
-        val c = s[i]
-        if (c == '%' && i + 3 <= s.length) {
-            val v = s.substring(i + 1, i + 3).toIntOrNull(16)
-            if (v != null) {
-                out.write(v)
-                i += 3
-                continue
-            }
+        if (isEscapeAt(s, i)) {
+            val v = s.substring(i + 1, i + 3).toInt(16)
+            out.write(v)
+            i += 3
+            continue
         }
-        out.write(c.toString().toByteArray(Charsets.UTF_8))
-        i++
+        // Batch a run of consecutive literal (non-escape) characters and encode it as
+        // one unit, rather than converting one UTF-16 code unit at a time: a surrogate
+        // pair (an astral-plane character, e.g. an emoji) is two adjacent chars with
+        // nothing that could split them, so the pair always survives intact here — a
+        // lone surrogate encoded to UTF-8 by itself is invalid and becomes '?'.
+        val start = i
+        do {
+            i++
+        } while (i < s.length && !isEscapeAt(s, i))
+        out.write(s.substring(start, i).toByteArray(Charsets.UTF_8))
     }
     return out.toString(Charsets.UTF_8)
 }
+
+/**
+ * True if `s[i]` begins a valid two-hex-digit percent escape. Deliberately stricter
+ * than `toIntOrNull(16)`, which accepts a leading '+'/'-' sign — without this check
+ * `%-1` and `%+a` would parse as valid escapes instead of degrading to literals as
+ * documented above.
+ */
+private fun isEscapeAt(s: String, i: Int): Boolean =
+    s[i] == '%' && i + 3 <= s.length && isHexDigit(s[i + 1]) && isHexDigit(s[i + 2])
+
+private fun isHexDigit(c: Char): Boolean = c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
 
 internal fun normalizePath(path: String): String {
     val parts = ArrayDeque<String>()

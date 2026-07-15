@@ -59,8 +59,12 @@ class ZipResourceSource(file: File) : ResourceSource {
  * Reads [input] fully but aborts as soon as more than [MAX_TEXT_SIZE] bytes have come
  * through — a backstop for a decompression bomb whose declared size understates (or
  * omits) how much data it actually inflates to.
+ *
+ * Internal (not private) so it can be unit-tested directly against a hand-built
+ * unbounded [InputStream], independent of the declared-size fast path in [readText]
+ * above, which a truthful zip entry size will always trip first.
  */
-private fun readCapped(input: InputStream, path: String): ByteArray {
+internal fun readCapped(input: InputStream, path: String): ByteArray {
     val buffer = ByteArrayOutputStream()
     val chunk = ByteArray(8192)
     var total = 0L
@@ -70,7 +74,8 @@ private fun readCapped(input: InputStream, path: String): ByteArray {
         total += read
         if (total > MAX_TEXT_SIZE) {
             throw IOException(
-                "Entry \"$path\" exceeds the $MAX_TEXT_SIZE byte cap while reading.",
+                "Entry \"$path\" exceeded the $MAX_TEXT_SIZE byte cap while reading " +
+                    "(declared size was within the cap, or unknown).",
             )
         }
         buffer.write(chunk, 0, read)

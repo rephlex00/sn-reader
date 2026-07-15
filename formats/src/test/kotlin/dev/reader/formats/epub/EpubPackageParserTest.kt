@@ -107,6 +107,24 @@ class EpubPackageParserTest {
     }
 
     @Test
+    fun `a zip-bombed container xml surfaces as EpubException, not a raw IOException`() {
+        // A 17 MB container.xml is exactly the untrusted input the readText size cap
+        // exists for. Before this fix, ZipResourceSource.readText's raw IOException
+        // escaped EpubPackageParser.parse uncaught, breaking the documented
+        // "catch (e: EpubException)" contract.
+        val chunk = "a".repeat(1024)
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", chunk.repeat(17 * 1024))
+        }
+
+        val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.Malformed::class.java)
+        assertThat(e).isNotInstanceOf(java.io.IOException::class.java)
+        assertThat(e!!.message).contains("META-INF/container.xml")
+    }
+
+    @Test
     fun `reports an empty spine as malformed`() {
         val source = buildEpub(file()) {
             entry("META-INF/container.xml", CONTAINER_XML)
@@ -140,7 +158,11 @@ class EpubPackageParserTest {
     }
 
     @Test
-    fun `treats an unparseable encryption xml as DRM (fail closed)`() {
+    fun `treats encryption xml with no algorithms as DRM (fail closed)`() {
+        // NB: this does NOT exercise the runCatching parse-failure branch — Jsoup's
+        // xmlParser is lenient and does not throw on "not even xml <<<". It falls
+        // through to the "no algorithms listed" branch instead, which is still the
+        // correct fail-closed outcome; the test name previously implied otherwise.
         val source = buildEpub(file()) {
             entry("META-INF/container.xml", CONTAINER_XML)
             entry("META-INF/encryption.xml", "not even xml <<<")
