@@ -257,9 +257,13 @@ class XhtmlBlockParserTest {
     @Test
     fun `blockquote with only inline content stays a single quote`() {
         val blocks = parse("<blockquote>Quoted <b>text</b>.</blockquote>")
+        val text = (blocks.single() as Block.Quote).text
 
         assertThat(blocks).hasSize(1)
-        assertThat((blocks.single() as Block.Quote).text.text).isEqualTo("Quoted text.")
+        assertThat(text.text).isEqualTo("Quoted text.")
+        // This span is the exact property that regressed in `visitContainerChildren`
+        // (identical markup, `<div>` instead of `<blockquote>`) before fix wave 3.
+        assertThat(text.spans).containsExactly(StyleSpan(7, 11, InlineStyle.BOLD))
     }
 
     // --- Wave 2, finding 1: blockquote must walk ALL children in document order, not just p/div ---
@@ -425,5 +429,44 @@ class XhtmlBlockParserTest {
         val after = (blocks[1] as Block.Paragraph).text
         assertThat(after.text).isEqualTo("x")
         assertThat(after.spans).containsExactly(StyleSpan(0, 1, InlineStyle.BOLD))
+    }
+
+    // --- Fix wave 3: a container with MIXED inline content must accumulate one run, not
+    // fragment into one Paragraph per bare text node with styling destroyed. No prior test
+    // exercised a bare inline element (`<b>`) as a *direct* child of a transparent container
+    // or of <body> itself — the exact shape that let this survive three review waves. ---
+
+    @Test
+    fun `mixed inline content directly in a container becomes one paragraph with its span intact`() {
+        val blocks = parse("<div>Quoted <b>text</b>.</div>")
+
+        assertThat(blocks).hasSize(1)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.text).isEqualTo("Quoted text.")
+        assertThat(text.spans).containsExactly(StyleSpan(7, 11, InlineStyle.BOLD))
+    }
+
+    @Test
+    fun `mixed inline content directly in body becomes one paragraph with its span intact`() {
+        val blocks = parser.parse("<html><body>Hello <b>world</b>!</body></html>", "OEBPS/text/ch1.xhtml")
+
+        assertThat(blocks).hasSize(1)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.text).isEqualTo("Hello world!")
+        assertThat(text.spans).containsExactly(StyleSpan(6, 11, InlineStyle.BOLD))
+    }
+
+    // --- Fix wave 3, minor 1: unifying the container/blockquote walks makes routing <ul>/<ol>
+    // through normal dispatch natural, so list items nested in a blockquote now keep their
+    // ListItem type (with ordinals) instead of degrading to plain Quote text. ---
+
+    @Test
+    fun `list items inside a blockquote keep their ListItem type via natural dispatch`() {
+        val blocks = parse("<blockquote><ul><li>A</li><li>B</li></ul></blockquote>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.ListItem).text.text).isEqualTo("A")
+        assertThat((blocks[0] as Block.ListItem).ordinal).isNull()
+        assertThat((blocks[1] as Block.ListItem).text.text).isEqualTo("B")
     }
 }

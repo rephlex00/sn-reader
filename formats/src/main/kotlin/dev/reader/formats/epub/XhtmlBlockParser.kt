@@ -87,19 +87,15 @@ class XhtmlBlockParser {
      * `<body>` has no wrapping element at all. Shared by [dispatch]'s container branch and
      * by [parse], since `<body>` is itself just another container: `Elements`-only iteration
      * (`children()`) would silently drop bare text in either place the same way.
+     *
+     * `flatten = false`: a recognized block-level child (`<p>`, a heading, `<ul>`, `<img>`,
+     * a nested `<blockquote>`, ...) keeps its own natural [Block] type by flushing whatever
+     * bare text ran before it and then re-entering the normal [visit] dispatch — this is
+     * what lets a heading nested three `<div>`s deep still come out as `Block.Heading`
+     * rather than degrading to plain text.
      */
     private fun visitContainerChildren(el: Element, chapterPath: String, out: MutableList<Block>) {
-        el.childNodes().forEach { child ->
-            when {
-                child is Element -> visit(child, chapterPath, out)
-                child is TextNode && child.wholeText.isNotBlank() -> {
-                    val builder = InlineBuilder()
-                    builder.appendText(child.wholeText)
-                    val text = builder.build()
-                    if (text.text.isNotBlank()) out += Block.Paragraph(text)
-                }
-            }
-        }
+        emitRun(el, chapterPath, out, { Block.Paragraph(it) }, flatten = false)
     }
 
     /**
@@ -113,25 +109,45 @@ class XhtmlBlockParser {
      * and becomes its own `Block.Image`; any other container (`<div>`, etc.) flushes and
      * is recursed into with this same walk — so `<div><p>A</p><p>B</p></div>` still
      * yields two Quotes rather than re-collapsing into one concatenated "AB".
+     *
+     * This shares [walkRun] with [visitContainerChildren], differing only in the `Block`
+     * factory (`Block.Quote` here) and in `flatten = true`: unlike a plain container, a
+     * blockquote *flattens* every text-bearing descendant — including headings — down to
+     * `Block.Quote`, rather than letting them keep their natural type. `<ul>`/`<ol>` are the
+     * one exception: routing them through normal dispatch is what they'd do anyway (there's
+     * no "Quote" equivalent of a list item), so nesting a list in a blockquote now correctly
+     * keeps `Block.ListItem` with its ordinal instead of losing it.
      */
     private fun emitBlockquote(el: Element, chapterPath: String, out: MutableList<Block>) {
+        emitRun(el, chapterPath, out, { Block.Quote(it) }, flatten = true)
+    }
+
+    /**
+     * Builds the running [InlineBuilder] + [flushClosure] pair that [walkRun] shares
+     * between [visitContainerChildren] and [emitBlockquote], then flushes once more after
+     * the walk completes to catch whatever ran to the end of [el] unflushed.
+     */
+    private fun emitRun(
+        el: Element,
+        chapterPath: String,
+        out: MutableList<Block>,
+        factory: (StyledText) -> Block,
+        flatten: Boolean,
+    ) {
         val builder = InlineBuilder()
-        val flush = {
-            builder.closeOpenStyles()
-            val text = builder.build()
-            if (text.text.isNotBlank()) out += Block.Quote(text)
-            builder.reset()
-        }
-        walkBlockquote(el, chapterPath, builder, flush, out)
+        val flush = flushClosure(builder, out, factory)
+        walkRun(el, chapterPath, builder, flush, out, factory, flatten)
         flush()
     }
 
-    private fun walkBlockquote(
+    private fun walkRun(
         el: Element,
         chapterPath: String,
         builder: InlineBuilder,
         flush: () -> Unit,
         out: MutableList<Block>,
+        factory: (StyledText) -> Block,
+        flatten: Boolean,
     ) {
         el.childNodes().forEach { node ->
             when (node) {
@@ -141,21 +157,30 @@ class XhtmlBlockParser {
                     "style", "script" -> Unit
                     "img" -> {
                         flush()
-                        emitImage(node, chapterPath, out)
+                        if (flatten) emitImage(node, chapterPath, out) else visit(node, chapterPath, out)
                     }
                     "p", "h1", "h2", "h3", "h4", "h5", "h6" -> {
                         flush()
-                        emitTextBlock(node, chapterPath, out) { Block.Quote(it) }
+                        if (flatten) emitTextBlock(node, chapterPath, out, factory) else visit(node, chapterPath, out)
                     }
                     else -> {
                         val style = inlineStyleOf(tag)
-                        if (style != null) {
-                            builder.pushStyle(style)
-                            node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out) }
-                            builder.popStyle()
-                        } else {
-                            flush()
-                            walkBlockquote(node, chapterPath, builder, flush, out)
+                        when {
+                            style != null -> {
+                                builder.pushStyle(style)
+                                node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out) }
+                                builder.popStyle()
+                            }
+                            // Lists have no "Quote" equivalent, so even a flattening walk
+                            // routes them through normal dispatch (see emitBlockquote's kdoc).
+                            flatten && tag != "ul" && tag != "ol" -> {
+                                flush()
+                                walkRun(node, chapterPath, builder, flush, out, factory, flatten)
+                            }
+                            else -> {
+                                flush()
+                                visit(node, chapterPath, out)
+                            }
                         }
                     }
                 }
@@ -189,17 +214,27 @@ class XhtmlBlockParser {
         factory: (StyledText) -> Block,
     ) {
         val builder = InlineBuilder()
-        val flush = {
-            // Close every style still open at this boundary so the block being
-            // flushed keeps it (see the `<img>` case in walkInline below and
-            // InlineBuilder's kdoc), then build and reset for whatever follows.
-            builder.closeOpenStyles()
-            val text = builder.build()
-            if (text.text.isNotBlank()) out += factory(text)
-            builder.reset()
-        }
+        val flush = flushClosure(builder, out, factory)
         el.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out) }
         flush()
+    }
+
+    /**
+     * The flush step shared by every accumulator in this file ([emitTextBlock], and
+     * [emitRun] on behalf of both [visitContainerChildren] and [emitBlockquote]): close
+     * every style still open at this boundary so the block being flushed keeps it (see the
+     * `<img>` case in [walkInline] below and [InlineBuilder]'s kdoc), build, hand the result
+     * to [factory] unless it's blank, then reset for whatever follows.
+     */
+    private fun flushClosure(
+        builder: InlineBuilder,
+        out: MutableList<Block>,
+        factory: (StyledText) -> Block,
+    ): () -> Unit = {
+        builder.closeOpenStyles()
+        val text = builder.build()
+        if (text.text.isNotBlank()) out += factory(text)
+        builder.reset()
     }
 
     /**
