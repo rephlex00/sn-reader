@@ -4,6 +4,9 @@ plugins {
 
 android {
     namespace = "dev.reader.formats"
+    // 37, not 36: androidx.core:core-ktx:1.19.0's AAR metadata requires
+    // compileSdk >= 37. Needs `sdkmanager "platforms;android-37.1"`.
+    // targetSdk stays 36 — compileSdk does not affect runtime behaviour.
     compileSdk = 37
 
     defaultConfig {
