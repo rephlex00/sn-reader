@@ -180,15 +180,25 @@ class ReaderActivity : AppCompatActivity() {
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
 
-                val firstChapter = doc.chapter(0, renderConfig)
+                // Real EPUBs almost always open on a cover-image page, and images are dropped
+                // until a later plan renders them — so spine item 0 routinely paginates to zero
+                // pages. Landing there would greet every book with an empty screen, so skip
+                // forward to the first chapter that actually has pages, exactly as a page turn
+                // would. Only a book that is empty the whole way through has nothing to show.
+                var start = ReadingState(0, 0)
+                if (doc.chapter(0, renderConfig).pages.isEmpty()) {
+                    start = advance(navigator!!, start) { doc.chapter(it, renderConfig).pages.size }
+                        ?: ReadingState(0, 0)
+                }
+                val firstChapter = doc.chapter(start.spineIndex, renderConfig)
                 if (firstChapter.pages.isEmpty()) {
                     // A missing or empty chapter file paginates to zero pages. showPage() would
                     // return silently and leave a blank white screen — indistinguishable from a
                     // broken app — so name the problem, and say that the book may still be
                     // readable from the next chapter on (advance() skips empty chapters).
-                    showMessage("This book's first chapter is empty. Tap the right edge to read on.")
+                    showMessage("This book has no readable text.")
                 } else {
-                    showPage(ReadingState(0, 0))
+                    showPage(start)
                 }
             } catch (e: CancellationException) {
                 // The activity was destroyed while open() was in flight. lifecycleScope cancelled
