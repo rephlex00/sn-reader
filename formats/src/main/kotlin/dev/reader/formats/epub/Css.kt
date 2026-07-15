@@ -25,6 +25,8 @@ class CssRules private constructor(
     private val tagRules: Map<String, Map<String, String>>,
     private val classRules: Map<String, Map<String, String>>,
     private val compoundRules: Map<String, Map<String, String>>,
+    private val classRuleOrder: Map<String, Int>,
+    private val compoundRuleOrder: Map<String, Int>,
 ) {
 
     /**
@@ -32,10 +34,11 @@ class CssRules private constructor(
      * [tag] name, [classes], and optional [inlineStyle] attribute value.
      *
      * Precedence: inline style > class/tag.class rules > tag rules. Within
-     * the class tier, classes are applied in the order given in [classes]
-     * (a plain class rule immediately followed by its `tag.class`
-     * counterpart, if any), so a later entry always overlays an earlier one
-     * - consistent with "later wins" among equals.
+     * the class tier, the matching class and tag.class rules are layered in
+     * the order they appeared in the *stylesheet* - not the order [classes]
+     * happens to list them in - so a cascade answer never depends on the
+     * order an author wrote a `class="..."` attribute. Among equals, the
+     * rule that appears later in the stylesheet wins.
      *
      * Returns an empty map (never null) when nothing matches, including for
      * [EMPTY].
@@ -45,11 +48,25 @@ class CssRules private constructor(
         val lowerTag = tag.lowercase()
 
         tagRules[lowerTag]?.let { result.putAll(it) }
+
+        // Collect every matching class-tier rule together with its
+        // stylesheet source index, then apply them in that order - so two
+        // conflicting classes resolve by stylesheet position regardless of
+        // which order the caller's `classes` list happens to put them in.
+        val classTierMatches = mutableListOf<Pair<Int, Map<String, String>>>()
         for (className in classes) {
             val lowerClass = className.lowercase()
-            classRules[lowerClass]?.let { result.putAll(it) }
-            compoundRules["$lowerTag.$lowerClass"]?.let { result.putAll(it) }
+            classRules[lowerClass]?.let { decls ->
+                classTierMatches += classRuleOrder.getValue(lowerClass) to decls
+            }
+            val compoundKey = "$lowerTag.$lowerClass"
+            compoundRules[compoundKey]?.let { decls ->
+                classTierMatches += compoundRuleOrder.getValue(compoundKey) to decls
+            }
         }
+        classTierMatches.sortBy { it.first }
+        for ((_, decls) in classTierMatches) result.putAll(decls)
+
         inlineStyle?.let { result.putAll(parseDeclarations(it)) }
 
         return result
@@ -57,7 +74,7 @@ class CssRules private constructor(
 
     companion object {
 
-        val EMPTY = CssRules(emptyMap(), emptyMap(), emptyMap())
+        val EMPTY = CssRules(emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptyMap())
 
         /**
          * Parses a stylesheet into a [CssRules]. Never throws: any block
@@ -69,6 +86,9 @@ class CssRules private constructor(
             val tagRules = LinkedHashMap<String, MutableMap<String, String>>()
             val classRules = LinkedHashMap<String, MutableMap<String, String>>()
             val compoundRules = LinkedHashMap<String, MutableMap<String, String>>()
+            val classRuleOrder = LinkedHashMap<String, Int>()
+            val compoundRuleOrder = LinkedHashMap<String, Int>()
+            var nextRuleIndex = 0
 
             val stripped = stripComments(css)
             var i = 0
@@ -78,7 +98,12 @@ class CssRules private constructor(
                 val braceIndex = stripped.indexOf('{', i)
                 if (braceIndex < 0) break // no more rules; whatever's left is a trailing fragment
 
-                val selectorText = stripped.substring(i, braceIndex)
+                // Resync past any stray `}` left over from malformed CSS
+                // earlier in the stylesheet, so it doesn't corrupt this
+                // selector's text (and silently drop this rule).
+                val rawSelectorText = stripped.substring(i, braceIndex)
+                val staleClose = rawSelectorText.lastIndexOf('}')
+                val selectorText = if (staleClose >= 0) rawSelectorText.substring(staleClose + 1) else rawSelectorText
 
                 val closeIndex = findMatchingClose(stripped, braceIndex)
                 if (closeIndex < 0) break // unterminated block: stop, keep everything parsed so far
@@ -92,6 +117,8 @@ class CssRules private constructor(
                 val declarations = parseDeclarations(body)
                 if (declarations.isEmpty()) continue
 
+                val ruleIndex = nextRuleIndex++
+
                 for (rawSelector in selectorText.split(",")) {
                     val selector = rawSelector.trim().lowercase()
                     if (selector.isEmpty()) continue
@@ -99,18 +126,21 @@ class CssRules private constructor(
                     when (val parsed = parseSimpleSelector(selector)) {
                         is SimpleSelector.Tag ->
                             tagRules.getOrPut(parsed.tag) { LinkedHashMap() }.putAll(declarations)
-                        is SimpleSelector.Class ->
+                        is SimpleSelector.Class -> {
                             classRules.getOrPut(parsed.className) { LinkedHashMap() }.putAll(declarations)
+                            classRuleOrder[parsed.className] = ruleIndex
+                        }
                         is SimpleSelector.TagAndClass -> {
                             val key = "${parsed.tag}.${parsed.className}"
                             compoundRules.getOrPut(key) { LinkedHashMap() }.putAll(declarations)
+                            compoundRuleOrder[key] = ruleIndex
                         }
                         null -> Unit // unsupported selector (descendant, pseudo, attribute, ...): ignore
                     }
                 }
             }
 
-            return CssRules(tagRules, classRules, compoundRules)
+            return CssRules(tagRules, classRules, compoundRules, classRuleOrder, compoundRuleOrder)
         }
 
         private fun stripComments(css: String): String {
@@ -176,7 +206,12 @@ class CssRules private constructor(
             data class TagAndClass(val tag: String, val className: String) : SimpleSelector()
         }
 
-        private const val IDENTIFIER = "[a-z][a-z0-9_-]*"
+        // Leading char excludes digits (CSS identifiers can't start with
+        // one), but allows a leading `_`/`-` or any non-ASCII letter, so
+        // e.g. `._chapter` (hand-authored publisher CSS) isn't silently
+        // dropped. Selectors are lowercased before matching, so no need for
+        // an explicit A-Z range.
+        private const val IDENTIFIER = "[a-z_\\-\\p{L}][a-z0-9_\\-\\p{L}\\p{N}]*"
         private val tagSelectorRegex = Regex("^($IDENTIFIER)$")
         private val classSelectorRegex = Regex("^\\.($IDENTIFIER)$")
         private val tagAndClassSelectorRegex = Regex("^($IDENTIFIER)\\.($IDENTIFIER)$")

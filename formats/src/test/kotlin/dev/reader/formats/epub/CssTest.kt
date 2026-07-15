@@ -62,6 +62,43 @@ class CssTest {
     }
 
     @Test
+    fun `conflicting classes resolve by stylesheet order not classes list order`() {
+        // .a comes after .b in the stylesheet, so .a must win regardless of
+        // which order the caller happens to list the classes in.
+        val css = CssRules.parse(".b { font-style: normal } .a { font-style: italic }")
+        assertThat(css.declarationsFor("span", listOf("a", "b"), null))
+            .containsEntry("font-style", "italic")
+        assertThat(css.declarationsFor("span", listOf("b", "a"), null))
+            .containsEntry("font-style", "italic")
+    }
+
+    @Test
+    fun `stray closing brace does not drop the following rule`() {
+        val css = CssRules.parse("p { color: red } } .x { font-style: italic }")
+        assertThat(css.declarationsFor("span", listOf("x"), null))
+            .containsEntry("font-style", "italic")
+    }
+
+    @Test
+    fun `class names may start with underscore or hyphen`() {
+        val css = CssRules.parse("._chapter { font-style: italic } .-title { font-weight: bold }")
+        assertThat(css.declarationsFor("span", listOf("_chapter"), null))
+            .containsEntry("font-style", "italic")
+        assertThat(css.declarationsFor("span", listOf("-title"), null))
+            .containsEntry("font-weight", "bold")
+    }
+
+    @Test
+    fun `survives a nested-brace at-rule`() {
+        val css = CssRules.parse("@media screen { .x { color: red } } .y { font-style: italic }")
+        assertThat(css.declarationsFor("span", listOf("y"), null))
+            .containsEntry("font-style", "italic")
+        // The nested .x rule lives inside the skipped @media block and must
+        // not leak out as if it were a top-level rule.
+        assertThat(css.declarationsFor("span", listOf("x"), null)).doesNotContainKey("color")
+    }
+
+    @Test
     fun `strips comments`() {
         val css = CssRules.parse("/* a note */ .x { font-style: italic } /* another */")
         assertThat(css.declarationsFor("span", listOf("x"), null))
