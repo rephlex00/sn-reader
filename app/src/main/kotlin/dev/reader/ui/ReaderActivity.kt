@@ -38,8 +38,14 @@ import java.io.File
  * callback, which View always delivers on the main thread) because `chapter()`'s cache is
  * documented as not thread-safe. Only opening the document (pure I/O, no cache involved yet)
  * runs on Dispatchers.IO.
+ *
+ * `open`, not `final`: [ReaderActivityTest]'s Robolectric coverage substitutes
+ * [isAllFilesAccessGranted], [openDocument], and [findFirstEpub] via a test subclass — the three
+ * points where this class reaches out to real device permissions, real multi-second EPUB opens,
+ * and a real /Document tree, none of which a JVM test can exercise meaningfully. The same seam
+ * pattern as [LibraryActivity]; no other member is `open`.
  */
-class ReaderActivity : AppCompatActivity() {
+open class ReaderActivity : AppCompatActivity() {
 
     private lateinit var pageView: PageView
     private var document: EpubDocument? = null
@@ -69,7 +75,7 @@ class ReaderActivity : AppCompatActivity() {
         pageView = PageView(this)
         setContentView(pageView)
 
-        if (!hasAllFilesAccess()) {
+        if (!isAllFilesAccessGranted()) {
             requestAllFilesAccess()
             return
         }
@@ -78,25 +84,33 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (document == null && !opening && hasAllFilesAccess()) {
-            pageView.doOnLayout { openFirstBook() }
+        if (document != null || opening) return
+        if (!isAllFilesAccessGranted()) {
+            // Without the permission there is nothing this screen can ever show, and silently
+            // doing nothing here (as this branch used to) leaves a blank white page
+            // indistinguishable from a broken app. Say why and bow out; reopening after
+            // granting starts clean. (In the normal flow this is unreachable: LibraryActivity
+            // already gated on the same permission before launching us.)
+            showMessage("Reader needs all-files access to open books.")
+            finish()
+            return
         }
+        pageView.doOnLayout { openFirstBook() }
     }
+
+    /**
+     * Whether all-files access is currently granted — the same thin `protected open` wrapper
+     * around [hasAllFilesAccess] as [LibraryActivity]'s, and for the same reason: Robolectric
+     * cannot fake `Environment.isExternalStorageManager()`, so [ReaderActivityTest] stubs this
+     * one point via a test subclass.
+     */
+    protected open fun isAllFilesAccessGranted(): Boolean = hasAllFilesAccess()
 
     override fun onDestroy() {
         document?.close()
         document = null
         super.onDestroy()
     }
-
-    /**
-     * The path handed in by [LibraryActivity], if any — see [EXTRA_BOOK_PATH]. Checked against
-     * [File.isFile] so a book that was deleted or moved out from under a stale extra (e.g. the
-     * grid's index is behind the filesystem, or the intent was crafted by hand) falls back to
-     * [findFirstEpub] instead of surfacing "Couldn't open this book" for a file that was never
-     * there to open.
-     */
-    private fun explicitBookFile(): File? = intent.getStringExtra(EXTRA_BOOK_PATH)?.let(::File)?.takeIf { it.isFile }
 
     private fun openFirstBook() {
         if (document != null || opening) return
@@ -138,19 +152,31 @@ class ReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             var opened: EpubDocument? = null
             try {
-                val file = withContext(Dispatchers.IO) { explicitBookFile() ?: findFirstEpub() }
+                val explicitPath = intent.getStringExtra(EXTRA_BOOK_PATH)
+                val file = withContext(Dispatchers.IO) {
+                    if (explicitPath != null) File(explicitPath).takeIf { it.isFile } else findFirstEpub()
+                }
                 if (file == null) {
-                    // Not a permanent failure: the user may drop a book in and come back, and
-                    // onResume re-arms only while `opening` is false.
                     opening = false
-                    showMessage("No EPUB found in /Document.")
+                    if (explicitPath != null) {
+                        // The tapped book vanished between the grid painting and the tap landing
+                        // (the index can be behind the filesystem). Falling back to findFirstEpub
+                        // here — as this path used to — silently opens a DIFFERENT book than the
+                        // one tapped, and once Task 6 wires position memory it would write that
+                        // book's position onto the wrong row. Name the problem and bow out; the
+                        // library re-syncs on re-entry and drops the stale cell.
+                        showMessage("That book is no longer there.")
+                        finish()
+                    } else {
+                        // No extra at all: the standalone adb launch path. Not a permanent
+                        // failure — the user may drop a book in and come back, and onResume
+                        // re-arms only while `opening` is false.
+                        showMessage("No EPUB found in /Document.")
+                    }
                     return@launch
                 }
                 withContext(Dispatchers.IO) {
-                    opened = EpubDocument.open(
-                        file,
-                        AndroidTextMeasurer(SpannedChapterBuilder(), TypefaceProvider.Platform),
-                    )
+                    opened = openDocument(file)
                 }
                 val doc = opened!!
                 document = doc
@@ -200,9 +226,27 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun findFirstEpub(): File? = try {
+    /**
+     * Opens [file] as an EPUB — always called on [Dispatchers.IO]. `protected open` purely as a
+     * test seam: [ReaderActivityTest] substitutes implementations that count invocations, block
+     * until released, or throw, to exercise the [opening]-flag race, the cancel-mid-open close
+     * path, and failed-open recovery without racing real multi-second book opens. Production
+     * always opens the real file with the real Android measurer.
+     */
+    protected open fun openDocument(file: File): EpubDocument = EpubDocument.open(
+        file,
+        AndroidTextMeasurer(SpannedChapterBuilder(), TypefaceProvider.Platform),
+    )
+
+    /**
+     * The standalone-launch fallback (no [EXTRA_BOOK_PATH] on the intent): the first EPUB under
+     * /Document. `protected open` purely as a test seam — [ReaderActivityTest] substitutes it to
+     * exercise the fallback path without a real /Document tree.
+     */
+    protected open fun findFirstEpub(): File? = try {
         val documents = File(Environment.getExternalStorageDirectory(), "Document")
         documents.walkTopDown()
+            .maxDepth(10) // Closes an unbounded symlink-loop walk; matches LibraryIndexer.walk().
             .filter { it.isFile && it.extension.equals("epub", ignoreCase = true) }
             .firstOrNull()
     } catch (e: SecurityException) {
