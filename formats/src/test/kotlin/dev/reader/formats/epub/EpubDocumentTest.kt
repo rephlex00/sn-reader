@@ -15,6 +15,10 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.GraphicsMode
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -481,6 +485,131 @@ class EpubDocumentTest {
 
             assertThat(italicSpans).isEmpty()
             assertThat(text.toString()).contains("word")
+        }
+    }
+
+    // --- Task 6b, Part A: paginate() is safe to call off the main thread. This corroborates the
+    // by-construction race-freedom (immutable pkg, concurrent ZipFile, per-call parser, concurrent
+    // cssCache holding immutable CssRules) by hammering paginate() from many threads while the test
+    // thread — standing in for "main" — drives chapter() through its single-thread-confined cache.
+    // A pre-fix build (shared XhtmlBlockParser, plain-map cssCache) fails this with a corrupted
+    // parse or a ConcurrentModificationException/NPE. ---
+
+    /**
+     * A multi-chapter EPUB engineered to make BOTH shared-mutable-state races observable in the
+     * paginated output, not merely as a rare exception:
+     *  - Each chapter links its OWN stylesheet with a DISTINCT absolute `body` font-size baseline
+     *    ((10 + i)pt), plus a `.big` class sized in absolute px. The parser mines that baseline into
+     *    its mutable `baselinePx`, and every `.big` span's rendered size is `24px / baseline` — so a
+     *    shared parser whose `baselinePx` is overwritten by a concurrent parse of a different chapter
+     *    yields the WRONG span size, hence different measurement and different pages. Distinct
+     *    stylesheets also give [EpubDocument.cssCache] many keys inserted concurrently, so a plain
+     *    (non-concurrent) map can corrupt/throw on resize.
+     *  - Distinct coloured emphasis classes exercise the parser's `colorMemo`.
+     * Chapter bodies vary in length so paginations differ per chapter.
+     */
+    private fun styledMultiChapterEpub(file: java.io.File, chapterCount: Int) = buildEpub(file) {
+        entry("META-INF/container.xml", CONTAINER_XML)
+        val items = (0 until chapterCount).joinToString("\n") { i ->
+            """<item id="ch$i" href="ch$i.xhtml" media-type="application/xhtml+xml"/>"""
+        }
+        val itemrefs = (0 until chapterCount).joinToString("\n") { i -> """<itemref idref="ch$i"/>""" }
+        entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Stress</dc:title></metadata>
+  <manifest>
+$items
+  </manifest>
+  <spine>
+$itemrefs
+  </spine>
+</package>""")
+        for (i in 0 until chapterCount) {
+            // A DISTINCT absolute baseline per chapter — this is what makes a shared `baselinePx`
+            // corrupt the OUTPUT (via `.big`'s size ratio), not just the colour cache.
+            entry(
+                "OEBPS/ch$i.css",
+                """
+                body { font-size: ${10 + i}pt }
+                .big { font-size: 24px }
+                .a { color: #808080; font-style: italic }
+                .b { color: navy; font-weight: bold }
+                .c { color: rgb(64, 64, 64); text-decoration: underline }
+                """.trimIndent(),
+            )
+            // Length varies with i so paginations differ; every chapter uses the coloured classes
+            // and a `.big` absolute-px span so a fresh parser resolves colour and baseline each parse.
+            val paras = (0..(i + 3)).joinToString("") { p ->
+                """<p>Chapter $i paragraph $p with <span class="big">BIG</span> <span class="a">alpha</span>, """ +
+                    """<span class="b">beta</span> and <span class="c">gamma</span> emphasis. """ +
+                    "More words to fill the page. ".repeat(p + 1) + "</p>"
+            }
+            entry(
+                "OEBPS/ch$i.xhtml",
+                """<html><head><link rel="stylesheet" href="ch$i.css"/></head><body>$paras</body></html>""",
+            )
+        }
+    }
+
+    @Test
+    fun `paginate is safe to call concurrently and matches the single-threaded result`() {
+        val chapterCount = 6
+        val file = temp.newFile("stress.epub")
+        styledMultiChapterEpub(file, chapterCount).close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            // Single-threaded baseline: the pages and laid-out text each chapter MUST produce.
+            // Captured before any concurrency so it is the trusted reference.
+            fun layoutText(chapter: PaginatedChapter) =
+                (chapter.measured as AndroidMeasuredChapter).layout.text.toString()
+            val baselinePages = (0 until chapterCount).map { doc.paginate(it, config).pages }
+            val baselineText = (0 until chapterCount).map { layoutText(doc.paginate(it, config)) }
+
+            val threads = 8
+            val iterations = 40
+            val errors = CopyOnWriteArrayList<Throwable>()
+            val pool = Executors.newFixedThreadPool(threads)
+            val start = CountDownLatch(1)
+
+            // Worker threads only ever call paginate() — the operation under test. They race each
+            // other AND the chapter() loop below on cssCache and on constructing parsers.
+            val futures = (0 until threads).map { t ->
+                pool.submit {
+                    start.await()
+                    repeat(iterations) { r ->
+                        val i = (t + r) % chapterCount
+                        try {
+                            val result = doc.paginate(i, config)
+                            if (result.pages != baselinePages[i]) {
+                                error("chapter $i pages diverged under concurrency")
+                            }
+                            if (layoutText(result) != baselineText[i]) {
+                                error("chapter $i laid-out text diverged under concurrency")
+                            }
+                        } catch (e: Throwable) {
+                            errors.add(e)
+                        }
+                    }
+                }
+            }
+
+            start.countDown()
+            // The test thread stands in for the main thread: it alone drives chapter(), so the
+            // unsynchronized chapter cache stays single-thread-confined exactly as in production,
+            // while the workers hammer paginate() concurrently.
+            repeat(iterations * threads) { r ->
+                try {
+                    doc.chapter(r % chapterCount, config)
+                } catch (e: Throwable) {
+                    errors.add(e)
+                }
+            }
+
+            futures.forEach { it.get(60, TimeUnit.SECONDS) }
+            pool.shutdown()
+            assertThat(pool.awaitTermination(10, TimeUnit.SECONDS)).isTrue()
+
+            if (errors.isNotEmpty()) throw AssertionError("${errors.size} concurrent failure(s); first:", errors.first())
         }
     }
 }

@@ -14,6 +14,7 @@ import dev.reader.formats.ZipResourceSource
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document as JsoupDocument
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /** One chapter, measured and sliced into pages. */
 data class PaginatedChapter(val measured: MeasuredChapter, val pages: List<Page>)
@@ -43,7 +44,6 @@ class EpubDocument private constructor(
     override val toc: List<TocEntry>,
 ) : Document {
 
-    private val blockParser = XhtmlBlockParser()
     private val paginator = Paginator()
 
     // Only the current config's chapters are worth holding; a settings change invalidates
@@ -61,7 +61,15 @@ class EpubDocument private constructor(
     // concatenated form: an href containing a space would make ["a b.css"] and
     // ["a", "b.css"] collide as joined strings, and flat concatenation would lose the
     // boundary between the href list and the inline-block list.
-    private val cssCache = mutableMapOf<Pair<List<String>, List<String>>, CssRules>()
+    //
+    // A ConcurrentHashMap (not a plain map) because [paginate] runs off the main thread
+    // for background prefetch while [chapter] runs on it: two threads reaching [cssFor]
+    // for chapters sharing a stylesheet would otherwise structurally corrupt a plain map.
+    // cssFor inserts via computeIfAbsent, which parses each distinct key exactly once even
+    // under concurrency (the "parsed once for the life of the document" guarantee above
+    // survives the move off a single thread). The stored [CssRules] is deeply immutable,
+    // so a value published by one thread is safe for another to read.
+    private val cssCache = ConcurrentHashMap<Pair<List<String>, List<String>>, CssRules>()
 
     override val metadata: BookMetadata get() = pkg.metadata
     override val spineSize: Int get() = pkg.spine.size
@@ -88,12 +96,27 @@ class EpubDocument private constructor(
     }
 
     /**
-     * Measures and paginates chapter [spineIndex] under [config] WITHOUT touching the cache — a
-     * pure function of its inputs (and the immutable archive). This is the compute half of
-     * [chapter], split out so a background prefetch can run it off the main thread (StaticLayout
+     * Measures and paginates chapter [spineIndex] under [config] WITHOUT touching the chapter
+     * cache — a pure function of its inputs (and the immutable archive). This is the compute half
+     * of [chapter], split out so a background prefetch can run it off the main thread (StaticLayout
      * construction is off-main-thread-safe) and then hand the result to [publish] on a main-thread
-     * hop. It reads no cache state and writes none, so it is safe to call concurrently with a
-     * main-thread page turn.
+     * hop.
+     *
+     * Thread-safe by construction: it is safe to call concurrently with itself and with a
+     * main-thread [chapter]/page turn, because it shares NO mutable state across threads. Every
+     * input it reads is either immutable or independently concurrent —
+     *  - [pkg] (manifest/spine) and [config] are immutable;
+     *  - [source] wraps a `java.util.zip.ZipFile`, whose `getEntry`/`getInputStream` serve
+     *    independent streams safely to concurrent readers;
+     *  - the [XhtmlBlockParser] is constructed fresh per [readBlocks] call, so its documented
+     *    per-parse mutable state (baseline, colour memo) is confined to the calling thread — no
+     *    instance is ever shared;
+     *  - [measurer] and [paginator] hold no mutable instance state (fresh `TextPaint`/builder per
+     *    call);
+     *  - [cssCache] is a [ConcurrentHashMap] holding deeply-immutable [CssRules] values.
+     * It reads no chapter-cache state and writes none, so a settings change or page turn racing it
+     * cannot observe a partial result. Publishing the result is [publish]'s job, and that touches
+     * the (unsynchronized) chapter cache, so it — like [chapter] — stays main-thread only.
      */
     fun paginate(spineIndex: Int, config: RenderConfig): PaginatedChapter {
         require(spineIndex in pkg.spine.indices) {
@@ -145,7 +168,13 @@ class EpubDocument private constructor(
         // (resolveHref against the chapter), exactly as coverHref is pre-resolved for
         // EpubCoverExtractor, so this reads it directly. An unresolvable/oversized entry
         // degrades to null bytes (the renderer then draws nothing) rather than throwing.
-        return blockParser.parse(doc, item.href, css, config.inferHeadings).map { block ->
+        // A fresh parser per call, never a shared field: XhtmlBlockParser is documented NOT
+        // thread-safe (per-parse baseline + colour memo), and [paginate] can run on a background
+        // prefetch thread concurrently with a main-thread chapter load. A per-call instance
+        // confines that mutable state to the calling thread — the parser's "confine to one thread"
+        // contract — at the cost only of a per-chapter colour memo instead of a per-document one
+        // (colour parsing is a trivial regex, still memoized within the chapter).
+        return XhtmlBlockParser().parse(doc, item.href, css, config.inferHeadings).map { block ->
             if (block is Block.Image) block.copy(bytes = resolveImageBytes(block.href)) else block
         }
     }
@@ -180,7 +209,11 @@ class EpubDocument private constructor(
         val resolvedHrefs = refs.hrefs.map { resolveHref(chapterPath, it) }
         val cacheKey = resolvedHrefs to refs.inlineBlocks
 
-        return cssCache.getOrPut(cacheKey) {
+        // computeIfAbsent (not getOrPut): its read-modify-write is atomic per key on a
+        // ConcurrentHashMap, so a stylesheet shared by two chapters paginating on two threads is
+        // parsed exactly once, never raced into a corrupt map. The mapping function only reads the
+        // archive and parses CSS — it never touches cssCache — so it cannot deadlock the bin lock.
+        return cssCache.computeIfAbsent(cacheKey) {
             val combined = buildString {
                 for (href in resolvedHrefs) {
                     val text = try {
