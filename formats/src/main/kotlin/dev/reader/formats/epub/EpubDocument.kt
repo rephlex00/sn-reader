@@ -110,8 +110,29 @@ class EpubDocument private constructor(
         // parsing cost of every chapter load for no benefit.
         val doc = Jsoup.parse(xhtml)
         val css = cssFor(doc, item.href)
-        return blockParser.parse(doc, item.href, css, config.inferHeadings)
+        // The builder (and AndroidTextMeasurer) can't reach the zip — ResourceSource is
+        // private to this class — so the image bytes are resolved HERE and carried on the
+        // block. The parser already resolved each Block.Image.href to an archive path
+        // (resolveHref against the chapter), exactly as coverHref is pre-resolved for
+        // EpubCoverExtractor, so this reads it directly. An unresolvable/oversized entry
+        // degrades to null bytes (the renderer then draws nothing) rather than throwing.
+        return blockParser.parse(doc, item.href, css, config.inferHeadings).map { block ->
+            if (block is Block.Image) block.copy(bytes = resolveImageBytes(block.href)) else block
+        }
     }
+
+    /**
+     * Reads an inline image's bytes through [readBytesChecked] — the same size-capped binary
+     * read the cover extractor uses — translating the oversized/unreadable case to null
+     * rather than letting it abort the chapter. Decoding and downsampling happen later, in
+     * the builder; this only fetches the raw entry.
+     */
+    private fun resolveImageBytes(href: String): ByteArray? =
+        try {
+            readBytesChecked(source, href)
+        } catch (e: EpubException.Malformed) {
+            null // an oversized/unreadable image entry degrades to no image
+        }
 
     /**
      * Gathers every stylesheet [chapterPath]'s XHTML references - `<link rel="stylesheet">`
