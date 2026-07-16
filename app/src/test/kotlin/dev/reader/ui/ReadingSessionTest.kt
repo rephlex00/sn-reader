@@ -44,13 +44,15 @@ class ReadingSessionTest {
     fun `an out-of-range stored spineIndex falls back to first non-empty from chapter 0`() {
         val session = ReadingSession()
         // The file shrank under us: chapter 7 no longer exists (spineSize 3). Treat as no stored
-        // position — a fresh start from chapter 0. Chapter 0 is a cover (empty), so it skips.
+        // position — a fresh start from chapter 0. Chapter 0 paginates to zero pages here (a cover
+        // the parser renders no block for — an SVG/<image> cover — or a chapter that lost its
+        // text; an <img> cover now renders and is NOT zero-page), so the skip fires.
         var skippedFrom = -1
 
         val start = session.resolveStart(
             stored = Locator(spineIndex = 7, charOffset = 900),
             spineSize = 3,
-            pageCountFor = { chapter -> if (chapter == 0) 0 else 4 }, // chapter 0 empty (cover)
+            pageCountFor = { chapter -> if (chapter == 0) 0 else 4 }, // chapter 0 has no pages
             offsetToPageIndex = { _, _ -> error("must not map an offset on the clamp path") },
             firstNonEmptyFrom = { from ->
                 skippedFrom = from

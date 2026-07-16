@@ -635,9 +635,14 @@ open class ReaderActivity : AppCompatActivity() {
                 // resolveStart owns the clamp / empty-chapter fallback / offset->page rules (unit-
                 // tested in ReadingSessionTest). The lambdas are the only impure parts:
                 //  - firstNonEmptyFrom generalizes the old cover-skip: advance() from the stored (or
-                //    0th) chapter, skipping empty chapters exactly as a page turn would. Real EPUBs
-                //    almost always open on a cover-image page that paginates to zero pages, so a
-                //    fresh read still lands on the first chapter with text.
+                //    0th) chapter, skipping empty chapters exactly as a page turn would. It only
+                //    fires for a chapter that paginates to ZERO pages — a cover the parser renders
+                //    no block for (an SVG/<image> cover, common), or content that lost its text.
+                //    Since inline images render, an <img>-based cover chapter now paginates to one
+                //    page (the image itself) instead of the blank page it used to show, so it is
+                //    NOT skipped: a fresh read deliberately lands on the cover image, and the reader
+                //    turns to the text. A stored position still restores exactly (its offset
+                //    resolves regardless); only the never-opened landing shows the cover first.
                 //  - offsetToPageIndex maps the stored char offset back to a page; pageIndexFor
                 //    already survives a re-pagination after a font-size/margin change (:engine test).
                 val pageCountFor: (Int) -> Int = { doc.chapter(it, renderConfig).pages.size }
