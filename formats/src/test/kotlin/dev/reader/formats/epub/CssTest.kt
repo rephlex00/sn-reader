@@ -175,7 +175,14 @@ class CssTest {
 
     @Test
     fun `a repeated compound selector does not hoist its earlier declarations past a later rule`() {
-        val css = CssRules.parse("p.a { font-weight: bold }  .b { font-weight: normal }  p.a { color: red }")
+        // Both competing selectors are `p.<class>`, so they share specificity (0,1,1) and
+        // source order alone decides — the property this guards. (The original fixture pitted
+        // `p.a` against a bare `.b`; under the real (id,class,type) cascade this task adds,
+        // `p.a` (0,1,1) legitimately outranks `.b` (0,1,0) by specificity, which would mask
+        // the hoisting bug rather than expose it. Equal-specificity operands keep the guard
+        // meaningful: the later `p.a { color: red }` block must not drag its sibling block's
+        // earlier `font-weight: bold` past the intervening `p.b { font-weight: normal }`.)
+        val css = CssRules.parse("p.a { font-weight: bold }  p.b { font-weight: normal }  p.a { color: red }")
 
         assertThat(css.declarationsFor("p", listOf("a", "b"), null))
             .containsEntry("font-weight", "normal")
@@ -194,5 +201,245 @@ class CssTest {
         val css = CssRules.parse(".X { FONT-STYLE: Italic }")
         assertThat(css.declarationsFor("span", listOf("x"), null))
             .containsEntry("font-style", "italic")
+    }
+
+    // --- Specificity: the real (id, class, type) rule, compared left to right. ---
+
+    @Test
+    fun `tag dot class beats a bare class regardless of source order`() {
+        // p.foo appears FIRST; under flat tiering the later `.foo` would win by source
+        // order. Real specificity: p.foo (0,1,1) outranks .foo (0,1,0), so blue wins.
+        val css = CssRules.parse("p.foo { color: blue } .foo { color: red }")
+        assertThat(css.resolve(listOf(ElementCtx("p", listOf("foo")))))
+            .containsEntry("color", "blue")
+    }
+
+    @Test
+    fun `a class beats a tag even when the tag rule is later`() {
+        val css = CssRules.parse(".c { color: blue } p { color: red }")
+        assertThat(css.resolve(listOf(ElementCtx("p", listOf("c")))))
+            .containsEntry("color", "blue")
+    }
+
+    @Test
+    fun `an id beats a class regardless of source order`() {
+        val css = CssRules.parse("#x { color: blue } .c { color: red }")
+        assertThat(css.resolve(listOf(ElementCtx("p", listOf("c"), id = "x"))))
+            .containsEntry("color", "blue")
+    }
+
+    @Test
+    fun `equal specificity is resolved by source order`() {
+        val css = CssRules.parse(".a { color: red } .b { color: blue }")
+        assertThat(css.resolve(listOf(ElementCtx("span", listOf("a", "b")))))
+            .containsEntry("color", "blue")
+    }
+
+    @Test
+    fun `inline style beats even an id rule`() {
+        val css = CssRules.parse("#x { color: red }")
+        assertThat(css.resolve(listOf(ElementCtx("p", id = "x", inlineStyle = "color: green"))))
+            .containsEntry("color", "green")
+    }
+
+    // --- Inheritance down the ancestor chain. ---
+
+    @Test
+    fun `an inherited property reaches a descendant several levels down`() {
+        val css = CssRules.parse("body { color: red; font-family: serif }")
+        val chain = listOf(ElementCtx("body"), ElementCtx("div"), ElementCtx("p"), ElementCtx("span"))
+        val computed = css.resolve(chain)
+        assertThat(computed).containsEntry("color", "red")
+        assertThat(computed).containsEntry("font-family", "serif")
+    }
+
+    @Test
+    fun `a closer ancestor overrides a farther one for an inherited property`() {
+        val css = CssRules.parse("body { color: red } div { color: blue }")
+        assertThat(css.resolve(listOf(ElementCtx("body"), ElementCtx("div"), ElementCtx("span"))))
+            .containsEntry("color", "blue")
+    }
+
+    @Test
+    fun `an element's own declaration overrides an inherited one`() {
+        val css = CssRules.parse("body { color: red } .self { color: green }")
+        assertThat(css.resolve(listOf(ElementCtx("body"), ElementCtx("span", listOf("self")))))
+            .containsEntry("color", "green")
+    }
+
+    @Test
+    fun `a non-inherited property does not reach a descendant`() {
+        val css = CssRules.parse(
+            "div { margin-top: 5px; background-color: black; text-decoration: underline; padding: 3px }"
+        )
+        val computed = css.resolve(listOf(ElementCtx("div"), ElementCtx("p")))
+        assertThat(computed.asMap()).doesNotContainKey("margin-top")
+        assertThat(computed.asMap()).doesNotContainKey("background-color")
+        assertThat(computed.asMap()).doesNotContainKey("text-decoration")
+        assertThat(computed.asMap()).doesNotContainKey("padding")
+    }
+
+    @Test
+    fun `a non-inherited property still applies to the element that declares it`() {
+        val css = CssRules.parse("p { margin-top: 5px }")
+        assertThat(css.resolve(listOf(ElementCtx("div"), ElementCtx("p"))))
+            .containsEntry("margin-top", "5px")
+    }
+
+    // --- Descendant and child combinators. ---
+
+    @Test
+    fun `a descendant selector matches a nested element`() {
+        val css = CssRules.parse("div p { color: red }")
+        assertThat(css.resolve(listOf(ElementCtx("div"), ElementCtx("p"))))
+            .containsEntry("color", "red")
+    }
+
+    @Test
+    fun `a descendant selector matches at any depth`() {
+        val css = CssRules.parse(".chapter em { font-style: italic }")
+        val chain = listOf(
+            ElementCtx("div", listOf("chapter")),
+            ElementCtx("p"),
+            ElementCtx("span"),
+            ElementCtx("em"),
+        )
+        assertThat(css.resolve(chain)).containsEntry("font-style", "italic")
+    }
+
+    @Test
+    fun `a descendant selector does not match without the ancestor`() {
+        val css = CssRules.parse("div p { color: red }")
+        // p under a section, no div anywhere in the chain.
+        assertThat(css.resolve(listOf(ElementCtx("section"), ElementCtx("p"))).asMap())
+            .doesNotContainKey("color")
+    }
+
+    @Test
+    fun `a child selector matches only a direct child`() {
+        val css = CssRules.parse("div > p { color: red }")
+        assertThat(css.resolve(listOf(ElementCtx("div"), ElementCtx("p"))))
+            .containsEntry("color", "red")
+    }
+
+    @Test
+    fun `a child selector does not match a deeper descendant`() {
+        val css = CssRules.parse("div > p { color: red }")
+        // p's direct parent is section, not div.
+        assertThat(css.resolve(listOf(ElementCtx("div"), ElementCtx("section"), ElementCtx("p"))).asMap())
+            .doesNotContainKey("color")
+    }
+
+    @Test
+    fun `an unmatched combinator rule does not drop its neighbours`() {
+        val css = CssRules.parse("div p { color: red } .x { font-style: italic }")
+        assertThat(css.resolve(listOf(ElementCtx("span", listOf("x")))))
+            .containsEntry("font-style", "italic")
+    }
+
+    @Test
+    fun `a descendant selector contributes at its own specificity`() {
+        // `div p` is (0,0,2); a bare `.c` is (0,1,0) and outranks it.
+        val css = CssRules.parse("div p { color: red } .c { color: blue }")
+        assertThat(css.resolve(listOf(ElementCtx("div"), ElementCtx("p", listOf("c")))))
+            .containsEntry("color", "blue")
+    }
+
+    // --- Shorthand expansion. ---
+
+    @Test
+    fun `margin shorthand expands to top and bottom only`() {
+        val css = CssRules.parse("p { margin: 5px 10px 15px 20px }")
+        val computed = css.resolve(listOf(ElementCtx("p")))
+        assertThat(computed).containsEntry("margin-top", "5px")
+        assertThat(computed).containsEntry("margin-bottom", "15px")
+        // We deliberately do not honor left/right.
+        assertThat(computed.asMap()).doesNotContainKey("margin-left")
+        assertThat(computed.asMap()).doesNotContainKey("margin-right")
+    }
+
+    @Test
+    fun `margin shorthand with one value applies to top and bottom`() {
+        val css = CssRules.parse("p { margin: 8px }")
+        val computed = css.resolve(listOf(ElementCtx("p")))
+        assertThat(computed).containsEntry("margin-top", "8px")
+        assertThat(computed).containsEntry("margin-bottom", "8px")
+    }
+
+    @Test
+    fun `a later explicit margin-top overrides the shorthand within a block`() {
+        val css = CssRules.parse("p { margin: 8px; margin-top: 0 }")
+        assertThat(css.resolve(listOf(ElementCtx("p")))).containsEntry("margin-top", "0")
+    }
+
+    @Test
+    fun `font shorthand expands to font-size and line-height only`() {
+        val css = CssRules.parse("p { font: italic bold 12px/1.5 serif }")
+        val computed = css.resolve(listOf(ElementCtx("p")))
+        assertThat(computed).containsEntry("font-size", "12px")
+        assertThat(computed).containsEntry("line-height", "1.5")
+        // The rest of the shorthand is deliberately ignored, not half-parsed.
+        assertThat(computed.asMap()).doesNotContainKey("font-style")
+        assertThat(computed.asMap()).doesNotContainKey("font-weight")
+        assertThat(computed.asMap()).doesNotContainKey("font-family")
+    }
+
+    @Test
+    fun `font shorthand without a size is ignored entirely`() {
+        val css = CssRules.parse("p { font: menu }")
+        assertThat(css.resolve(listOf(ElementCtx("p"))).asMap()).doesNotContainKey("font-size")
+    }
+
+    // --- font-size composition down the chain. ---
+
+    @Test
+    fun `relative font sizes compose down the chain`() {
+        val css = CssRules.parse("body { font-size: 1.2em } p { font-size: 0.5em }")
+        val ratio = css.resolve(listOf(ElementCtx("body"), ElementCtx("p"))).fontSizeRatio
+        assertThat(ratio).isNotNull()
+        assertThat(ratio!!).isWithin(1e-4f).of(0.6f)
+    }
+
+    @Test
+    fun `percentage font sizes compose like em`() {
+        val css = CssRules.parse("body { font-size: 200% } span { font-size: 50% }")
+        val ratio = css.resolve(listOf(ElementCtx("body"), ElementCtx("span"))).fontSizeRatio
+        assertThat(ratio!!).isWithin(1e-4f).of(1.0f)
+    }
+
+    @Test
+    fun `larger and smaller step from the parent's size, not the baseline`() {
+        // Real CSS makes these parent-relative single steps: "larger" under a 2em body is ~2.4,
+        // not a reset to 1.2. The xx-small..xx-large keywords, by contrast, ARE baseline resets.
+        val css = CssRules.parse("body { font-size: 2em } span { font-size: larger }")
+        val larger = css.resolve(listOf(ElementCtx("body"), ElementCtx("span"))).fontSizeRatio
+        assertThat(larger!!).isWithin(1e-4f).of(2.4f)
+
+        val css2 = CssRules.parse("body { font-size: 2em } span { font-size: smaller }")
+        val smaller = css2.resolve(listOf(ElementCtx("body"), ElementCtx("span"))).fontSizeRatio
+        assertThat(smaller!!).isWithin(1e-4f).of(1.66f)
+
+        // No parent size: a bare "larger" steps from the baseline.
+        val css3 = CssRules.parse("span { font-size: larger }")
+        assertThat(css3.resolve(listOf(ElementCtx("span"))).fontSizeRatio!!).isWithin(1e-4f).of(1.2f)
+    }
+
+    @Test
+    fun `an absolute font size leaves the composed ratio null but keeps the raw value`() {
+        val css = CssRules.parse("body { font-size: 12pt }")
+        val computed = css.resolve(listOf(ElementCtx("body")))
+        assertThat(computed.fontSizeRatio).isNull()
+        assertThat(computed).containsEntry("font-size", "12pt")
+    }
+
+    @Test
+    fun `no font-size anywhere leaves the composed ratio null`() {
+        val css = CssRules.parse("p { color: red }")
+        assertThat(css.resolve(listOf(ElementCtx("p"))).fontSizeRatio).isNull()
+    }
+
+    @Test
+    fun `resolve never throws on an empty chain`() {
+        assertThat(CssRules.parse(".x { color: red }").resolve(emptyList()).asMap()).isEmpty()
     }
 }

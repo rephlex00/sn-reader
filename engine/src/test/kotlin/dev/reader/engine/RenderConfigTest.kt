@@ -68,6 +68,18 @@ class RenderConfigTest {
     }
 
     @Test
+    fun `publisher styling defaults to on`() {
+        assertThat(config().publisherStyling).isTrue()
+    }
+
+    @Test
+    fun `publisher styling can be turned off without touching other fields`() {
+        val off = config().copy(publisherStyling = false)
+        assertThat(off.publisherStyling).isFalse()
+        assertThat(off.inferHeadings).isTrue()
+    }
+
+    @Test
     fun `locators order by spine then offset`() {
         assertThat(Locator(0, 500)).isLessThan(Locator(1, 0))
         assertThat(Locator(1, 100)).isLessThan(Locator(1, 200))

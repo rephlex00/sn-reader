@@ -21,6 +21,17 @@ data class RenderConfig(
      * keys the pagination cache — so toggling it invalidates cached chapters for free.
      */
     val inferHeadings: Boolean = true,
+    /**
+     * Honor the publisher's resolved CSS at render time. When true, the builder maps every
+     * non-null [InlineStyle]/[BlockStyle] field the publisher specified onto a span (size,
+     * decoration, colour→gray, alignment, indent, line-height); a null field falls back to
+     * the reader's own value. When false, every publisher field is ignored and rendering
+     * reproduces the reader-only typography exactly — the semantic heading scale, the fixed
+     * block separator, bold/italic/monospace emphasis only. A render-time decision, so the
+     * publisher's styles are resolved once and this toggle costs a re-render, not a re-parse;
+     * like [inferHeadings] it keys the pagination cache, so flipping it re-paginates for free.
+     */
+    val publisherStyling: Boolean = true,
 ) {
     val contentWidthPx: Int get() = viewportWidthPx - marginPx * 2
     val contentHeightPx: Int get() = viewportHeightPx - marginPx * 2

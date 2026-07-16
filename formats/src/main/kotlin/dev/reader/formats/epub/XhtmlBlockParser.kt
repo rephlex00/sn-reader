@@ -1,33 +1,57 @@
 package dev.reader.formats.epub
 
 import dev.reader.engine.Block
+import dev.reader.engine.BlockStyle
 import dev.reader.engine.InlineStyle
 import dev.reader.engine.StyleSpan
 import dev.reader.engine.StyledText
+import dev.reader.engine.TextAlign
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
+import kotlin.math.abs
 
 /**
- * Reduces chapter XHTML to the [Block] whitelist. Publisher CSS, embedded fonts and
- * every unlisted element are discarded — the reader's own typography is applied later,
- * from RenderConfig. The one exception is [CssRules]: it is mined for exactly two
- * semantic signals — is a run italic/bold, and is a short paragraph actually a heading —
- * never for presentation. See [CssRules]'s kdoc for why that split exists.
+ * Reduces chapter XHTML to the [Block] whitelist. Every element is resolved through the
+ * [CssRules] cascade over its ancestor chain, and the honored slice of its computed style
+ * is mapped into the resolved [InlineStyle]/[BlockStyle] model as *optional* values — the
+ * publisher-styling toggle downstream decides whether to apply them. Emphasis (bold/italic/
+ * monospace) rides the same resolution path as everything else: font-size → sizeRatio,
+ * color → grayLevel, text-decoration → underline/strikethrough, letter-spacing, and the
+ * block-level text-align/margins/text-indent/line-height. Box-layout properties (float,
+ * position, border, background, width/height, padding, `display` beyond the block/inline
+ * split already inferred) are ignored, never half-honored.
  *
- * Parsed with jsoup's lenient HTML parser rather than its XML parser: real-world EPUBs
- * are frequently not well-formed XML, and a book must open anyway.
+ * Font-size is resolved to a **ratio** against the document's own baseline, never an
+ * absolute size: `em`/`rem`/`%`/keywords compose into [ComputedStyle.fontSizeRatio], and a
+ * `px`/`pt` size is divided by the baseline mined once per chapter from `body`/`html`. With
+ * no baseline, an absolute size yields null rather than a guess.
+ *
+ * Parsed with jsoup's lenient HTML parser rather than its XML parser: real-world EPUBs are
+ * frequently not well-formed XML, and a book must open anyway. Resolution never throws —
+ * malformed CSS values degrade to null.
+ *
+ * NOT thread-safe: [baselinePx] is set per chapter and [colorMemo] is an unsynchronized
+ * cache. Callers confine parsing to a single thread (see [EpubDocument.chapter]).
  */
 class XhtmlBlockParser {
 
+    /** The px baseline for this chapter's absolute font-sizes, mined from `body`/`html`. */
+    private var baselinePx: Float? = null
+
+    /** Caches parsed colour luminance across chapters; colour strings resolve identically. */
+    private val colorMemo = HashMap<String, Float?>()
+
     /**
-     * @param css Resolves emphasis (always applied) and, when [inferHeadings] is set,
-     *   heading candidacy for CSS-encoded structure. Defaults to [CssRules.EMPTY] so tag
-     *   emphasis (`<b>`, `<i>`, ...) still works with no stylesheet at all.
+     * @param css Resolves each element's computed style over its ancestor chain — emphasis
+     *   plus the full honored property table — and, when [inferHeadings] is set, heading
+     *   candidacy for CSS-encoded structure. Defaults to [CssRules.EMPTY] so tag emphasis
+     *   (`<b>`, `<i>`, ...) still works with no stylesheet at all.
      * @param inferHeadings Whether a short, visually-heading-like `<p>`/`<div>` is
-     *   promoted to [Block.Heading]. Independent of emphasis, which is always on.
+     *   promoted to [Block.Heading]. Independent of the resolved styles, which always ride
+     *   along on whichever block type is emitted.
      */
     fun parse(
         xhtml: String,
@@ -49,12 +73,15 @@ class XhtmlBlockParser {
         inferHeadings: Boolean = true,
     ): List<Block> {
         val body = doc.body()
+        baselinePx = mineBaseline(css)
         val out = mutableListOf<Block>()
         // body is itself just another container: route it through the same childNodes()
         // walk as any other transparent container, so bare text sitting directly inside
         // <body> (no wrapping element) isn't dropped the way children()-only iteration
-        // would drop it. See visitContainerChildren.
-        visitContainerChildren(body, chapterPath, out, css, inferHeadings)
+        // would drop it. See visitContainerChildren. The ancestor chain is seeded with
+        // <body> (and any <html> above it) so inheritance and combinators resolve from the
+        // document root down.
+        visitContainerChildren(body, chapterPath, out, ancestorChainOf(body), css, inferHeadings)
         return out
     }
 
@@ -65,10 +92,19 @@ class XhtmlBlockParser {
      * break-requesting containers wrapping the same content must not each add their own
      * break. [addBlock] enforces both by refusing to stack a `PageBreak` directly on
      * top of another one already at the tail of [out].
+     *
+     * [chain] runs root → [el] inclusive (so `chain.last()` is [el]'s context).
      */
-    private fun visit(el: Element, chapterPath: String, out: MutableList<Block>, css: CssRules, inferHeadings: Boolean) {
+    private fun visit(
+        el: Element,
+        chapterPath: String,
+        out: MutableList<Block>,
+        chain: List<ElementCtx>,
+        css: CssRules,
+        inferHeadings: Boolean,
+    ) {
         val produced = mutableListOf<Block>()
-        dispatch(el, chapterPath, produced, css, inferHeadings)
+        dispatch(el, chapterPath, produced, chain, css, inferHeadings)
         if (produced.isEmpty()) return
 
         if (requestsPageBreak(el, css)) addBlock(out, Block.PageBreak)
@@ -80,27 +116,36 @@ class XhtmlBlockParser {
         out += block
     }
 
-    private fun dispatch(el: Element, chapterPath: String, out: MutableList<Block>, css: CssRules, inferHeadings: Boolean) {
+    private fun dispatch(
+        el: Element,
+        chapterPath: String,
+        out: MutableList<Block>,
+        chain: List<ElementCtx>,
+        css: CssRules,
+        inferHeadings: Boolean,
+    ) {
         when (el.tagName().lowercase()) {
-            "p" -> emitTextBlock(el, chapterPath, out, css) { text -> paragraphOrHeading(el, text, css, inferHeadings) }
+            "p" -> emitTextBlock(el, chapterPath, out, chain, css) { text, style ->
+                paragraphOrHeading(el, text, style, css, inferHeadings)
+            }
 
             "h1", "h2", "h3", "h4", "h5", "h6" -> {
                 val level = el.tagName()[1].digitToInt()
-                emitTextBlock(el, chapterPath, out, css) { Block.Heading(level, it) }
+                emitTextBlock(el, chapterPath, out, chain, css) { text, style -> Block.Heading(level, text, style) }
             }
 
-            "blockquote" -> emitBlockquote(el, chapterPath, out, css, inferHeadings)
+            "blockquote" -> emitBlockquote(el, chapterPath, out, chain, css, inferHeadings)
 
-            "ul" -> emitList(el, chapterPath, out, css, inferHeadings, ordered = false)
+            "ul" -> emitList(el, chapterPath, out, chain, css, inferHeadings, ordered = false)
 
-            "ol" -> emitList(el, chapterPath, out, css, inferHeadings, ordered = true)
+            "ol" -> emitList(el, chapterPath, out, chain, css, inferHeadings, ordered = true)
 
             "img" -> emitImage(el, chapterPath, out)
 
             "style", "script", "head", "title", "link", "meta" -> Unit
 
             // Containers are transparent: keep looking for whitelisted content inside.
-            else -> visitContainerChildren(el, chapterPath, out, css, inferHeadings)
+            else -> visitContainerChildren(el, chapterPath, out, chain, css, inferHeadings)
         }
     }
 
@@ -126,10 +171,15 @@ class XhtmlBlockParser {
         el: Element,
         chapterPath: String,
         out: MutableList<Block>,
+        chain: List<ElementCtx>,
         css: CssRules,
         inferHeadings: Boolean,
     ) {
-        emitRun(el, chapterPath, out, { text -> paragraphOrHeading(el, text, css, inferHeadings) }, flatten = false, css, inferHeadings)
+        emitRun(
+            el, chapterPath, out, chain,
+            { text, style -> paragraphOrHeading(el, text, style, css, inferHeadings) },
+            flatten = false, css, inferHeadings,
+        )
     }
 
     /**
@@ -154,27 +204,41 @@ class XhtmlBlockParser {
      * (there's no "Quote" equivalent of a list item), so nesting a list in a blockquote
      * now correctly keeps `Block.ListItem` with its ordinal instead of losing it.
      */
-    private fun emitBlockquote(el: Element, chapterPath: String, out: MutableList<Block>, css: CssRules, inferHeadings: Boolean) {
-        emitRun(el, chapterPath, out, { Block.Quote(it) }, flatten = true, css, inferHeadings)
+    private fun emitBlockquote(
+        el: Element,
+        chapterPath: String,
+        out: MutableList<Block>,
+        chain: List<ElementCtx>,
+        css: CssRules,
+        inferHeadings: Boolean,
+    ) {
+        emitRun(el, chapterPath, out, chain, { text, style -> Block.Quote(text, style) }, flatten = true, css, inferHeadings)
     }
 
     /**
      * Builds the running [InlineBuilder] + [flushClosure] pair that [walkRun] shares
      * between [visitContainerChildren] and [emitBlockquote], then flushes once more after
      * the walk completes to catch whatever ran to the end of [el] unflushed.
+     *
+     * [el]'s own resolved styles are opened on the builder up front so that bare text and
+     * inline runs sitting directly in the container inherit them — a `<div class="epigraph">`
+     * whose stylesheet makes it italic paints that italic over its own loose text.
      */
     private fun emitRun(
         el: Element,
         chapterPath: String,
         out: MutableList<Block>,
-        factory: (StyledText) -> Block,
+        chain: List<ElementCtx>,
+        factory: (StyledText, BlockStyle) -> Block,
         flatten: Boolean,
         css: CssRules,
         inferHeadings: Boolean,
     ) {
         val builder = InlineBuilder()
-        val flush = flushClosure(builder, out, factory)
-        walkRun(el, chapterPath, builder, flush, out, factory, flatten, css, inferHeadings)
+        val computed = css.resolve(chain, baselinePx)
+        val flush = flushClosure(builder, out, blockStyleFrom(computed), factory)
+        inlineStylesFrom(chain.last().tag, computed).forEach { builder.pushStyle(it) }
+        walkRun(el, chapterPath, builder, flush, out, chain, factory, flatten, css, inferHeadings)
         flush()
     }
 
@@ -184,7 +248,8 @@ class XhtmlBlockParser {
         builder: InlineBuilder,
         flush: () -> Unit,
         out: MutableList<Block>,
-        factory: (StyledText) -> Block,
+        chain: List<ElementCtx>,
+        factory: (StyledText, BlockStyle) -> Block,
         flatten: Boolean,
         css: CssRules,
         inferHeadings: Boolean,
@@ -197,61 +262,61 @@ class XhtmlBlockParser {
                     "style", "script" -> Unit
                     "img" -> {
                         flush()
-                        if (flatten) emitImage(node, chapterPath, out) else visit(node, chapterPath, out, css, inferHeadings)
+                        if (flatten) emitImage(node, chapterPath, out) else visit(node, chapterPath, out, chain + ctxOf(node), css, inferHeadings)
                     }
                     "p", "h1", "h2", "h3", "h4", "h5", "h6" -> {
                         flush()
+                        val childChain = chain + ctxOf(node)
                         if (flatten) {
-                            emitTextBlock(node, chapterPath, out, css, factory)
+                            emitTextBlock(node, chapterPath, out, childChain, css, factory)
                         } else {
-                            visit(node, chapterPath, out, css, inferHeadings)
+                            visit(node, chapterPath, out, childChain, css, inferHeadings)
                         }
                     }
                     else -> {
                         // An element joins the enclosing inline run when it is inline BY
                         // TAG (`<a>`, `<span>`, `<sup>`, ... — styled or not: an unstyled
                         // link mid-sentence must not shatter the sentence into separate
-                        // Paragraphs) or when CSS emphasis makes an otherwise-unknown
+                        // Paragraphs) or when its OWN emphasis makes an otherwise-unknown
                         // element behave like one — but never when it carries a
                         // block-level descendant of its own. A publisher stylesheet
                         // routinely puts `font-style: italic` on a bare tag selector
                         // (`blockquote { ... }`, `div.epigraph { ... }`); treating every
                         // such element as one inline run would flatten its <p>/heading/
-                        // list children into a single merged block, silently losing
-                        // their structure — and even a genuine `<a>` around a `<p>` must
-                        // recurse so the paragraph keeps its own Block.
-                        val styles = effectiveStyles(node, css)
-                        val emphasiseAsInlineRun = (isInlineByTag(tag) || styles.isNotEmpty()) &&
+                        // list children into a single merged block, silently losing their
+                        // structure — and even a genuine `<a>` around a `<p>` must recurse
+                        // so the paragraph keeps its own Block.
+                        //
+                        // The routing signal is the element's OWN emphasis (not its full
+                        // inherited computed style): inherited colour/size must not flip a
+                        // plain container into an inline run and merge it with its
+                        // siblings. Once we DO treat it as a run, the styles pushed are the
+                        // full resolved set, deduped against whatever an ancestor already
+                        // opened.
+                        val childChain = chain + ctxOf(node)
+                        val emphasiseAsInlineRun = (isInlineByTag(tag) || ownEmphasisStyles(node, css).isNotEmpty()) &&
                             !containsBlockLevelDescendant(node)
                         when {
                             emphasiseAsInlineRun -> {
                                 // Skip pushing (and later popping) any style already open
-                                // from an ancestor — e.g. `<i><span class="italic">` — so
-                                // the same InlineStyle doesn't produce two identical,
-                                // redundant spans over the same text.
-                                val newStyles = styles.filterNot { builder.hasOpenStyle(it) }
+                                // from an ancestor — e.g. `<i><span class="italic">`, or a
+                                // colour merely inherited from the enclosing block — so the
+                                // same InlineStyle doesn't produce two identical, redundant
+                                // spans over the same text.
+                                val newStyles = resolveInlineStyles(childChain, css).filterNot { builder.hasOpenStyle(it) }
                                 newStyles.forEach { builder.pushStyle(it) }
-                                node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
+                                node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, childChain, css) }
                                 newStyles.forEach { builder.popStyle() }
                             }
                             // Lists have no "Quote" equivalent, so even a flattening walk
                             // routes them through normal dispatch (see emitBlockquote's kdoc).
                             flatten && tag != "ul" && tag != "ol" -> {
                                 flush()
-                                walkRun(node, chapterPath, builder, flush, out, factory, flatten, css, inferHeadings)
+                                walkRun(node, chapterPath, builder, flush, out, childChain, factory, flatten, css, inferHeadings)
                             }
                             else -> {
-                                // TODO(Plan 3): a container whose CSS emphasis was NOT
-                                // taken as an inline run (because it holds a block-level
-                                // or text-free descendant, e.g. `<div class="it">caption
-                                // <img/></div>` with `.it { font-style: italic }`) loses
-                                // that emphasis entirely on this path: visit() re-derives
-                                // styles per descendant and never sees the container's
-                                // own declarations. Plan 3's resolved-style model (styles
-                                // inherited down the walk, not looked up per element)
-                                // must carry container emphasis onto descendant text.
                                 flush()
-                                visit(node, chapterPath, out, css, inferHeadings)
+                                visit(node, chapterPath, out, childChain, css, inferHeadings)
                             }
                         }
                     }
@@ -276,12 +341,13 @@ class XhtmlBlockParser {
         el: Element,
         chapterPath: String,
         out: MutableList<Block>,
+        chain: List<ElementCtx>,
         css: CssRules,
         inferHeadings: Boolean,
         ordered: Boolean,
     ) {
         var ordinal = 0
-        fun walk(container: Element) {
+        fun walk(container: Element, containerChain: List<ElementCtx>) {
             container.childNodes().forEach { node ->
                 when (node) {
                     is TextNode -> {
@@ -291,18 +357,18 @@ class XhtmlBlockParser {
                         if (text.text.isNotBlank()) out += Block.Paragraph(text)
                     }
                     is Element -> when (node.tagName().lowercase()) {
-                        "li" -> emitTextBlock(node, chapterPath, out, css) {
-                            Block.ListItem(it, ordinal = if (ordered) ++ordinal else null)
+                        "li" -> emitTextBlock(node, chapterPath, out, containerChain + ctxOf(node), css) { text, style ->
+                            Block.ListItem(text, ordinal = if (ordered) ++ordinal else null, style = style)
                         }
-                        "ul", "ol" -> visit(node, chapterPath, out, css, inferHeadings)
+                        "ul", "ol" -> visit(node, chapterPath, out, containerChain + ctxOf(node), css, inferHeadings)
                         "style", "script" -> Unit
-                        else -> walk(node)
+                        else -> walk(node, containerChain + ctxOf(node))
                     }
                     else -> Unit
                 }
             }
         }
-        walk(el)
+        walk(el, chain)
     }
 
     /**
@@ -325,17 +391,25 @@ class XhtmlBlockParser {
     /**
      * Walks [el]'s inline content into [factory]'s block type (Paragraph/Heading/Quote/
      * ListItem), via [walkInline] — see its kdoc for how a nested `<img>` splits the run.
+     * [el]'s own resolved [BlockStyle] rides on the block, and its own inline styles
+     * (font-size, colour, letter-spacing, and any emphasis it inherits or declares) are
+     * opened over the whole text before its children add their deltas.
+     *
+     * [chain] runs root → [el] inclusive.
      */
     private fun emitTextBlock(
         el: Element,
         chapterPath: String,
         out: MutableList<Block>,
+        chain: List<ElementCtx>,
         css: CssRules,
-        factory: (StyledText) -> Block,
+        factory: (StyledText, BlockStyle) -> Block,
     ) {
         val builder = InlineBuilder()
-        val flush = flushClosure(builder, out, factory)
-        el.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
+        val computed = css.resolve(chain, baselinePx)
+        val flush = flushClosure(builder, out, blockStyleFrom(computed), factory)
+        inlineStylesFrom(chain.last().tag, computed).forEach { builder.pushStyle(it) }
+        el.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, chain, css) }
         flush()
     }
 
@@ -344,16 +418,17 @@ class XhtmlBlockParser {
      * [emitRun] on behalf of both [visitContainerChildren] and [emitBlockquote]): close
      * every style still open at this boundary so the block being flushed keeps it (see the
      * `<img>` case in [walkInline] below and [InlineBuilder]'s kdoc), build, hand the result
-     * to [factory] unless it's blank, then reset for whatever follows.
+     * — with [blockStyle] — to [factory] unless it's blank, then reset for whatever follows.
      */
     private fun flushClosure(
         builder: InlineBuilder,
         out: MutableList<Block>,
-        factory: (StyledText) -> Block,
+        blockStyle: BlockStyle,
+        factory: (StyledText, BlockStyle) -> Block,
     ): () -> Unit = {
         builder.closeOpenStyles()
         val text = builder.build()
-        if (text.text.isNotBlank()) out += factory(text)
+        if (text.text.isNotBlank()) out += factory(text, blockStyle)
         builder.reset()
     }
 
@@ -366,6 +441,9 @@ class XhtmlBlockParser {
      * local `start` here) precisely so a `flush()` triggered mid-recursion — from an
      * `<img>` nested inside this element — doesn't strand a stale offset: the builder
      * closes and rebases them itself.
+     *
+     * [chain] runs root → the element whose children these nodes are, inclusive; each child
+     * element extends it before its own styles are resolved.
      */
     private fun walkInline(
         node: Node,
@@ -373,6 +451,7 @@ class XhtmlBlockParser {
         builder: InlineBuilder,
         flush: () -> Unit,
         out: MutableList<Block>,
+        chain: List<ElementCtx>,
         css: CssRules,
     ) {
         when (node) {
@@ -391,19 +470,21 @@ class XhtmlBlockParser {
                 // both sides. The content itself still flattens into the enclosing block
                 // — rendering e.g. a nested list as real nested ListItems is later work.
                 "p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "div", "ul", "ol", "li" -> {
-                    val styles = effectiveStyles(node, css).filterNot { builder.hasOpenStyle(it) }
+                    val childChain = chain + ctxOf(node)
+                    val styles = resolveInlineStyles(childChain, css).filterNot { builder.hasOpenStyle(it) }
                     builder.appendBlockBoundary()
                     styles.forEach { builder.pushStyle(it) }
-                    node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
+                    node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, childChain, css) }
                     styles.forEach { builder.popStyle() }
                     builder.appendBlockBoundary()
                 }
                 else -> {
                     // See the matching comment in walkRun: don't re-push a style an
                     // ancestor already has open.
-                    val styles = effectiveStyles(node, css).filterNot { builder.hasOpenStyle(it) }
+                    val childChain = chain + ctxOf(node)
+                    val styles = resolveInlineStyles(childChain, css).filterNot { builder.hasOpenStyle(it) }
                     styles.forEach { builder.pushStyle(it) }
-                    node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
+                    node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, childChain, css) }
                     styles.forEach { builder.popStyle() }
                 }
             }
@@ -431,35 +512,186 @@ class XhtmlBlockParser {
     }
 
     private fun inlineStyleOf(tag: String): InlineStyle? = when (tag) {
-        "b", "strong" -> InlineStyle.BOLD
-        "i", "em", "cite", "dfn" -> InlineStyle.ITALIC
-        "code", "kbd", "samp", "tt" -> InlineStyle.MONOSPACE
+        "b", "strong" -> InlineStyle(bold = true)
+        "i", "em", "cite", "dfn" -> InlineStyle(italic = true)
+        "code", "kbd", "samp", "tt" -> InlineStyle(monospace = true)
+        else -> null
+    }
+
+    // --- Chain + resolution --------------------------------------------------
+
+    /** The cascade context [el] contributes: tag, classes, id, inline `style`. */
+    private fun ctxOf(el: Element): ElementCtx = ElementCtx(
+        tag = el.tagName(),
+        classes = el.classNames().toList(),
+        id = el.id().ifBlank { null },
+        inlineStyle = el.attr("style").ifBlank { null },
+    )
+
+    /** The full ancestor chain root → [el] inclusive, e.g. `[html, body]` for `<body>`. */
+    private fun ancestorChainOf(el: Element): List<ElementCtx> {
+        val chain = ArrayList<ElementCtx>()
+        el.parents().reversed().forEach { chain.add(ctxOf(it)) }
+        chain.add(ctxOf(el))
+        return chain
+    }
+
+    /**
+     * The element at the end of [chain], resolved into single-field [InlineStyle] pushes —
+     * one per honored property — so a multi-property element (bold + underline + gray)
+     * flows through the same one-span-per-semantic stack as a bare `<b>` does.
+     */
+    private fun resolveInlineStyles(chain: List<ElementCtx>, css: CssRules): List<InlineStyle> =
+        inlineStylesFrom(chain.last().tag, css.resolve(chain, baselinePx))
+
+    /**
+     * Maps the honored inline slice of [computed] (plus [tag] semantics) into a list of
+     * single-field [InlineStyle]s. Tag emphasis (`<b>`/`<i>`/`<code>`) is unioned with what
+     * the cascade resolved — `<b class="italic">` recovers both — and duplicates collapse
+     * (a `<code>` whose stylesheet also declares `font-family: monospace` pushes one mono
+     * style, not two). Every value comes out null-safe: a garbage size/colour/spacing
+     * resolves to no style rather than throwing.
+     */
+    private fun inlineStylesFrom(tag: String, computed: ComputedStyle): List<InlineStyle> {
+        val styles = LinkedHashSet<InlineStyle>()
+        inlineStyleOf(tag.lowercase())?.let { styles += it }
+        if (computed["font-style"] in ITALIC_KEYWORDS) styles += InlineStyle(italic = true)
+        if (isBoldValue(computed["font-weight"])) styles += InlineStyle(bold = true)
+        if (isMonospaceFamily(computed["font-family"])) styles += InlineStyle(monospace = true)
+        computed["text-decoration"]?.let { decoration ->
+            if (decoration.contains("underline")) styles += InlineStyle(underline = true)
+            if (decoration.contains("line-through")) styles += InlineStyle(strikethrough = true)
+        }
+        sizeRatioOf(computed)?.let { styles += InlineStyle(sizeRatio = it) }
+        letterSpacingEmOf(computed["letter-spacing"])?.let { styles += InlineStyle(letterSpacingEm = it) }
+        grayLevelOf(computed["color"])?.let { styles += InlineStyle(grayLevel = it) }
+        return styles.toList()
+    }
+
+    /**
+     * Maps the honored block slice of [computed] into a [BlockStyle]. text-align is
+     * inherited (a centered `body` centers its paragraphs); margins are not. Every field is
+     * null when unspecified or unusable, so an all-null [BlockStyle] means "publisher said
+     * nothing" and equals the default.
+     */
+    private fun blockStyleFrom(computed: ComputedStyle): BlockStyle = BlockStyle(
+        align = alignOf(computed["text-align"]),
+        marginTopEm = lengthToEm(computed["margin-top"]),
+        marginBottomEm = lengthToEm(computed["margin-bottom"]),
+        textIndentEm = lengthToEm(computed["text-indent"]),
+        lineHeightMultiplier = lineHeightMultiplierOf(computed["line-height"]),
+    )
+
+    /**
+     * The element's font-size as a ratio against the document baseline, or null for "no
+     * signal" (reader's size governs). Prefers [ComputedStyle.fontSizeRatio] — the
+     * cascade's composed `em`/`rem`/`%`/keyword ratio — and only falls back to interpreting
+     * the raw `px`/`pt` value against the chapter [baselinePx] when that ratio is null. A
+     * ratio of 1.0 (same as the baseline, including a body-size element merely inheriting an
+     * absolute size) is suppressed so it doesn't paint a redundant span on every run.
+     */
+    private fun sizeRatioOf(computed: ComputedStyle): Float? {
+        computed.fontSizeRatio?.let { return if (abs(it - 1f) < RATIO_EPSILON) null else it }
+        val raw = computed["font-size"] ?: return null
+        val px = absolutePx(raw) ?: return null
+        val base = baselinePx ?: return null
+        val ratio = px / base
+        return if (abs(ratio - 1f) < RATIO_EPSILON) null else ratio
+    }
+
+    private fun alignOf(value: String?): TextAlign? = when (value) {
+        "left", "start" -> TextAlign.LEFT
+        "right", "end" -> TextAlign.RIGHT
+        "center" -> TextAlign.CENTER
+        "justify" -> TextAlign.JUSTIFY
         else -> null
     }
 
     /**
-     * An element's effective emphasis is its tag mapping (`b`/`strong`/`i`/`em`/`code`...)
-     * **unioned** with what [css] resolves for it — never replaced by it. A calibre-style
-     * `<span class="italic">` and a hand-authored `<i>` both recover the same authorial
-     * intent; `<b class="italic">` recovers both. Each style pushed here goes through
-     * [InlineBuilder]'s own zero-length guard when popped, exactly like tag-based
-     * emphasis — a `<span class="italic"></span>` must not throw.
+     * A length resolved to an em ratio: `em`/`rem` as-is, `%` divided by 100, `px`/`pt`
+     * divided by the chapter baseline (null with no baseline — never a guess), a bare `0`
+     * as zero. Anything else → null. Shared by text-indent, margins and letter-spacing.
      */
-    private fun effectiveStyles(el: Element, css: CssRules): List<InlineStyle> {
-        val styles = LinkedHashSet<InlineStyle>()
-        inlineStyleOf(el.tagName().lowercase())?.let { styles += it }
-        styles += cssEmphasisStyles(declarationsFor(el, css))
-        return styles.toList()
+    private fun lengthToEm(value: String?): Float? {
+        val v = value?.trim() ?: return null
+        if (v == "0") return 0f
+        emOrRemRegex.matchEntire(v)?.let { return it.groupValues[1].toFloatOrNull() }
+        percentRegex.matchEntire(v)?.let { m -> return m.groupValues[1].toFloatOrNull()?.div(100f) }
+        absolutePx(v)?.let { px -> return baselinePx?.let { px / it } }
+        return null
     }
 
-    private fun declarationsFor(el: Element, css: CssRules): Map<String, String> =
-        css.declarationsFor(el.tagName().lowercase(), el.classNames().toList(), el.attr("style").ifBlank { null })
+    private fun letterSpacingEmOf(value: String?): Float? {
+        val v = value?.trim() ?: return null
+        if (v == "normal") return null
+        return lengthToEm(v)
+    }
 
-    private fun cssEmphasisStyles(declarations: Map<String, String>): Set<InlineStyle> {
-        val out = mutableSetOf<InlineStyle>()
-        if (declarations["font-style"] in ITALIC_KEYWORDS) out += InlineStyle.ITALIC
-        if (isBoldValue(declarations["font-weight"])) out += InlineStyle.BOLD
-        return out
+    /** unitless → as-is; `%`/`em`/`rem` → ratio; `normal` (and unusable `px`/etc.) → null. */
+    private fun lineHeightMultiplierOf(value: String?): Float? {
+        val v = value?.trim() ?: return null
+        if (v == "normal") return null
+        unitlessNumberRegex.matchEntire(v)?.let { return it.groupValues[1].toFloatOrNull() }
+        emOrRemRegex.matchEntire(v)?.let { return it.groupValues[1].toFloatOrNull() }
+        percentRegex.matchEntire(v)?.let { m -> return m.groupValues[1].toFloatOrNull()?.div(100f) }
+        return null
+    }
+
+    private fun isMonospaceFamily(value: String?): Boolean {
+        val v = value ?: return false
+        return MONOSPACE_FAMILY_HINTS.any { it in v }
+    }
+
+    /** The luminance gray level of a CSS colour, memoized; unparseable → null. */
+    private fun grayLevelOf(value: String?): Float? {
+        val v = value?.trim() ?: return null
+        colorMemo[v]?.let { return it }
+        if (colorMemo.containsKey(v)) return null
+        val gray = parseColorLuminance(v)
+        colorMemo[v] = gray
+        return gray
+    }
+
+    private fun parseColorLuminance(value: String): Float? {
+        val rgb = parseRgb(value) ?: return null
+        val (r, g, b) = rgb
+        return (0.2126f * r + 0.7152f * g + 0.0722f * b) / 255f
+    }
+
+    private fun parseRgb(value: String): Triple<Int, Int, Int>? {
+        NAMED_COLORS[value]?.let { return it }
+        if (value.startsWith("#")) {
+            val hex = value.substring(1)
+            return when (hex.length) {
+                3 -> {
+                    val r = hexPair(hex[0], hex[0]) ?: return null
+                    val g = hexPair(hex[1], hex[1]) ?: return null
+                    val b = hexPair(hex[2], hex[2]) ?: return null
+                    Triple(r, g, b)
+                }
+                6 -> {
+                    val r = hexPair(hex[0], hex[1]) ?: return null
+                    val g = hexPair(hex[2], hex[3]) ?: return null
+                    val b = hexPair(hex[4], hex[5]) ?: return null
+                    Triple(r, g, b)
+                }
+                else -> null
+            }
+        }
+        rgbFuncRegex.matchEntire(value)?.let { m ->
+            val r = m.groupValues[1].toIntOrNull()?.coerceIn(0, 255) ?: return null
+            val g = m.groupValues[2].toIntOrNull()?.coerceIn(0, 255) ?: return null
+            val b = m.groupValues[3].toIntOrNull()?.coerceIn(0, 255) ?: return null
+            return Triple(r, g, b)
+        }
+        return null
+    }
+
+    private fun hexPair(hi: Char, lo: Char): Int? {
+        val h = Character.digit(hi, 16)
+        val l = Character.digit(lo, 16)
+        if (h < 0 || l < 0) return null
+        return h * 16 + l
     }
 
     private fun isBoldValue(value: String?): Boolean {
@@ -469,17 +701,37 @@ class XhtmlBlockParser {
     }
 
     /**
+     * The element's OWN emphasis (tag mapping unioned with its single-element cascade
+     * declarations), used only to decide whether an unknown container should join the
+     * surrounding inline run. Kept separate from [resolveInlineStyles] on purpose: an
+     * inherited colour/size must never flip routing and merge a block-holding container
+     * into one run with its siblings.
+     */
+    private fun ownEmphasisStyles(el: Element, css: CssRules): List<InlineStyle> {
+        val styles = LinkedHashSet<InlineStyle>()
+        inlineStyleOf(el.tagName().lowercase())?.let { styles += it }
+        val declarations = declarationsFor(el, css)
+        if (declarations["font-style"] in ITALIC_KEYWORDS) styles += InlineStyle(italic = true)
+        if (isBoldValue(declarations["font-weight"])) styles += InlineStyle(bold = true)
+        return styles.toList()
+    }
+
+    private fun declarationsFor(el: Element, css: CssRules): Map<String, String> =
+        css.declarationsFor(el.tagName().lowercase(), el.classNames().toList(), el.attr("style").ifBlank { null })
+
+    /**
      * Promotes [text] from a plain paragraph to a [Block.Heading] when [inferHeadings] is
      * on and [el]'s resolved style says it visually reads as one — see [headingLevelFor].
      * This is the ONLY place a [Block.Heading] is produced from non-semantic markup; a
-     * literal `<h1>`..`<h6>` always wins regardless of CSS (handled directly in
-     * [dispatch]) and is never routed through here.
+     * literal `<h1>`..`<h6>` always wins regardless of CSS (handled directly in [dispatch])
+     * and is never routed through here. The resolved [style] rides along on whichever block
+     * type wins — inference decides the type, not the style.
      */
-    private fun paragraphOrHeading(el: Element, text: StyledText, css: CssRules, inferHeadings: Boolean): Block {
+    private fun paragraphOrHeading(el: Element, text: StyledText, style: BlockStyle, css: CssRules, inferHeadings: Boolean): Block {
         if (inferHeadings) {
-            headingLevelFor(el, text, css)?.let { return Block.Heading(it, text) }
+            headingLevelFor(el, text, css)?.let { return Block.Heading(it, text, style) }
         }
-        return Block.Paragraph(text)
+        return Block.Paragraph(text, style)
     }
 
     /**
@@ -487,7 +739,7 @@ class XhtmlBlockParser {
      * AND its resolved style is visually heading-like: either a font-size ratio ≥ 1.2
      * relative to the body baseline, or centered text that is also bold (with no size
      * signal, that combination lands at level 3). Returns null — "no heading signal" —
-     * rather than guessing, so an unusable size (see [sizeRatioFor]) never promotes.
+     * rather than guessing, so an unusable size (see [headingSizeRatioFor]) never promotes.
      *
      * The style consulted is [effectiveHeadingDeclarations], not just [el]'s own: a
      * calibre-style export routinely puts the actual size/weight several wrapper elements
@@ -498,7 +750,7 @@ class XhtmlBlockParser {
         if (text.text.isEmpty() || text.text.length > 120) return null
 
         val declarations = effectiveHeadingDeclarations(el, css)
-        val ratio = declarations["font-size"]?.let { sizeRatioFor(it, css) }
+        val ratio = declarations["font-size"]?.let { headingSizeRatioFor(it) }
         if (ratio != null && ratio >= 1.2f) return levelForRatio(ratio)
 
         val centered = declarations["text-align"] == "center"
@@ -557,16 +809,17 @@ class XhtmlBlockParser {
     }
 
     /**
-     * Resolves a `font-size` value to a ratio relative to normal body text. `em`/`rem`,
-     * `%`, and the CSS size keywords are self-contained and always usable. `px`/`pt` are
-     * only meaningful relative to a baseline — see [baselineFontSizePx] — because this
-     * reader has no notion of a root/browser default font size; without one, an absolute
-     * size is unusable and this returns 1.0 ("no signal"), never a guess.
+     * Resolves a `font-size` value to a heading-inference ratio relative to normal body
+     * text. `em`/`rem`, `%`, and the CSS size keywords are self-contained and always usable.
+     * `px`/`pt` are only meaningful relative to the chapter [baselinePx]; without one an
+     * absolute size is unusable and this returns 1.0 ("no signal"), never a guess. This is
+     * the single-value inference path — distinct from [sizeRatioOf], which prefers the
+     * cascade's composed ratio for the rendered span.
      */
-    private fun sizeRatioFor(rawValue: String, css: CssRules): Float? {
+    private fun headingSizeRatioFor(rawValue: String): Float? {
         relativeSizeRatio(rawValue)?.let { return it }
         val px = absolutePx(rawValue) ?: return null
-        val baselinePx = baselineFontSizePx(css) ?: return 1.0f
+        val baselinePx = baselinePx ?: return 1.0f
         return px / baselinePx
     }
 
@@ -583,20 +836,24 @@ class XhtmlBlockParser {
     }
 
     /**
-     * The absolute pixel baseline that a `px`/`pt` font-size is judged against: the
-     * resolved `font-size` of `body`, else of `p`, else no baseline at all. Itself must
-     * resolve to an absolute size (not `1em`/`100%`/a keyword) — a relative baseline has
-     * no fixed meaning here — so [absolutePx] is reused rather than [relativeSizeRatio].
+     * The absolute pixel baseline that a `px`/`pt` font-size (and length) is judged
+     * against: the resolved `font-size` of `body`, else of `html`. Itself must resolve to
+     * an absolute size (not `1em`/`100%`/a keyword) — a relative baseline has no fixed
+     * meaning here, and a relative descendant size composes into [ComputedStyle.fontSizeRatio]
+     * anyway — so [absolutePx] is reused rather than [relativeSizeRatio]. Mined once per
+     * chapter in [parse].
      */
-    private fun baselineFontSizePx(css: CssRules): Float? {
+    private fun mineBaseline(css: CssRules): Float? {
         val bodySize = css.declarationsFor("body", emptyList(), null)["font-size"]
-        val pSize = css.declarationsFor("p", emptyList(), null)["font-size"]
-        val raw = bodySize ?: pSize ?: return null
+        val htmlSize = css.declarationsFor("html", emptyList(), null)["font-size"]
+        val raw = bodySize ?: htmlSize ?: return null
         return absolutePx(raw)
     }
 
     companion object {
         private val ITALIC_KEYWORDS = setOf("italic", "oblique")
+
+        private const val RATIO_EPSILON = 1e-4f
 
         // See isInlineByTag/containsBlockLevelDescendant.
         private val INLINE_TAGS = setOf(
@@ -608,10 +865,18 @@ class XhtmlBlockParser {
             "p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "ul", "ol", "img",
         )
 
-        private val emOrRemRegex = Regex("^(-?\\d*\\.?\\d+)(em|rem)$")
+        // Substrings that mark a font-family as monospace — we substitute the reader's mono
+        // face, so the exact family name never matters, only that it is a monospace one.
+        private val MONOSPACE_FAMILY_HINTS = setOf(
+            "monospace", "courier", "consol", "menlo", "monaco", "mono ", "\"mono", "'mono",
+        )
+
+        private val emOrRemRegex = Regex("^(-?\\d*\\.?\\d+)(?:em|rem)$")
         private val percentRegex = Regex("^(-?\\d*\\.?\\d+)%$")
         private val pxRegex = Regex("^(-?\\d*\\.?\\d+)px$")
         private val ptRegex = Regex("^(-?\\d*\\.?\\d+)pt$")
+        private val unitlessNumberRegex = Regex("^(-?\\d*\\.?\\d+)$")
+        private val rgbFuncRegex = Regex("^rgb\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)$")
 
         // Conventional CSS absolute-size-keyword ratios (CSS3 §Absolute Size Keywords),
         // relative to "medium" = 1. "larger"/"smaller" are the relative-keyword ratios
@@ -626,6 +891,37 @@ class XhtmlBlockParser {
             "xx-large" to 2.0f,
             "larger" to 1.2f,
             "smaller" to 0.83f,
+        )
+
+        // A small map of the common CSS named colours — enough to resolve a luminance for
+        // the ones publishers actually use; an unknown name resolves to null (no gray span).
+        private val NAMED_COLORS: Map<String, Triple<Int, Int, Int>> = mapOf(
+            "black" to Triple(0, 0, 0),
+            "white" to Triple(255, 255, 255),
+            "gray" to Triple(128, 128, 128),
+            "grey" to Triple(128, 128, 128),
+            "silver" to Triple(192, 192, 192),
+            "dimgray" to Triple(105, 105, 105),
+            "dimgrey" to Triple(105, 105, 105),
+            "darkgray" to Triple(169, 169, 169),
+            "darkgrey" to Triple(169, 169, 169),
+            "lightgray" to Triple(211, 211, 211),
+            "lightgrey" to Triple(211, 211, 211),
+            "red" to Triple(255, 0, 0),
+            "maroon" to Triple(128, 0, 0),
+            "green" to Triple(0, 128, 0),
+            "lime" to Triple(0, 255, 0),
+            "blue" to Triple(0, 0, 255),
+            "navy" to Triple(0, 0, 128),
+            "yellow" to Triple(255, 255, 0),
+            "olive" to Triple(128, 128, 0),
+            "purple" to Triple(128, 0, 128),
+            "teal" to Triple(0, 128, 128),
+            "aqua" to Triple(0, 255, 255),
+            "cyan" to Triple(0, 255, 255),
+            "fuchsia" to Triple(255, 0, 255),
+            "magenta" to Triple(255, 0, 255),
+            "orange" to Triple(255, 165, 0),
         )
     }
 }
