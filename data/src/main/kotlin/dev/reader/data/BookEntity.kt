@@ -50,11 +50,16 @@ data class BookEntity(
 
 /**
  * A lightweight projection of just the columns [LibraryIndexer][dev.reader.data] needs to diff the
- * filesystem against the index, without paying for the rest of the row (title, cover path, etc.).
+ * filesystem against the index, without paying for the rest of the row (title, etc.).
  *
  * `addedAtMs` and `lastOpenedAtMs` ride along here (rather than requiring a second query) so the
  * indexer can carry both forward across a re-index without an extra per-row fetch beyond the one
  * [LibraryIndexer] already does for same-content position/title preservation.
+ *
+ * `coverPath` rides along for the same reason: it is the "old" thumbnail path the indexer diffs
+ * against the freshly-produced one to know whether a cover file has gone stale and must be deleted
+ * (a vanished book, or a replaced one whose new cover lives at a different path) — without it, that
+ * would need a second per-row query.
  */
 data class BookStat(
     val path: String,
@@ -62,4 +67,5 @@ data class BookStat(
     val modifiedAtMs: Long,
     val addedAtMs: Long,
     val lastOpenedAtMs: Long?,
+    val coverPath: String?,
 )

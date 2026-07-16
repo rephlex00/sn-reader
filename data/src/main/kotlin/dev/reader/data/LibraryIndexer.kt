@@ -9,17 +9,18 @@ import java.io.File
 /**
  * What [MetadataExtractor.extract] found (or didn't) for one candidate file.
  *
- * [Success] deliberately has no cover reference yet — Task 4 (`EpubCoverExtractor`, in
- * `:formats`/`:app`) will add a `coverPath: String? = null` here once it can produce an actual
- * decoded, downsampled grayscale thumbnail file under `filesDir`; that addition is
- * source-compatible with every existing caller. `:data` only ever stores a resolved file path, in
- * [BookEntity.coverPath] — never an archive-internal reference — so there is nothing for this type
- * to hold in the meantime.
+ * [Success.coverPath] is the resolved path (under `context.filesDir`) of a pre-scaled,
+ * grayscale thumbnail file that `:app`'s EPUB-backed implementation produces via
+ * `EpubCoverExtractor` (`:formats`) — never an archive-internal reference, and never a blob:
+ * `:data` only ever stores a file path, in [BookEntity.coverPath]. Defaults to `null` — a
+ * source-compatible addition, so a caller/fake that predates cover extraction still compiles
+ * unchanged and simply never sets one.
  */
 sealed interface BookMetadataResult {
     data class Success(
         val title: String,
         val author: String? = null,
+        val coverPath: String? = null,
     ) : BookMetadataResult
 
     data class Failure(val reason: String) : BookMetadataResult
@@ -84,14 +85,20 @@ class LibraryIndexer(
 
         val vanished = known.keys - onDisk.keys
         if (vanished.isNotEmpty()) {
-            // TODO(Task 4): this drops the row but leaks the cover file on disk. The brief's step 4
-            // is "delete vanished rows and their cover files" — once Task 4 populates
-            // BookEntity.coverPath, deleting a row here without also deleting that file is a
-            // storage leak. It's a no-op today only because coverPath is always null.
+            // Capture cover paths before the row disappears — dao.deleteByPaths only removes the
+            // row; the thumbnail file it pointed at is not Room's to know about, so it would
+            // otherwise leak on disk forever (the "vanished book" half of the brief's Task 4 leak).
+            val vanishedCoverPaths = vanished.mapNotNull { known[it]?.coverPath }
             dao.deleteByPaths(vanished.toList())
+            vanishedCoverPaths.forEach(::deleteCoverFile)
         }
 
         val toUpsert = mutableListOf<BookEntity>()
+        // Old cover files that a replaced/re-extracted row no longer references — deleted only
+        // after upsertAll succeeds below, the "replaced book" half of the same leak: a changed
+        // book that gets a new cover (or loses one entirely, on a fresh crack failure) must not
+        // leave its old thumbnail orphaned on disk.
+        val staleCoverPaths = mutableListOf<String>()
         var added = 0
         var updated = 0
         var newlyUnreadable = 0
@@ -147,13 +154,17 @@ class LibraryIndexer(
             }
 
             val entity = when (result) {
+                // A fresh Success always trusts the just-produced coverPath, exactly like it
+                // already trusts result.title/result.author over anything priorPosition holds —
+                // if the caller's extractor re-ran, it re-extracted (or regenerated a placeholder
+                // for) the cover too, at a path of its own choosing.
                 is BookMetadataResult.Success -> BookEntity(
                     path = path,
                     sizeBytes = stat.sizeBytes,
                     modifiedAtMs = stat.modifiedAtMs,
                     title = result.title,
                     author = result.author,
-                    coverPath = null,
+                    coverPath = result.coverPath,
                     spineIndex = priorPosition?.spineIndex ?: 0,
                     charOffset = priorPosition?.charOffset ?: 0,
                     unreadable = false,
@@ -162,13 +173,17 @@ class LibraryIndexer(
                     lastOpenedAtMs = lastOpenedAtMs,
                 )
 
+                // A Failure has nothing new to offer, so — same as title/author/position — the
+                // cover is only preserved when priorPosition is available (sameContent): a
+                // genuinely replaced book that fails to crack has no valid old cover to point at,
+                // and null here is exactly what marks it stale for deletion below.
                 is BookMetadataResult.Failure -> BookEntity(
                     path = path,
                     sizeBytes = stat.sizeBytes,
                     modifiedAtMs = stat.modifiedAtMs,
                     title = priorPosition?.title ?: file.name,
                     author = priorPosition?.author,
-                    coverPath = null,
+                    coverPath = priorPosition?.coverPath,
                     spineIndex = priorPosition?.spineIndex ?: 0,
                     charOffset = priorPosition?.charOffset ?: 0,
                     unreadable = true,
@@ -179,6 +194,13 @@ class LibraryIndexer(
             }
             toUpsert += entity
 
+            // The old cover this path used to point at is stale the moment the new row points
+            // somewhere else (a new file, or nowhere) — queue it for deletion once the DB write
+            // that stops referencing it has actually landed.
+            if (existing?.coverPath != null && existing.coverPath != entity.coverPath) {
+                staleCoverPaths += existing.coverPath
+            }
+
             if (existing == null) added++ else updated++
             if (entity.unreadable) newlyUnreadable++
         }
@@ -186,6 +208,9 @@ class LibraryIndexer(
         if (toUpsert.isNotEmpty()) {
             dao.upsertAll(toUpsert)
         }
+        // Deleted only after the upsert above has committed: deleting first and then failing the
+        // write would leave a row still pointing at a file that no longer exists.
+        staleCoverPaths.forEach(::deleteCoverFile)
 
         IndexResult(
             added = added,
@@ -193,6 +218,19 @@ class LibraryIndexer(
             removed = vanished.size,
             newlyUnreadable = newlyUnreadable,
         )
+    }
+
+    /**
+     * Best-effort delete of a cover thumbnail file that no row references anymore. A denied or
+     * failed delete leaves an orphaned file on disk — a storage leak, not a correctness bug, since
+     * the DB row is already gone or already updated to point elsewhere — so this never throws.
+     */
+    private fun deleteCoverFile(path: String) {
+        try {
+            File(path).delete()
+        } catch (e: SecurityException) {
+            // See above: best-effort only.
+        }
     }
 
     /** `(path, size, mtime)` for every `.epub` file under [roots]. Opens nothing. */

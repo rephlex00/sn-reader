@@ -319,4 +319,118 @@ class LibraryIndexerTest {
 
         assertThat(dao.getByPath(a.path)!!.addedAtMs).isEqualTo(1_000L)
     }
+
+    @Test
+    fun `a vanished book's cover file is deleted along with its row`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val cover = tempFolder.newFile("a-cover.png")
+        val extractor = FakeExtractor()
+        extractor.onPath(a.path, BookMetadataResult.Success(title = "A", coverPath = cover.path))
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+        indexer.sync()
+        assertThat(cover.exists()).isTrue()
+
+        assertThat(a.delete()).isTrue()
+        indexer.sync()
+
+        assertThat(cover.exists()).isFalse()
+    }
+
+    @Test
+    fun `an unchanged rescan does not touch an existing cover file`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val cover = tempFolder.newFile("cover.png")
+        val extractor = FakeExtractor()
+        extractor.onPath(a.path, BookMetadataResult.Success(title = "A", coverPath = cover.path))
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+        indexer.sync()
+        extractor.calls.clear()
+
+        indexer.sync()
+
+        assertThat(extractor.calls).isEmpty()
+        assertThat(cover.exists()).isTrue()
+        assertThat(dao.getByPath(a.path)!!.coverPath).isEqualTo(cover.path)
+    }
+
+    @Test
+    fun `a replaced book's stale cover file is deleted once the new one is stored`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val oldCover = tempFolder.newFile("old-cover.png")
+        val extractor = FakeExtractor()
+        extractor.onPath(a.path, BookMetadataResult.Success(title = "A", coverPath = oldCover.path))
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+        indexer.sync()
+        assertThat(oldCover.exists()).isTrue()
+
+        // The bytes are genuinely different content now: sizeBytes changes.
+        a.writeText("stub-but-longer-now")
+        a.setLastModified(a.lastModified() + 60_000)
+        val newCover = tempFolder.newFile("new-cover.png")
+        extractor.onPath(a.path, BookMetadataResult.Success(title = "A", coverPath = newCover.path))
+        indexer.sync()
+
+        assertThat(oldCover.exists()).isFalse()
+        assertThat(newCover.exists()).isTrue()
+        assertThat(dao.getByPath(a.path)!!.coverPath).isEqualTo(newCover.path)
+    }
+
+    @Test
+    fun `a size-changed file that now fails to crack deletes its stale cover file`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val cover = tempFolder.newFile("cover.png")
+        val extractor = FakeExtractor()
+        extractor.onPath(a.path, BookMetadataResult.Success(title = "A", coverPath = cover.path))
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+        indexer.sync()
+
+        a.writeText("stub-but-now-corrupt-and-longer")
+        a.setLastModified(a.lastModified() + 60_000)
+        extractor.onPath(a.path, BookMetadataResult.Failure("Malformed OPF"))
+        indexer.sync()
+
+        assertThat(cover.exists()).isFalse()
+        assertThat(dao.getByPath(a.path)!!.coverPath).isNull()
+    }
+
+    @Test
+    fun `a touched file with unchanged bytes that fails to crack preserves its prior cover file`(): Unit = runBlocking {
+        // Same size, bumped mtime only: same content as before, just now momentarily
+        // unreadable (e.g. a transient I/O error) — the existing cover is still valid and
+        // must not be deleted or orphaned.
+        val a = writeEpub("a.epub")
+        val cover = tempFolder.newFile("cover.png")
+        val extractor = FakeExtractor()
+        extractor.onPath(a.path, BookMetadataResult.Success(title = "A", coverPath = cover.path))
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+        indexer.sync()
+
+        a.writeText("stub")
+        a.setLastModified(a.lastModified() + 60_000)
+        extractor.onPath(a.path, BookMetadataResult.Failure("Transient error"))
+        indexer.sync()
+
+        assertThat(cover.exists()).isTrue()
+        assertThat(dao.getByPath(a.path)!!.coverPath).isEqualTo(cover.path)
+    }
+
+    @Test
+    fun `multiple vanished books each have their own cover file deleted`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val b = writeEpub("b.epub")
+        val coverA = tempFolder.newFile("cover-a.png")
+        val coverB = tempFolder.newFile("cover-b.png")
+        val extractor = FakeExtractor()
+        extractor.onPath(a.path, BookMetadataResult.Success(title = "A", coverPath = coverA.path))
+        extractor.onPath(b.path, BookMetadataResult.Success(title = "B", coverPath = coverB.path))
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+        indexer.sync()
+
+        assertThat(a.delete()).isTrue()
+        assertThat(b.delete()).isTrue()
+        indexer.sync()
+
+        assertThat(coverA.exists()).isFalse()
+        assertThat(coverB.exists()).isFalse()
+    }
 }

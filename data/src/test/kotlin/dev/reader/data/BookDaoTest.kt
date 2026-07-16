@@ -134,6 +134,7 @@ class BookDaoTest {
                 modifiedAtMs = 222L,
                 addedAtMs = 1_650_000_000_000L,
                 lastOpenedAtMs = null,
+                coverPath = null,
             ),
             BookStat(
                 path = "/b.epub",
@@ -141,6 +142,7 @@ class BookDaoTest {
                 modifiedAtMs = 444L,
                 addedAtMs = 1_650_000_000_000L,
                 lastOpenedAtMs = null,
+                coverPath = null,
             ),
         )
     }

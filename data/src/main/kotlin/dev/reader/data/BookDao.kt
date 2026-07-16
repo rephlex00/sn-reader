@@ -34,11 +34,11 @@ interface BookDao {
 
     /**
      * The cheap projection the incremental indexer diffs against a directory walk — just enough
-     * to detect new, changed, and vanished files without opening any of them. `addedAtMs` and
-     * `lastOpenedAtMs` ride along so [LibraryIndexer] can carry them forward across a re-index
-     * without a second query (see [BookStat]).
+     * to detect new, changed, and vanished files without opening any of them. `addedAtMs`,
+     * `lastOpenedAtMs`, and `coverPath` ride along so [LibraryIndexer] can carry them forward (or
+     * diff a stale cover file away) across a re-index without a second query (see [BookStat]).
      */
-    @Query("SELECT path, sizeBytes, modifiedAtMs, addedAtMs, lastOpenedAtMs FROM books")
+    @Query("SELECT path, sizeBytes, modifiedAtMs, addedAtMs, lastOpenedAtMs, coverPath FROM books")
     suspend fun getAllStats(): List<BookStat>
 
     /**

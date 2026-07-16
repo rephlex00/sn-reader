@@ -1,6 +1,7 @@
 package dev.reader.formats.epub
 
 import dev.reader.formats.ResourceSource
+import dev.reader.formats.readCapped
 import java.io.IOException
 
 /**
@@ -15,6 +16,25 @@ import java.io.IOException
 internal fun readTextChecked(source: ResourceSource, path: String): String? =
     try {
         source.readText(path)
+    } catch (e: IOException) {
+        throw EpubException.Malformed("Failed to read \"$path\": ${e.message}")
+    }
+
+/**
+ * Binary sibling of [readTextChecked], for an untrusted entry that is not text — a cover
+ * image, first and so far only. Same translation contract (a raw [IOException] becomes a
+ * typed [EpubException.Malformed]) and the same size cap, reused via [readCapped] rather
+ * than copied: this is deliberately the third reader of an untrusted zip entry in this
+ * package (after [readTextChecked] and the ZIP layer's own declared-size fast path), and
+ * the brief is explicit that the cap logic must not be duplicated a fourth time. Unlike
+ * [readTextChecked] there is no declared-size fast path here — [ResourceSource.open] gives
+ * a raw stream with no entry metadata — but that fast path was only ever a performance
+ * shortcut; [readCapped] streams the read and aborts the moment the running total exceeds
+ * the cap, so an oversized entry never gets fully buffered in memory either way.
+ */
+internal fun readBytesChecked(source: ResourceSource, path: String): ByteArray? =
+    try {
+        source.open(path)?.use { input -> readCapped(input, path) }
     } catch (e: IOException) {
         throw EpubException.Malformed("Failed to read \"$path\": ${e.message}")
     }
