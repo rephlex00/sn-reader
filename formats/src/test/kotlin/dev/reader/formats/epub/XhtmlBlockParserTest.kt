@@ -617,7 +617,12 @@ class XhtmlBlockParserTest {
         val blocks = parse("""<p class="t">A <span class="italic">word</span></p>""", css)
         val h = blocks.single() as Block.Heading
         assertThat(h.text.text).isEqualTo("A word")
-        assertThat(h.text.spans).containsExactly(StyleSpan(2, 6, InlineStyle(italic = true)))
+        // The heading's own 2em rides along as a full-width sizeRatio span (Plan 3 Task 3),
+        // alongside the inner italic span. Both coexist — inference still chose Heading.
+        assertThat(h.text.spans).containsExactly(
+            StyleSpan(0, 6, InlineStyle(sizeRatio = 2.0f)),
+            StyleSpan(2, 6, InlineStyle(italic = true)),
+        )
     }
 
     @Test
@@ -912,5 +917,324 @@ class XhtmlBlockParserTest {
 
         assertThat(blocks).hasSize(3)
         assertThat(blocks[1]).isEqualTo(Block.PageBreak)
+    }
+
+    // --- Plan 3 Task 3: resolve the full CSS property table into the model ---
+    //
+    // Helpers: the parser pushes each honored property as its own single-field InlineStyle
+    // through the same one-span-per-semantic stack, so a run's style for a given property is
+    // read off the span whose style carries that field.
+
+    private fun paragraphSpans(body: String, css: CssRules): List<StyleSpan> =
+        (parse(body, css).single() as Block.Paragraph).text.spans
+
+    private fun paragraphStyle(body: String, css: CssRules) =
+        (parse(body, css).single() as Block.Paragraph).style
+
+    // -- text-decoration --
+
+    @Test
+    fun `text-decoration underline becomes an underline span`() {
+        val css = CssRules.parse(".u { text-decoration: underline }")
+        val spans = paragraphSpans("""<p>a <span class="u">b</span> c</p>""", css)
+        assertThat(spans).containsExactly(StyleSpan(2, 3, InlineStyle(underline = true)))
+    }
+
+    @Test
+    fun `text-decoration line-through becomes a strikethrough span`() {
+        val css = CssRules.parse(".s { text-decoration: line-through }")
+        val spans = paragraphSpans("""<p>a <span class="s">b</span> c</p>""", css)
+        assertThat(spans).containsExactly(StyleSpan(2, 3, InlineStyle(strikethrough = true)))
+    }
+
+    @Test
+    fun `text-decoration with both underline and line-through emits both spans`() {
+        val css = CssRules.parse(".b { text-decoration: underline line-through }")
+        val spans = paragraphSpans("""<p><span class="b">x</span></p>""", css)
+        assertThat(spans).containsExactly(
+            StyleSpan(0, 1, InlineStyle(underline = true)),
+            StyleSpan(0, 1, InlineStyle(strikethrough = true)),
+        )
+    }
+
+    @Test
+    fun `text-decoration none produces no span`() {
+        val css = CssRules.parse(".n { text-decoration: none }")
+        val spans = paragraphSpans("""<p><span class="n">x</span></p>""", css)
+        assertThat(spans).isEmpty()
+    }
+
+    @Test
+    fun `text-decoration does not inherit into descendants`() {
+        // text-decoration is a non-inherited property: an underlined block must not paint
+        // every nested run with its own underline span.
+        val css = CssRules.parse(".u { text-decoration: underline }")
+        val spans = paragraphSpans("""<p class="u">a <span>b</span></p>""", css)
+        // Only the block-level underline over the whole paragraph; the inner span adds none.
+        assertThat(spans).containsExactly(StyleSpan(0, 3, InlineStyle(underline = true)))
+    }
+
+    // -- letter-spacing --
+
+    @Test
+    fun `letter-spacing in em maps to letterSpacingEm`() {
+        val css = CssRules.parse(".w { letter-spacing: 0.15em }")
+        val spans = paragraphSpans("""<p><span class="w">x</span></p>""", css)
+        val ls = spans.single().style.letterSpacingEm!!
+        assertThat(ls).isWithin(1e-4f).of(0.15f)
+    }
+
+    @Test
+    fun `letter-spacing in px maps against the baseline`() {
+        val css = CssRules.parse("body { font-size: 10px } .w { letter-spacing: 2px }")
+        val spans = paragraphSpans("""<p><span class="w">x</span></p>""", css)
+        val ls = spans.single().style.letterSpacingEm!!
+        assertThat(ls).isWithin(1e-4f).of(0.2f)
+    }
+
+    @Test
+    fun `letter-spacing normal yields no span`() {
+        val css = CssRules.parse(".w { letter-spacing: normal }")
+        val spans = paragraphSpans("""<p><span class="w">x</span></p>""", css)
+        assertThat(spans).isEmpty()
+    }
+
+    // -- color / grayLevel (luminance = 0.2126R + 0.7152G + 0.0722B) --
+
+    @Test
+    fun `color hex red maps to its luminance gray level`() {
+        val css = CssRules.parse(".c { color: #ff0000 }")
+        val spans = paragraphSpans("""<p><span class="c">x</span></p>""", css)
+        val gray = spans.single().style.grayLevel!!
+        assertThat(gray).isWithin(1e-4f).of(0.2126f)
+    }
+
+    @Test
+    fun `color three-digit hex expands like six-digit`() {
+        val css = CssRules.parse(".c { color: #00f }")
+        val spans = paragraphSpans("""<p><span class="c">x</span></p>""", css)
+        assertThat(spans.single().style.grayLevel!!).isWithin(1e-4f).of(0.0722f)
+    }
+
+    @Test
+    fun `color rgb function maps to luminance`() {
+        val css = CssRules.parse(".c { color: rgb(0, 255, 0) }")
+        val spans = paragraphSpans("""<p><span class="c">x</span></p>""", css)
+        assertThat(spans.single().style.grayLevel!!).isWithin(1e-4f).of(0.7152f)
+    }
+
+    @Test
+    fun `named color gray maps to mid gray`() {
+        val css = CssRules.parse(".c { color: gray }")
+        val spans = paragraphSpans("""<p><span class="c">x</span></p>""", css)
+        // #808080 → 128/255 on each channel → luminance 128/255.
+        assertThat(spans.single().style.grayLevel!!).isWithin(1e-4f).of(128f / 255f)
+    }
+
+    @Test
+    fun `named color black maps to zero`() {
+        val css = CssRules.parse(".c { color: black }")
+        val spans = paragraphSpans("""<p><span class="c">x</span></p>""", css)
+        assertThat(spans.single().style.grayLevel!!).isWithin(1e-4f).of(0f)
+    }
+
+    @Test
+    fun `unknown color name produces no gray span`() {
+        val css = CssRules.parse(".c { color: rebeccapurpleish }")
+        val spans = paragraphSpans("""<p><span class="c">x</span></p>""", css)
+        assertThat(spans).isEmpty()
+    }
+
+    // -- font-size / sizeRatio --
+
+    @Test
+    fun `font-size in em maps to sizeRatio`() {
+        val css = CssRules.parse(".big { font-size: 1.5em }")
+        val spans = paragraphSpans("""<p>a <span class="big">b</span></p>""", css)
+        assertThat(spans.single().style.sizeRatio!!).isWithin(1e-4f).of(1.5f)
+    }
+
+    @Test
+    fun `font-size in percent maps to sizeRatio`() {
+        // Leading unstyled text keeps this a Paragraph: a <p> whose SOLE content is a short
+        // enlarged span is (correctly) inferred as a Heading, which would test inference, not
+        // the size mapping this test is about. See the em case above for the same pattern.
+        val css = CssRules.parse(".big { font-size: 150% }")
+        val spans = paragraphSpans("""<p>a <span class="big">b</span></p>""", css)
+        assertThat(spans.single().style.sizeRatio!!).isWithin(1e-4f).of(1.5f)
+    }
+
+    @Test
+    fun `font-size in px maps against the mined body baseline`() {
+        val css = CssRules.parse("body { font-size: 12px } .big { font-size: 24px }")
+        val spans = paragraphSpans("""<p>a <span class="big">b</span></p>""", css)
+        assertThat(spans.single().style.sizeRatio!!).isWithin(1e-4f).of(2.0f)
+    }
+
+    @Test
+    fun `font-size in px with no baseline yields no size span`() {
+        val css = CssRules.parse(".big { font-size: 24px }")
+        val spans = paragraphSpans("""<p><span class="big">b</span></p>""", css)
+        assertThat(spans).isEmpty()
+    }
+
+    @Test
+    fun `font-size equal to baseline emits no redundant span`() {
+        // 1em resolves to ratio 1.0 — identity — which must not become a span on every run.
+        val css = CssRules.parse(".same { font-size: 1em }")
+        val spans = paragraphSpans("""<p><span class="same">b</span></p>""", css)
+        assertThat(spans).isEmpty()
+    }
+
+    // -- font-family monospace --
+
+    @Test
+    fun `monospace font-family maps to a monospace span`() {
+        val css = CssRules.parse(".code { font-family: \"Courier New\", monospace }")
+        val spans = paragraphSpans("""<p><span class="code">x</span></p>""", css)
+        assertThat(spans).containsExactly(StyleSpan(0, 1, InlineStyle(monospace = true)))
+    }
+
+    // -- multi-property element pushes separate single-field styles through the stack --
+
+    @Test
+    fun `an element with bold underline and color pushes three separate spans`() {
+        val css = CssRules.parse(".m { font-weight: bold; text-decoration: underline; color: #ff0000 }")
+        val spans = paragraphSpans("""<p><span class="m">x</span></p>""", css)
+        assertThat(spans.map { it.style.bold }).contains(true)
+        assertThat(spans.map { it.style.underline }).contains(true)
+        val gray = spans.mapNotNull { it.style.grayLevel }.single()
+        assertThat(gray).isWithin(1e-4f).of(0.2126f)
+        // Each is a distinct single-field style over the same [0,1) range.
+        assertThat(spans).hasSize(3)
+        assertThat(spans.map { it.start to it.end }.toSet()).containsExactly(0 to 1)
+    }
+
+    // -- text-align → BlockStyle.align --
+
+    @Test
+    fun `text-align center maps to BlockStyle align CENTER`() {
+        val css = CssRules.parse(".c { text-align: center }")
+        assertThat(paragraphStyle("""<p class="c">x</p>""", css).align)
+            .isEqualTo(dev.reader.engine.TextAlign.CENTER)
+    }
+
+    @Test
+    fun `text-align justify maps to BlockStyle align JUSTIFY`() {
+        val css = CssRules.parse(".j { text-align: justify }")
+        assertThat(paragraphStyle("""<p class="j">x</p>""", css).align)
+            .isEqualTo(dev.reader.engine.TextAlign.JUSTIFY)
+    }
+
+    @Test
+    fun `text-align inherits from an ancestor onto the block`() {
+        val css = CssRules.parse("body { text-align: center }")
+        assertThat(paragraphStyle("<p>x</p>", css).align)
+            .isEqualTo(dev.reader.engine.TextAlign.CENTER)
+    }
+
+    // -- text-indent --
+
+    @Test
+    fun `text-indent in em maps to textIndentEm`() {
+        val css = CssRules.parse(".i { text-indent: 2em }")
+        assertThat(paragraphStyle("""<p class="i">x</p>""", css).textIndentEm!!)
+            .isWithin(1e-4f).of(2.0f)
+    }
+
+    @Test
+    fun `text-indent in px maps against the baseline`() {
+        val css = CssRules.parse("body { font-size: 12px } .i { text-indent: 24px }")
+        assertThat(paragraphStyle("""<p class="i">x</p>""", css).textIndentEm!!)
+            .isWithin(1e-4f).of(2.0f)
+    }
+
+    @Test
+    fun `text-indent in px with no baseline is null`() {
+        val css = CssRules.parse(".i { text-indent: 24px }")
+        assertThat(paragraphStyle("""<p class="i">x</p>""", css).textIndentEm).isNull()
+    }
+
+    // -- margin-top / margin-bottom --
+
+    @Test
+    fun `margin-top and margin-bottom map to their em fields`() {
+        val css = CssRules.parse(".m { margin-top: 1em; margin-bottom: 2em }")
+        val style = paragraphStyle("""<p class="m">x</p>""", css)
+        assertThat(style.marginTopEm!!).isWithin(1e-4f).of(1.0f)
+        assertThat(style.marginBottomEm!!).isWithin(1e-4f).of(2.0f)
+    }
+
+    @Test
+    fun `margin shorthand expands into top and bottom`() {
+        val css = CssRules.parse(".m { margin: 3em 0 }")
+        val style = paragraphStyle("""<p class="m">x</p>""", css)
+        assertThat(style.marginTopEm!!).isWithin(1e-4f).of(3.0f)
+        assertThat(style.marginBottomEm!!).isWithin(1e-4f).of(3.0f)
+    }
+
+    // -- line-height --
+
+    @Test
+    fun `line-height unitless is taken as-is`() {
+        val css = CssRules.parse(".l { line-height: 1.5 }")
+        assertThat(paragraphStyle("""<p class="l">x</p>""", css).lineHeightMultiplier!!)
+            .isWithin(1e-4f).of(1.5f)
+    }
+
+    @Test
+    fun `line-height percent maps to a ratio`() {
+        val css = CssRules.parse(".l { line-height: 150% }")
+        assertThat(paragraphStyle("""<p class="l">x</p>""", css).lineHeightMultiplier!!)
+            .isWithin(1e-4f).of(1.5f)
+    }
+
+    @Test
+    fun `line-height normal is null`() {
+        val css = CssRules.parse(".l { line-height: normal }")
+        assertThat(paragraphStyle("""<p class="l">x</p>""", css).lineHeightMultiplier).isNull()
+    }
+
+    // -- inheritance carries an ancestor's emphasis onto descendant text (the Plan 3 TODO) --
+
+    @Test
+    fun `css italic on a blockquote reaches its paragraph children by inheritance`() {
+        val css = CssRules.parse("blockquote { font-style: italic }")
+        val blocks = parse("<blockquote><p>A</p><p>B</p></blockquote>", css)
+
+        assertThat(blocks).hasSize(2)
+        val a = (blocks[0] as Block.Quote).text
+        assertThat(a.text).isEqualTo("A")
+        assertThat(a.spans).containsExactly(StyleSpan(0, 1, InlineStyle(italic = true)))
+        val b = (blocks[1] as Block.Quote).text
+        assertThat(b.spans).containsExactly(StyleSpan(0, 1, InlineStyle(italic = true)))
+    }
+
+    @Test
+    fun `an inherited style is not duplicated between a block and its inner run`() {
+        // color inherits; the block paints it once over its whole text, and the nested
+        // span must not re-push the identical gray it merely inherited.
+        val css = CssRules.parse("body { color: #808080 }")
+        val spans = paragraphSpans("<p>a <span>b</span> c</p>", css)
+        assertThat(spans).hasSize(1)
+        assertThat(spans.single().start).isEqualTo(0)
+        assertThat(spans.single().end).isEqualTo(5)
+        assertThat(spans.single().style.grayLevel!!).isWithin(1e-4f).of(128f / 255f)
+    }
+
+    // -- hostile / malformed values never throw --
+
+    @Test
+    fun `malformed property values degrade to null and never throw`() {
+        val css = CssRules.parse(
+            ".x { font-size: ; color: #zzz; letter-spacing: wat; " +
+                "text-indent: 5furlongs; margin-top: nope; line-height: banana }",
+        )
+        val blocks = parse("""<p class="x">A <span class="x">word</span>.</p>""", css)
+        val p = blocks.single() as Block.Paragraph
+        // Nothing usable resolved, so no spans and an all-null block style — but no crash.
+        assertThat(p.text.text).isEqualTo("A word.")
+        assertThat(p.text.spans).isEmpty()
+        assertThat(p.style).isEqualTo(dev.reader.engine.BlockStyle())
     }
 }
