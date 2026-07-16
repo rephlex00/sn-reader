@@ -193,11 +193,19 @@ class SpannedChapterBuilder {
         } ?: return null
 
         // inSampleSize floors to a power of two >= the request, so the sampled bitmap can still
-        // overshoot the content box; the drawable's bounds (not a second scaled bitmap) shrink it
-        // to fit, preserving aspect ratio and never enlarging an image already smaller than the box.
+        // overshoot the content box by nearly 2x per axis. Trim it to the fit dimensions and drop
+        // the oversized sampled bitmap — the same two-step the cover extractor uses — so what stays
+        // resident in the chapter cache is the displayed size, not up to ~4x its pixel area. On a
+        // memory-constrained e-ink device that difference matters across cached chapters.
         val (targetWidth, targetHeight) = fitWithin(sampled.width, sampled.height, maxWidthPx, maxHeightPx)
-        return BitmapDrawable(Resources.getSystem(), sampled).apply {
-            setBounds(0, 0, targetWidth, targetHeight)
+        val display = if (sampled.width == targetWidth && sampled.height == targetHeight) {
+            sampled
+        } else {
+            Bitmap.createScaledBitmap(sampled, targetWidth, targetHeight, true)
+                .also { if (it !== sampled) sampled.recycle() }
+        }
+        return BitmapDrawable(Resources.getSystem(), display).apply {
+            setBounds(0, 0, display.width, display.height)
             // Saturation 0 renders the image gray; the panel is grayscale.
             colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
         }
