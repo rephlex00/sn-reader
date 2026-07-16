@@ -42,6 +42,8 @@ class BookDaoTest {
         charOffset: Int = 0,
         unreadable: Boolean = false,
         unreadableReason: String? = null,
+        addedAtMs: Long = 1_650_000_000_000L,
+        lastOpenedAtMs: Long? = null,
     ) = BookEntity(
         path = path,
         sizeBytes = sizeBytes,
@@ -53,6 +55,8 @@ class BookDaoTest {
         charOffset = charOffset,
         unreadable = unreadable,
         unreadableReason = unreadableReason,
+        addedAtMs = addedAtMs,
+        lastOpenedAtMs = lastOpenedAtMs,
     )
 
     @Test
@@ -124,26 +128,40 @@ class BookDaoTest {
         val stats = dao.getAllStats()
 
         assertThat(stats).containsExactly(
-            BookStat(path = "/a.epub", sizeBytes = 111L, modifiedAtMs = 222L),
-            BookStat(path = "/b.epub", sizeBytes = 333L, modifiedAtMs = 444L),
+            BookStat(
+                path = "/a.epub",
+                sizeBytes = 111L,
+                modifiedAtMs = 222L,
+                addedAtMs = 1_650_000_000_000L,
+                lastOpenedAtMs = null,
+            ),
+            BookStat(
+                path = "/b.epub",
+                sizeBytes = 333L,
+                modifiedAtMs = 444L,
+                addedAtMs = 1_650_000_000_000L,
+                lastOpenedAtMs = null,
+            ),
         )
     }
 
     @Test
-    fun `updatePosition round-trips spineIndex and charOffset without touching other columns`(): Unit = runBlocking {
-        dao.upsertAll(listOf(book(path = "/a.epub", title = "Keep Me", spineIndex = 0, charOffset = 0)))
+    fun `updatePosition round-trips spineIndex, charOffset, and lastOpenedAtMs without touching other columns`(): Unit =
+        runBlocking {
+            dao.upsertAll(listOf(book(path = "/a.epub", title = "Keep Me", spineIndex = 0, charOffset = 0)))
 
-        dao.updatePosition(path = "/a.epub", spineIndex = 3, charOffset = 4521)
+            dao.updatePosition(path = "/a.epub", spineIndex = 3, charOffset = 4521, lastOpenedAtMs = 9_000L)
 
-        val found = dao.getByPath("/a.epub")!!
-        assertThat(found.spineIndex).isEqualTo(3)
-        assertThat(found.charOffset).isEqualTo(4521)
-        assertThat(found.title).isEqualTo("Keep Me")
-    }
+            val found = dao.getByPath("/a.epub")!!
+            assertThat(found.spineIndex).isEqualTo(3)
+            assertThat(found.charOffset).isEqualTo(4521)
+            assertThat(found.lastOpenedAtMs).isEqualTo(9_000L)
+            assertThat(found.title).isEqualTo("Keep Me")
+        }
 
     @Test
     fun `updatePosition on an unknown path is a no-op, not a crash`(): Unit = runBlocking {
-        dao.updatePosition(path = "/nowhere.epub", spineIndex = 1, charOffset = 1)
+        dao.updatePosition(path = "/nowhere.epub", spineIndex = 1, charOffset = 1, lastOpenedAtMs = 1L)
 
         assertThat(dao.observeAll().first()).isEmpty()
     }
@@ -171,5 +189,69 @@ class BookDaoTest {
         assertThat(rows).hasSize(1)
         assertThat(rows.single().unreadable).isTrue()
         assertThat(rows.single().unreadableReason).isEqualTo("DRM protected")
+    }
+
+    @Test
+    fun `observeAllSorted TITLE is case-insensitive ascending`(): Unit = runBlocking {
+        dao.upsertAll(
+            listOf(
+                book(path = "/b.epub", title = "the Hobbit"),
+                book(path = "/a.epub", title = "Anna Karenina"),
+                book(path = "/c.epub", title = "The Great Gatsby"),
+            ),
+        )
+
+        val rows = dao.observeAllSorted(SortOrder.TITLE).first()
+
+        assertThat(rows.map { it.title })
+            .containsExactly("Anna Karenina", "The Great Gatsby", "the Hobbit")
+            .inOrder()
+    }
+
+    @Test
+    fun `observeAllSorted AUTHOR is case-insensitive and sorts null authors last`(): Unit = runBlocking {
+        dao.upsertAll(
+            listOf(
+                book(path = "/a.epub", author = "zorro"),
+                book(path = "/b.epub", author = null),
+                book(path = "/c.epub", author = "Anne"),
+            ),
+        )
+
+        val rows = dao.observeAllSorted(SortOrder.AUTHOR).first()
+
+        assertThat(rows.map { it.path }).containsExactly("/c.epub", "/a.epub", "/b.epub").inOrder()
+    }
+
+    @Test
+    fun `observeAllSorted RECENTLY_ADDED orders newest addedAtMs first`(): Unit = runBlocking {
+        dao.upsertAll(
+            listOf(
+                book(path = "/old.epub", addedAtMs = 1000L),
+                book(path = "/new.epub", addedAtMs = 3000L),
+                book(path = "/mid.epub", addedAtMs = 2000L),
+            ),
+        )
+
+        val rows = dao.observeAllSorted(SortOrder.RECENTLY_ADDED).first()
+
+        assertThat(rows.map { it.path }).containsExactly("/new.epub", "/mid.epub", "/old.epub").inOrder()
+    }
+
+    @Test
+    fun `observeAllSorted RECENTLY_OPENED places never-opened books last`(): Unit = runBlocking {
+        dao.upsertAll(
+            listOf(
+                book(path = "/never.epub", lastOpenedAtMs = null),
+                book(path = "/old.epub", lastOpenedAtMs = 1000L),
+                book(path = "/recent.epub", lastOpenedAtMs = 5000L),
+            ),
+        )
+
+        val rows = dao.observeAllSorted(SortOrder.RECENTLY_OPENED).first()
+
+        assertThat(rows.map { it.path })
+            .containsExactly("/recent.epub", "/old.epub", "/never.epub")
+            .inOrder()
     }
 }

@@ -220,7 +220,7 @@ class LibraryIndexerTest {
         val a = writeEpub("a.epub")
         val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
         indexer.sync()
-        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250)
+        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250, lastOpenedAtMs = 1_000L)
 
         a.writeText("stub-changed")
         a.setLastModified(a.lastModified() + 60_000)
@@ -237,7 +237,7 @@ class LibraryIndexerTest {
         val a = writeEpub("a.epub")
         val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
         indexer.sync()
-        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250)
+        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250, lastOpenedAtMs = 1_000L)
 
         a.writeText("stub")
         a.setLastModified(a.lastModified() + 60_000)
@@ -280,5 +280,43 @@ class LibraryIndexerTest {
         val result = indexer.sync()
 
         assertThat(result.added).isEqualTo(2)
+    }
+
+    @Test
+    fun `a new book gets addedAtMs from the injected clock, not the wall clock`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor(), clock = { 5_000L })
+
+        indexer.sync()
+
+        assertThat(dao.getByPath(a.path)!!.addedAtMs).isEqualTo(5_000L)
+    }
+
+    @Test
+    fun `a size-changed file keeps its original addedAtMs, not the resync time`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val firstSync = LibraryIndexer(dao, listOf(root), FakeExtractor(), clock = { 1_000L })
+        firstSync.sync()
+
+        a.writeText("stub-changed")
+        a.setLastModified(a.lastModified() + 60_000)
+        val secondSync = LibraryIndexer(dao, listOf(root), FakeExtractor(), clock = { 9_000L })
+        secondSync.sync()
+
+        assertThat(dao.getByPath(a.path)!!.addedAtMs).isEqualTo(1_000L)
+    }
+
+    @Test
+    fun `a touched file with unchanged bytes keeps its original addedAtMs`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        val firstSync = LibraryIndexer(dao, listOf(root), FakeExtractor(), clock = { 1_000L })
+        firstSync.sync()
+
+        a.writeText("stub")
+        a.setLastModified(a.lastModified() + 60_000)
+        val secondSync = LibraryIndexer(dao, listOf(root), FakeExtractor(), clock = { 9_000L })
+        secondSync.sync()
+
+        assertThat(dao.getByPath(a.path)!!.addedAtMs).isEqualTo(1_000L)
     }
 }

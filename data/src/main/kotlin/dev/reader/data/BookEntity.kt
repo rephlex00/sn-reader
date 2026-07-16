@@ -22,8 +22,15 @@ import androidx.room.PrimaryKey
  * `unreadable` + `unreadableReason` let a corrupt book be shown as broken, with a reason, and never
  * re-cracked on a later scan as long as its `(sizeBytes, modifiedAtMs)` is unchanged.
  *
- * Deliberately absent: `addedAtMs` / `lastOpenedAtMs`. Only sorting would read them, and sorting is
- * deferred — add the column with the feature that needs it, not before.
+ * `addedAtMs` is when this path first entered the library, for "recently added" sort. It survives
+ * a re-index of the same path unconditionally — even a genuine content replacement (changed
+ * `sizeBytes`) is not a new acquisition, just a new version of the same library entry — so it is
+ * set once, on first discovery, and carried forward by [LibraryIndexer] from then on.
+ *
+ * `lastOpenedAtMs` is null until the reader opens this book at least once; [BookDao.updatePosition]
+ * is the only writer. It follows the same "same path, same entry" carry-forward as `addedAtMs`
+ * across a re-index, for the same reason: it isn't a coordinate into file content (unlike
+ * `spineIndex`/`charOffset`), just a historical fact about this library entry.
  */
 @Entity(tableName = "books")
 data class BookEntity(
@@ -37,14 +44,22 @@ data class BookEntity(
     val charOffset: Int,
     val unreadable: Boolean,
     val unreadableReason: String?,
+    val addedAtMs: Long,
+    val lastOpenedAtMs: Long?,
 )
 
 /**
  * A lightweight projection of just the columns [LibraryIndexer][dev.reader.data] needs to diff the
  * filesystem against the index, without paying for the rest of the row (title, cover path, etc.).
+ *
+ * `addedAtMs` and `lastOpenedAtMs` ride along here (rather than requiring a second query) so the
+ * indexer can carry both forward across a re-index without an extra per-row fetch beyond the one
+ * [LibraryIndexer] already does for same-content position/title preservation.
  */
 data class BookStat(
     val path: String,
     val sizeBytes: Long,
     val modifiedAtMs: Long,
+    val addedAtMs: Long,
+    val lastOpenedAtMs: Long?,
 )

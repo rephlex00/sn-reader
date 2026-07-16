@@ -67,11 +67,15 @@ data class IndexResult(
  * Call [sync] once, on library entry. Nothing here schedules itself; there is no service, worker,
  * or file observer. The whole body runs on [Dispatchers.IO] regardless of the caller's context, so
  * the blocking directory walk and file reads never land on the caller's thread.
+ *
+ * [clock] is injected (rather than reading [System.currentTimeMillis] directly) purely so tests
+ * can assert on the `addedAtMs` a newly-discovered book receives.
  */
 class LibraryIndexer(
     private val dao: BookDao,
     private val roots: List<File>,
     private val extractor: MetadataExtractor,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
     suspend fun sync(): IndexResult = withContext(Dispatchers.IO) {
@@ -116,6 +120,14 @@ class LibraryIndexer(
             val sameContent = existing != null && existing.sizeBytes == stat.sizeBytes
             val priorPosition = if (sameContent) dao.getByPath(path) else null
 
+            // addedAtMs (and lastOpenedAtMs) are carried forward from the existing row on ANY
+            // re-index of the same path, regardless of the sameContent gate above: even a genuine
+            // content replacement (changed sizeBytes) is not a new acquisition, just a new version
+            // of the same library entry. This is unlike spineIndex/charOffset, which really are
+            // meaningless coordinates into content that no longer exists once the bytes change.
+            val addedAtMs = existing?.addedAtMs ?: clock()
+            val lastOpenedAtMs = existing?.lastOpenedAtMs
+
             val file = File(path)
             val result = try {
                 extractor.extract(file)
@@ -146,6 +158,8 @@ class LibraryIndexer(
                     charOffset = priorPosition?.charOffset ?: 0,
                     unreadable = false,
                     unreadableReason = null,
+                    addedAtMs = addedAtMs,
+                    lastOpenedAtMs = lastOpenedAtMs,
                 )
 
                 is BookMetadataResult.Failure -> BookEntity(
@@ -159,6 +173,8 @@ class LibraryIndexer(
                     charOffset = priorPosition?.charOffset ?: 0,
                     unreadable = true,
                     unreadableReason = result.reason,
+                    addedAtMs = addedAtMs,
+                    lastOpenedAtMs = lastOpenedAtMs,
                 )
             }
             toUpsert += entity
