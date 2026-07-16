@@ -149,6 +149,46 @@ class CssTest {
         assertThat(CssRules.EMPTY.declarationsFor("p", listOf("x"), null)).isEmpty()
     }
 
+    // --- Fix wave A, I2: a selector that appears MORE THAN ONCE in the stylesheet must
+    // keep each block at its own position in the cascade. Merging all of `.a`'s blocks
+    // into one map replayed every `.a` declaration at the LAST block's index, letting an
+    // early `.a { font-weight: bold }` beat a later `.b { font-weight: normal }`. ---
+
+    @Test
+    fun `a repeated class selector does not hoist its earlier declarations past a later rule`() {
+        val css = CssRules.parse(".a { font-weight: bold }  .b { font-weight: normal }  .a { color: red }")
+
+        assertThat(css.declarationsFor("span", listOf("a", "b"), null))
+            .containsEntry("font-weight", "normal")
+    }
+
+    @Test
+    fun `a repeated class selector still contributes all of its declarations`() {
+        val css = CssRules.parse(".a { font-weight: bold }  .b { font-weight: normal }  .a { color: red }")
+        val d = css.declarationsFor("span", listOf("a", "b"), null)
+
+        assertThat(d).containsEntry("color", "red")
+        // .a alone (no .b competing) still resolves bold from its first block.
+        assertThat(css.declarationsFor("span", listOf("a"), null))
+            .containsEntry("font-weight", "bold")
+    }
+
+    @Test
+    fun `a repeated compound selector does not hoist its earlier declarations past a later rule`() {
+        val css = CssRules.parse("p.a { font-weight: bold }  .b { font-weight: normal }  p.a { color: red }")
+
+        assertThat(css.declarationsFor("p", listOf("a", "b"), null))
+            .containsEntry("font-weight", "normal")
+    }
+
+    @Test
+    fun `later block of a repeated class still beats an earlier competing class`() {
+        val css = CssRules.parse(".a { font-style: normal }  .b { font-style: italic }  .a { font-style: oblique }")
+
+        assertThat(css.declarationsFor("span", listOf("a", "b"), null))
+            .containsEntry("font-style", "oblique")
+    }
+
     @Test
     fun `selectors and properties are case-insensitive`() {
         val css = CssRules.parse(".X { FONT-STYLE: Italic }")
