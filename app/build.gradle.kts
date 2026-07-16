@@ -27,6 +27,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        // No separate targetSdk override here (unlike :data/:formats): this is an application
+        // module, so defaultConfig.targetSdk (36) already applies to Robolectric directly —
+        // testOptions.targetSdk is only settable (and only needed) for library modules.
+        unitTests {
+            // LibraryActivityTest's Robolectric coverage inflates menu_library.xml and builds
+            // real Views (Toolbar, RecyclerView) — needs real resource resolution, not stubs.
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -46,4 +57,5 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)
+    testImplementation(libs.robolectric)
 }

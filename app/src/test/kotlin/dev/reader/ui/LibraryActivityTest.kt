@@ -60,4 +60,13 @@ class LibraryActivityTest {
     fun `an unrecognized saved value restores to TITLE rather than throwing`() {
         assertThat(sortOrderFromSavedValue("NOT_A_REAL_SORT_ORDER")).isEqualTo(SortOrder.TITLE)
     }
+
+    // -- menuItemIdForSortOrder --------------------------------------------------------------
+
+    @Test
+    fun `every SortOrder maps to the menu item that selects it`() {
+        for (order in SortOrder.entries) {
+            assertThat(sortOrderForMenuItemId(menuItemIdForSortOrder(order))).isEqualTo(order)
+        }
+    }
 }

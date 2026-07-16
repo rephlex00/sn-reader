@@ -1,17 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Sorting is in SQL (BookDao.observeAllSorted) — this menu only selects the SortOrder;
-     nothing here re-sorts a list in Kotlin. -->
+     nothing here re-sorts a list in Kotlin.
+
+     checkableBehavior="single" makes the group act as a radio selection: tapping an item checks
+     it and unchecks its siblings automatically, so the active sort order has a visible mark
+     on-screen (it didn't before). LibraryActivity.onCreate still has to set the initial check
+     mark itself after inflating this menu — a freshly inflated menu (every rotation gets a new
+     one) always starts with nothing checked, regardless of which SortOrder is actually active. -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:id="@+id/sort_title"
-        android:title="Title" />
-    <item
-        android:id="@+id/sort_author"
-        android:title="Author" />
-    <item
-        android:id="@+id/sort_recently_added"
-        android:title="Recently added" />
-    <item
-        android:id="@+id/sort_recently_opened"
-        android:title="Recently opened" />
+    <group
+        android:id="@+id/sort_group"
+        android:checkableBehavior="single">
+        <item
+            android:id="@+id/sort_title"
+            android:title="Title" />
+        <item
+            android:id="@+id/sort_author"
+            android:title="Author" />
+        <item
+            android:id="@+id/sort_recently_added"
+            android:title="Recently added" />
+        <item
+            android:id="@+id/sort_recently_opened"
+            android:title="Recently opened" />
+    </group>
 </menu>

@@ -16,10 +16,12 @@ import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
+import dev.reader.data.IndexResult
 import dev.reader.data.LibraryDatabase
 import dev.reader.data.LibraryIndexer
 import dev.reader.data.SortOrder
 import dev.reader.library.EpubMetadataExtractor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
@@ -31,6 +33,19 @@ fun sortOrderForMenuItemId(itemId: Int): SortOrder? = when (itemId) {
     R.id.sort_recently_added -> SortOrder.RECENTLY_ADDED
     R.id.sort_recently_opened -> SortOrder.RECENTLY_OPENED
     else -> null
+}
+
+/**
+ * The inverse of [sortOrderForMenuItemId]: which menu item's `checkable` state should reflect
+ * [order] being the active sort. Used to restore the check-mark after a rotation rebuilds the
+ * toolbar's menu from scratch (a fresh [MenuItem] is unchecked by default regardless of
+ * [LibraryActivity.currentSort]).
+ */
+fun menuItemIdForSortOrder(order: SortOrder): Int = when (order) {
+    SortOrder.TITLE -> R.id.sort_title
+    SortOrder.AUTHOR -> R.id.sort_author
+    SortOrder.RECENTLY_ADDED -> R.id.sort_recently_added
+    SortOrder.RECENTLY_OPENED -> R.id.sort_recently_opened
 }
 
 /**
@@ -82,19 +97,25 @@ fun sortOrderFromSavedValue(value: String?): SortOrder =
  * banned outright regardless of panel. Indexing runs once, right here, in a coroutine that
  * completes and stops — there is no `Service`/`WorkManager`/`FileObserver`/timer anywhere in this
  * class, so the idle promise (0% CPU once the grid has settled) is unaffected by any of this.
+ *
+ * `open`, not `final`: [LibraryActivityRecreationTest]'s Robolectric coverage recreates this Activity via a
+ * test subclass that overrides [isAllFilesAccessGranted] and [createSync] — the two points where
+ * this class would otherwise reach out to real device permissions and a real EPUB-backed indexer,
+ * neither of which a JVM test can exercise meaningfully. No other member is `open`.
  */
-class LibraryActivity : AppCompatActivity() {
+open class LibraryActivity : AppCompatActivity() {
 
     /**
-     * [LibraryDatabase] and the once-per-process sync guard both live on [ReaderApplication] now,
-     * not here — see its KDoc. This Activity is recreated on every rotation; the Application is
-     * not, so both had to move for "once per process" to actually mean once per process rather
-     * than once per Activity instance.
+     * [LibraryDatabase] and the sync guards both live on [ReaderApplication] now, not here — see
+     * its KDoc. This Activity is recreated on every rotation; the Application is not, so both had
+     * to move for "once per process" to actually mean once per process rather than once per
+     * Activity instance.
      */
     private val db: LibraryDatabase
         get() = (application as ReaderApplication).database
 
-    private lateinit var adapter: BookGridAdapter
+    /** `protected`, not `private`: [LibraryActivityRecreationTest] reads `itemCount` after recreation. */
+    protected lateinit var adapter: BookGridAdapter
 
     private var currentSort = SortOrder.TITLE
     private var observeJob: Job? = null
@@ -103,11 +124,6 @@ class LibraryActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         currentSort = sortOrderFromSavedValue(savedInstanceState?.getString(KEY_SORT_ORDER))
-
-        // Verification instrumentation for the rotation fix (Plan 2 Task 5 review, fix wave 1):
-        // db's identityHashCode staying constant across onCreate calls proves it's the same
-        // ReaderApplication-scoped Room instance, not a fresh one per Activity/rotation.
-        Log.i(TAG, "onCreate db=${System.identityHashCode(db)} restoredSort=$currentSort")
 
         val recyclerView = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@LibraryActivity, spanCountFor(resources.displayMetrics.widthPixels, COLUMN_WIDTH_PX))
@@ -122,6 +138,11 @@ class LibraryActivity : AppCompatActivity() {
         val toolbar = Toolbar(this).apply {
             title = "Library"
             inflateMenu(R.menu.menu_library)
+            // menu_library.xml's group is checkableBehavior="single", so tapping an item checks
+            // it and unchecks its siblings automatically — but a freshly inflated menu (every
+            // rotation gets one) starts with nothing checked regardless of currentSort. Restore
+            // the mark here so the active order is still visible after restore, not just correct.
+            menu.findItem(menuItemIdForSortOrder(currentSort))?.isChecked = true
             setOnMenuItemClickListener(::onSortMenuItemClicked)
         }
 
@@ -132,17 +153,34 @@ class LibraryActivity : AppCompatActivity() {
         }
         setContentView(root)
 
-        if (!hasAllFilesAccess()) {
+        if (!isAllFilesAccessGranted()) {
             requestAllFilesAccess()
             return
         }
+        // Verification instrumentation for the rotation fix (Plan 2 Task 5 review, fix waves 1 &
+        // 2): db's identityHashCode staying constant across onCreate calls proves it's the same
+        // ReaderApplication-scoped Room instance, not a fresh one per Activity/rotation. Placed
+        // after the permission gate (not before, as fix wave 1 had it) so a permission-denied
+        // launch never forces the lazy Room build just to log a line nothing needs yet.
+        Log.i(TAG, "onCreate db=${System.identityHashCode(db)} restoredSort=$currentSort")
         runLibrary()
     }
 
     override fun onResume() {
         super.onResume()
-        if (!(application as ReaderApplication).librarySynced && hasAllFilesAccess()) runLibrary()
+        val app = application as ReaderApplication
+        if (!app.librarySynced && app.librarySyncJob?.isActive != true && isAllFilesAccessGranted()) {
+            runLibrary()
+        }
     }
+
+    /**
+     * Whether all-files access is currently granted. A thin `protected open` wrapper around the
+     * real [hasAllFilesAccess] extension so [LibraryActivityRecreationTest]'s Robolectric coverage — which
+     * cannot grant a real Android 11 all-files-access permission — can stub this one point via a
+     * test subclass instead of faking the underlying `Environment.isExternalStorageManager()`.
+     */
+    protected open fun isAllFilesAccessGranted(): Boolean = hasAllFilesAccess()
 
     /**
      * Persists [currentSort] across Activity recreation (e.g. a device rotation), which otherwise
@@ -166,50 +204,88 @@ class LibraryActivity : AppCompatActivity() {
     }
 
     /**
-     * Runs the incremental sync exactly once per **process**, then starts observing the (now up
-     * to date) index. [LibraryIndexer.sync] already confines all of its own work to
-     * [kotlinx.coroutines.Dispatchers.IO] and returns — it is not scheduled, retried, or repeated
-     * from here.
+     * Starts observing the index immediately, then — unless a sync already succeeded or is
+     * already running in this process — runs the incremental sync once. [LibraryIndexer.sync]
+     * already confines all of its own work to [kotlinx.coroutines.Dispatchers.IO] and returns; it
+     * is not scheduled, retried on a timer, or repeated from here.
      *
-     * The guard is [ReaderApplication.librarySynced], not an Activity field: a rotation destroys
-     * and recreates this Activity (resetting any field it owned) but not the Application, and a
-     * rotation is not a fresh entry to the library screen per the plan's "indexing runs once on
-     * library entry" constraint. [onResume] still re-arms this call after a permission grant (the
-     * guard not being set yet is what lets that first real entry through); a later *process*
-     * launch (a fresh process, not merely backgrounding and returning) runs it again exactly once,
-     * which is what "incremental" means: a cheap stat diff, not a full re-crack.
+     * **Why [observeSorted] runs unconditionally, before the guard check.** Rows already in the
+     * DB — from a prior sync this process already completed, or from a previous process entirely
+     * — should paint immediately instead of waiting for this (possibly first-run, possibly
+     * multi-second) sync to finish; a blank grid for the whole first-run scan fails the plan's own
+     * "does not visibly stall the grid" checklist item. Room's Flow re-emits on its own as
+     * [LibraryIndexer.sync] writes rows, so nothing needs to re-subscribe once the sync completes.
+     * This also fixes the fix-wave-1 regression this same method used to special-case: a rotation
+     * whose sync was already done previously must still populate the brand-new [BookGridAdapter]
+     * the recreated Activity just built, not just skip straight past it.
      *
-     * When the sync already ran earlier in this process (the guard is already set — the common
-     * case on a rotation), this still calls [observeSorted]: the guard exists to skip a redundant
-     * *sync*, not to skip populating the brand-new [BookGridAdapter] this recreated Activity just
-     * built. Skipping it here would leave a freshly rotated grid permanently empty.
+     * **Why [ReaderApplication.librarySynced] is set only on success, never before launching.**
+     * The guard lives on [ReaderApplication], not this Activity, because a rotation destroys and
+     * recreates the Activity (resetting any field it owned) but not the Application. But the
+     * *work* the guard guards — [createSync]'s coroutine — runs on `lifecycleScope`, which is
+     * Activity-scoped: a rotation or a Back press cancels it mid-diff. Setting the flag *before*
+     * launching (as an earlier version of this method did) would make the recreated Activity see
+     * "already synced" and never retry — every book the aborted sync never reached would be
+     * permanently missing from the grid until the process dies. Setting it only when `sync()`
+     * actually *returns* means a cancelled or thrown run is retried on the next entry instead,
+     * which is cheap: the diff is incremental, so unchanged files open nothing. The same applies
+     * to the `catch (e: Exception)` branch below — a failed sync (e.g. both roots denied) leaves
+     * the flag false too, so it is retried rather than given up on forever.
+     *
+     * **Why [CancellationException] is caught and rethrown, not left to the broad `catch`
+     * below it.** [CancellationException] extends [Exception] — this project has already been
+     * bitten once by a catch-all silently swallowing it (see [LibraryIndexer.sync]'s own KDoc).
+     * Swallowing it here would both mark a merely-cancelled sync as "handled" (masking the
+     * intentional early-return this whole method depends on) and pop a spurious error Toast for a
+     * sync the user simply rotated or backed away from, not one that failed.
+     *
+     * **Why [ReaderApplication.librarySyncJob] exists at all, on top of the flag.** `onResume`
+     * re-checks this guard immediately after `onCreate` returns — the two fire back-to-back in
+     * the normal Activity lifecycle, before the sync just launched here has had any chance to
+     * even reach its first `Dispatchers.IO` suspension point. Without tracking the in-flight
+     * [Job] itself, that second call would see the flag still `false` and launch a *second*,
+     * concurrent [LibraryIndexer.sync] racing the first one against the same DB.
      */
     private fun runLibrary() {
         val app = application as ReaderApplication
-        if (app.librarySynced) {
-            Log.i(TAG, "runLibrary: sync SKIPPED (already synced this process)")
-            observeSorted(currentSort)
+        observeSorted(currentSort)
+
+        if (app.librarySynced || app.librarySyncJob?.isActive == true) {
+            Log.i(TAG, "runLibrary: sync SKIPPED (already synced or in progress this process)")
             return
         }
-        app.librarySynced = true
         Log.i(TAG, "runLibrary: sync STARTED")
 
+        app.librarySyncJob = lifecycleScope.launch {
+            try {
+                createSync().invoke()
+                app.librarySynced = true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A failed sync (e.g. both roots denied) must not leave the grid stuck empty
+                // with no explanation, but it also must not crash the launcher activity. The flag
+                // stays false (see the KDoc above), so the next entry retries instead of giving up.
+                Toast.makeText(this@LibraryActivity, "Couldn't scan your library: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /**
+     * Builds the suspend function [runLibrary] runs to perform one sync. `protected open`, not
+     * inlined into [runLibrary], purely as a test seam: [LibraryActivityRecreationTest]'s Robolectric
+     * coverage substitutes one that suspends until cancelled (via
+     * [kotlinx.coroutines.awaitCancellation]) to deterministically exercise the
+     * cancel-mid-sync path without needing a real multi-second EPUB scan to race against.
+     * Production always returns the real EPUB-backed [LibraryIndexer] over the device's library
+     * roots.
+     */
+    protected open fun createSync(): suspend () -> IndexResult = {
         val roots = listOf(
             File(Environment.getExternalStorageDirectory(), "Document"),
             File(Environment.getExternalStorageDirectory(), "EXPORT"),
         )
-        val indexer = LibraryIndexer(db.bookDao(), roots, EpubMetadataExtractor(applicationContext))
-
-        lifecycleScope.launch {
-            try {
-                indexer.sync()
-            } catch (e: Exception) {
-                // A failed sync (e.g. both roots denied) must not leave the grid stuck empty
-                // with no explanation, but it also must not crash the launcher activity.
-                Toast.makeText(this@LibraryActivity, "Couldn't scan your library: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-            observeSorted(currentSort)
-        }
+        LibraryIndexer(db.bookDao(), roots, EpubMetadataExtractor(applicationContext)).sync()
     }
 
     private fun observeSorted(order: SortOrder) {
