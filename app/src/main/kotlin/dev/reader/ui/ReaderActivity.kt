@@ -677,6 +677,9 @@ open class ReaderActivity : AppCompatActivity() {
                     // broken app — so name the problem, and say that the book may still be
                     // readable from the next chapter on (advance() skips empty chapters).
                     showMessage("This book has no readable text.")
+                    // showPage never ran, so the scrubber was never set; give the overlay (if the
+                    // reader opens it on this broken book) a coherent readout instead of a blank.
+                    scrubberView.text = "No readable text"
                 } else {
                     showPage(start)
                     // Write the resolved start back immediately: stamps lastOpenedAtMs (so the

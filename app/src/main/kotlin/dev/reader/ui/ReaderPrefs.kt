@@ -60,12 +60,18 @@ class ReaderPrefs(context: Context) {
      * Builds the [RenderConfig] for one open: the stored typography plus the viewport the view
      * just measured. The pure prefs+viewport→config mapping, factored out so its no-op equivalence
      * to the old hardcoded literals is unit-testable without an Activity (see [ReaderPrefsTest]).
+     *
+     * The stored margin is clamped to leave at least one content pixel on the measured viewport, so
+     * [RenderConfig]'s `contentWidth/Height > 0` init requirement can never throw here regardless of
+     * caller. The Aa sheet already clamps on write, but centralizing it here defends the open path
+     * too (and any future viewport that shrinks below a previously-stored margin). On a real panel
+     * every shipped preset (≤80) is far below the limit (~701), so this is pure defense.
      */
     fun renderConfig(viewportWidthPx: Int, viewportHeightPx: Int): RenderConfig = RenderConfig(
         fontFamily = fontFamily,
         textSizePx = textSizePx,
         lineSpacingMultiplier = lineSpacingMultiplier,
-        marginPx = marginPx,
+        marginPx = marginPx.coerceIn(0, (minOf(viewportWidthPx, viewportHeightPx) - 1) / 2),
         justified = justified,
         hyphenated = hyphenated,
         viewportWidthPx = viewportWidthPx,
