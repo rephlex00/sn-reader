@@ -73,9 +73,10 @@ fun folderListing(
 
     if (flatten) return inRoot.map { LibraryRow.Book(it) }
 
-    // Clamp a scope that has wandered outside the root back to the root itself.
-    val requested = currentDir.removeTrailing(sep)
-    val scope = if (isUnderOrEqual(requested, normalizedRoot, sep)) requested else normalizedRoot
+    // Clamp a scope that has wandered outside the root back to the root itself. Same helper the
+    // Activity calls to normalize its own currentFolder field, so the two never disagree about
+    // what "the scope" is (see [clampToRoot]).
+    val scope = clampToRoot(currentDir, root)
 
     val prefix = scope + sep
     // Immediate-child folder name -> recursive book count. LinkedHashMap only for deterministic
@@ -100,6 +101,22 @@ fun folderListing(
         .map { (name, count) -> LibraryRow.Folder(name = name, path = scope + sep + name, bookCount = count) }
 
     return folderRows + directBooks.map { LibraryRow.Book(it) }
+}
+
+/**
+ * Normalize a scope [currentDir] to a value guaranteed to be [root] itself or beneath it: return
+ * [currentDir] (trailing separator stripped) when it is under [root] by the same segment-correct
+ * ancestry rule [folderListing] uses, otherwise [root] (trailing separator stripped). This is the
+ * one place that clamp lives — [folderListing] scopes its listing with it, and [LibraryActivity]
+ * normalizes its own `currentFolder` field with it, so the rendered listing, the toolbar title, and
+ * the Back behavior can never disagree about whether the current folder is really the root. A stale
+ * `lastFolderPath` after a root change, or a since-deleted folder, collapses back to [root] here.
+ */
+fun clampToRoot(currentDir: String, root: String): String {
+    val sep = File.separator
+    val normalizedRoot = root.removeTrailing(sep)
+    val requested = currentDir.removeTrailing(sep)
+    return if (isUnderOrEqual(requested, normalizedRoot, sep)) requested else normalizedRoot
 }
 
 /** True when [path] is [root] itself or lives beneath it, matched at a separator boundary. */

@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.lifecycleScope
@@ -54,6 +55,17 @@ fun menuItemIdForSortOrder(order: SortOrder): Int = when (order) {
 }
 
 /**
+ * Which view-mode menu item's `checkable` state should reflect [mode] being active. The mirror of
+ * the click handling, used to restore the check-mark after a rotation rebuilds the toolbar's menu
+ * (a fresh [MenuItem] is unchecked regardless of the persisted [ViewMode]) — exactly as
+ * [menuItemIdForSortOrder] does for the sort group.
+ */
+fun menuItemIdForViewMode(mode: ViewMode): Int = when (mode) {
+    ViewMode.TILES -> R.id.view_tiles
+    ViewMode.LIST -> R.id.view_list
+}
+
+/**
  * How many grid columns fit [widthPx] at roughly [columnWidthPx] each, never fewer than 2 (a
  * single column would barely read as a "grid" on a 7.8" panel, even in an unexpectedly narrow
  * layout pass).
@@ -87,9 +99,22 @@ fun sortOrderFromSavedValue(value: String?): SortOrder =
  * On every entry — cold start, a rotation, or simply returning to this screen from [ReaderActivity]
  * or the background — [onStart] re-runs [LibraryIndexer.sync] on the library roots (see its KDoc for
  * why "every entry" and not "once per process"). [onCreate] separately starts observing
- * [dev.reader.data.BookDao.observeAllSorted] for the chosen [SortOrder] and hands each emission
- * straight to [BookGridAdapter] — sorting is entirely SQL's job (see [BookDao]'s KDoc), this
- * Activity never re-sorts a list. Tapping a cell starts [ReaderActivity] with that book's path.
+ * [dev.reader.data.BookDao.observeAllSorted] for the chosen [SortOrder]; each emission is held in
+ * [latestBooks] and projected through [folderListing] into the folder-aware rows [BookGridAdapter]
+ * renders. Sorting is entirely SQL's job (see [BookDao]'s KDoc) — this Activity never re-sorts;
+ * within-folder book order simply falls out of that SQL order. Root-filtering and tree-building are
+ * [folderListing]'s job, recomputed purely on each emission and on each toggle, with no new queries
+ * or watchers.
+ *
+ * **Folder navigation and toggles.** [currentFolder] is the directory being shown, initialized from
+ * `prefs.lastFolderPath` (clamped to the root by [clampToRoot], so a stale folder after a root
+ * change collapses to the root) and persisted as the user descends. Tapping a [LibraryRow.Folder]
+ * descends; system Back ascends one level until the root, then finishes (an
+ * [androidx.activity.OnBackPressedCallback]). The toolbar shows "Library" at the root and the
+ * folder's name inside one. The overflow menu adds a tiles/list view toggle and a flatten toggle
+ * alongside the existing sort group; each writes [LibraryPrefs] immediately and re-renders from
+ * [latestBooks] without waiting for a new Room emission. Tapping a book still starts [ReaderActivity]
+ * with its path, unchanged, including the unreadable-retry tap.
  *
  * **No animations, no background service.** [RecyclerView.setItemAnimator] is set to null:
  * `DefaultItemAnimator` cross-fades on every change, which is a smear on e-ink and animation is
@@ -124,6 +149,36 @@ open class LibraryActivity : AppCompatActivity() {
     protected lateinit var adapter: BookGridAdapter
 
     /**
+     * The toolbar, held as a field (not an `onCreate` local) so [render] can retitle it as the user
+     * navigates and the toggle handlers can read/flip their menu items' check state. `protected`:
+     * [LibraryActivityNavigationTest] drives its menu items and reads its title.
+     */
+    protected lateinit var toolbar: Toolbar
+
+    /**
+     * The directory currently shown, an invariant-clamped path that is [rootPath][LibraryPrefs.rootPath]
+     * itself or somewhere beneath it (see [clampToRoot]). Initialized from `prefs.lastFolderPath`,
+     * updated on folder descent/ascent, and persisted to `prefs.lastFolderPath`. `protected`:
+     * [LibraryActivityNavigationTest] asserts where navigation lands.
+     */
+    protected var currentFolder: String = ""
+
+    /**
+     * The most recent [dev.reader.data.BookDao.observeAllSorted] emission, held so a view/flatten
+     * toggle or a folder descent can re-render immediately through [folderListing] without waiting
+     * for a new Room emission. The whole library (root-filtering is [folderListing]'s job), in SQL
+     * sort order.
+     */
+    private var latestBooks: List<BookEntity> = emptyList()
+
+    /**
+     * The [rootPath][LibraryPrefs.rootPath] this Activity last rendered against, so [onStart] can
+     * detect a root change made in Settings and reset [currentFolder] accordingly before the sync
+     * repopulates (Task 8a already nulls `lastFolderPath` on a root change).
+     */
+    private var lastRoot: String = ""
+
+    /**
      * The persistent "grant all-files access" message shown instead of a silent blank grid when
      * the user comes back from Settings without granting. `protected`, not `private`:
      * [LibraryActivityInteractionTest] asserts on its visibility and text.
@@ -153,25 +208,64 @@ open class LibraryActivity : AppCompatActivity() {
         // user picked it, so the recreated Activity reads the same thing.
         currentSort = prefs.sortOrder
 
+        // Where to land: the remembered folder, clamped so a stale path (a since-deleted folder,
+        // or one under a now-changed root) collapses to the root — the same clamp folderListing
+        // applies, kept here too so the toolbar title and Back agree with what is shown.
+        lastRoot = prefs.rootPath
+        currentFolder = clampToRoot(prefs.lastFolderPath ?: lastRoot, lastRoot)
+
+        val spanCount = spanCountFor(resources.displayMetrics.widthPixels, COLUMN_WIDTH_PX)
+        val gridLayoutManager = GridLayoutManager(this@LibraryActivity, spanCount).apply {
+            // Book tiles take one column; everything else — folder tiles (full-width dividers
+            // above the covers) and every list-mode row — spans the whole width. Reads the
+            // adapter's own view type so there is a single source of truth for "is this a tile".
+            spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                override fun getSpanSize(position: Int): Int =
+                    if (adapter.getItemViewType(position) == BookGridAdapter.VIEW_TYPE_BOOK_TILE) 1 else spanCount
+            }
+        }
         val recyclerView = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@LibraryActivity, spanCountFor(resources.displayMetrics.widthPixels, COLUMN_WIDTH_PX))
+            layoutManager = gridLayoutManager
             // The single most important line in this Activity: DefaultItemAnimator (the
             // RecyclerView default) cross-fades items in/out/through on every list change, which
-            // on e-ink is a visible smear and is banned outright as animation, full stop.
+            // on e-ink is a visible smear and is banned outright as animation, full stop. A view
+            // toggle or a folder descent is one clean redraw, never an animated transition.
             itemAnimator = null
         }
-        adapter = BookGridAdapter(lifecycleScope, ::openBook)
+        adapter = BookGridAdapter(lifecycleScope, ::openBook, ::openFolder)
         recyclerView.adapter = adapter
 
-        val toolbar = Toolbar(this).apply {
-            title = "Library"
+        toolbar = Toolbar(this).apply {
+            title = titleFor(currentFolder, lastRoot)
             inflateMenu(R.menu.menu_library)
-            // menu_library.xml's group is checkableBehavior="single", so tapping an item checks
-            // it and unchecks its siblings automatically — but a freshly inflated menu (every
-            // rotation gets one) starts with nothing checked regardless of currentSort. Restore
-            // the mark here so the active order is still visible after restore, not just correct.
+            // Every checkableBehavior="single" group (sort, view mode) and the standalone flatten
+            // toggle start unchecked on a freshly inflated menu (every rotation gets a new one),
+            // regardless of the persisted state. Restore all three marks here so the active
+            // choices stay visible after a restore, not just correct.
             menu.findItem(menuItemIdForSortOrder(currentSort))?.isChecked = true
+            menu.findItem(menuItemIdForViewMode(prefs.viewMode))?.isChecked = true
+            menu.findItem(R.id.action_flatten)?.isChecked = prefs.flatten
             setOnMenuItemClickListener(::onMenuItemClicked)
+        }
+
+        // System Back walks up the folder tree one level at a time, clamped to the root; only at
+        // the root does it fall through to the default finish. An OnBackPressedCallback, not the
+        // deprecated onBackPressed override, per the AndroidX guidance.
+        onBackPressedDispatcher.addCallback(this) {
+            val root = clampToRoot(prefs.rootPath, prefs.rootPath)
+            if (currentFolder != root) {
+                val parent = File(currentFolder).parent ?: root
+                currentFolder = clampToRoot(parent, prefs.rootPath)
+                // At the root, lastFolderPath is null (its "the root" sentinel); below it, remember
+                // exactly where we are so a later launch lands here again.
+                prefs.lastFolderPath = if (currentFolder == root) null else currentFolder
+                render()
+            } else {
+                // Nothing above the root to ascend into: perform the default Back (finish). Disable
+                // this callback first so the dispatcher moves on to the framework's own handling.
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            }
         }
 
         emptyStateView = TextView(this).apply {
@@ -211,6 +305,17 @@ open class LibraryActivity : AppCompatActivity() {
             return
         }
         emptyStateView.visibility = View.GONE
+
+        // A root change made in Settings while this Activity stayed alive: Task 8a already nulled
+        // lastFolderPath (a folder under the old root is meaningless under the new one), so reset
+        // currentFolder from it before the sync below repopulates the library.
+        val root = prefs.rootPath
+        if (root != lastRoot) {
+            lastRoot = root
+            currentFolder = clampToRoot(prefs.lastFolderPath ?: root, root)
+            render()
+        }
+
         if (observeJob == null) {
             // Permission was granted after onCreate returned early above (the user just came back
             // from the system "All files access" settings screen, same Activity instance) — start
@@ -241,11 +346,38 @@ open class LibraryActivity : AppCompatActivity() {
      * framework can fall back to its default handling.
      */
     private fun onMenuItemClicked(item: MenuItem): Boolean {
-        if (item.itemId == R.id.action_settings) {
-            startActivity(Intent(this, SettingsActivity::class.java))
-            return true
+        when (item.itemId) {
+            R.id.action_settings -> {
+                startActivity(Intent(this, SettingsActivity::class.java))
+                return true
+            }
+            R.id.view_tiles -> {
+                setViewMode(ViewMode.TILES, item)
+                return true
+            }
+            R.id.view_list -> {
+                setViewMode(ViewMode.LIST, item)
+                return true
+            }
+            R.id.action_flatten -> {
+                val flatten = !prefs.flatten
+                prefs.flatten = flatten
+                item.isChecked = flatten
+                render()
+                return true
+            }
         }
         return onSortMenuItemClicked(item)
+    }
+
+    private fun setViewMode(mode: ViewMode, item: MenuItem) {
+        item.isChecked = true // radio group: also unchecks the sibling
+        if (mode == prefs.viewMode) return
+        // Persist immediately (deferred apply(), no I/O on this callback) and re-render from the
+        // held book list — a toggle must not wait for a new Room emission. render() hands the mode
+        // to the adapter, which forces the one clean rebind a view-type switch needs.
+        prefs.viewMode = mode
+        render()
     }
 
     private fun onSortMenuItemClicked(item: MenuItem): Boolean {
@@ -375,8 +507,43 @@ open class LibraryActivity : AppCompatActivity() {
             // collectLatest's cancel-the-previous-collector-body semantics never actually engage
             // here — there is nothing in flight for a new emission to cancel. Plain `collect` says
             // what's really happening: every emission is submitted in order.
-            db.bookDao().observeAllSorted(order).collect { books -> adapter.submitList(books) }
+            db.bookDao().observeAllSorted(order).collect { books ->
+                latestBooks = books
+                render()
+            }
         }
+    }
+
+    /**
+     * Project [latestBooks] through [folderListing] for the current folder, view mode, and flatten
+     * setting, and hand the rows to the adapter — the one render path every trigger (a Room
+     * emission, a folder descent/ascent, a toggle, a root change) funnels through. Pure and cheap
+     * at library scale: no new queries, no watchers. [currentFolder] is re-clamped here so it stays
+     * an invariant even if the root shifted underneath it, keeping the toolbar title and Back in
+     * step with what folderListing actually scopes to.
+     */
+    private fun render() {
+        val root = prefs.rootPath
+        currentFolder = clampToRoot(currentFolder, root)
+        val rows = folderListing(latestBooks, root, currentFolder, prefs.flatten)
+        adapter.render(rows, prefs.viewMode)
+        toolbar.title = titleFor(currentFolder, root)
+    }
+
+    /** "Library" at the root, otherwise the current folder's own name. */
+    private fun titleFor(folder: String, root: String): String =
+        if (folder == clampToRoot(root, root)) "Library" else File(folder).name
+
+    /**
+     * Descend into a tapped folder: make it the current scope, remember it so a later launch lands
+     * here, and re-render from the already-held [latestBooks]. The path came from [folderListing]
+     * so it is already a real descendant of the root; no clamp needed, though [render]'s own clamp
+     * would catch it anyway. `protected`: [LibraryActivityNavigationTest] drives it directly.
+     */
+    protected fun openFolder(path: String) {
+        currentFolder = path
+        prefs.lastFolderPath = path
+        render()
     }
 
     /**

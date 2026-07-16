@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * What the grid shows under a book's title, or null to show nothing.
@@ -41,6 +42,37 @@ fun progressLabel(lastOpenedAtMs: Long?, spineIndex: Int, charOffset: Int): Stri
 }
 
 /**
+ * The badge shown for a book in **list** mode: the reading status from [statusOf] rendered as text,
+ * with the stored reason spelled out for an unreadable book. Tiles keep [progressLabel]'s
+ * behavior instead (progress-if-opened, nothing if never opened) — status text is a list-mode
+ * affordance only, per the brief. Pure and total: a null [BookEntity.unreadableReason] on an
+ * unreadable row falls back to a generic phrase rather than printing "null".
+ */
+fun statusText(book: BookEntity): String = when (statusOf(book)) {
+    BookStatus.IN_PROGRESS -> "In progress"
+    BookStatus.NOT_STARTED -> "Not started"
+    BookStatus.UNREADABLE -> "Unreadable: ${book.unreadableReason ?: "unknown reason"}"
+}
+
+/**
+ * A file size for list-mode rows, in the largest unit that keeps the number small: bytes under 1
+ * KiB, otherwise one decimal place of KB/MB/GB/TB (binary 1024 steps — this is a file size, not a
+ * disk-marketing figure). Pure; formats with [Locale.US] so a test asserts one exact string
+ * regardless of the JVM's default locale (a comma decimal separator would otherwise flake).
+ */
+fun humanReadableSize(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val units = arrayOf("KB", "MB", "GB", "TB")
+    var value = bytes.toDouble()
+    var unit = -1
+    do {
+        value /= 1024
+        unit++
+    } while (value >= 1024 && unit < units.size - 1)
+    return String.format(Locale.US, "%.1f %s", value, units[unit])
+}
+
+/**
  * The in-memory bitmap cache key for one cover. Keyed on [modifiedAtMs] as well as [coverPath] so
  * that if a cover is ever regenerated in place at the same path (not expected mid-session — the
  * indexer only runs once on library entry — but cheap insurance), a stale decoded bitmap from an
@@ -61,15 +93,27 @@ fun coverCacheKey(coverPath: String, modifiedAtMs: Long): String = "$coverPath@$
 private const val BITMAP_CACHE_BYTES = 8 * 1024 * 1024
 
 /**
- * The library grid. Views only, `RecyclerView` + `GridLayoutManager` (set up by
- * [LibraryActivity]) — no Compose, no image library. Covers decode from [BookEntity.coverPath] on
- * a background dispatcher and are cached in a small [LruCache], with two layers against the
- * classic RecyclerView async-bind bug (a slow decode finishing after its holder has been reused
- * painting into the wrong cell): the in-flight [ViewHolder.job] is cancelled on every
- * recycle/rebind, and — should a decode ever slip past that — the coroutine re-checks
- * [ViewHolder.boundCacheKey] before calling [ImageView.setImageBitmap]. The stamp is the full
- * [coverCacheKey] (path AND mtime), not the bare path: a cover regenerated in place at the same
- * path is different bytes, and comparing paths would wave the stale decode through.
+ * The unified library adapter. Views only, `RecyclerView` + `GridLayoutManager` (set up by
+ * [LibraryActivity]) — no Compose, no image library. It renders a [folderListing] projection —
+ * `List<LibraryRow>` of folders and books — in one of two presentations chosen by [viewMode]:
+ *
+ * - **Tiles** ([ViewMode.TILES]): today's cover grid for [LibraryRow.Book] rows (the look is
+ *   unchanged), with [LibraryRow.Folder] rows as full-span cells above them (the Activity's
+ *   `GridLayoutManager.spanSizeLookup` reads [getItemViewType] and gives everything but a book
+ *   tile the full span).
+ * - **List** ([ViewMode.LIST]): every row single-span — book rows carry title/author/size and a
+ *   [statusText] badge and **never touch the cover cache or launch a decode**; folder rows carry
+ *   name and book count.
+ *
+ * Covers decode from [BookEntity.coverPath] on a background dispatcher and are cached in a small
+ * [LruCache], with two layers against the classic RecyclerView async-bind bug (a slow decode
+ * finishing after its holder has been reused painting into the wrong cell): the in-flight
+ * [BookTileViewHolder.job] is cancelled on every recycle/rebind, and — should a decode ever slip
+ * past that — the coroutine re-checks [BookTileViewHolder.boundCacheKey] before calling
+ * [ImageView.setImageBitmap]. The stamp is the full [coverCacheKey] (path AND mtime), not the bare
+ * path: a cover regenerated in place at the same path is different bytes, and comparing paths would
+ * wave the stale decode through. Only book *tiles* run any of this machinery; the three other row
+ * types have no cover, no job, and no cache interaction at all.
  *
  * [scope] is expected to be an Activity's `lifecycleScope`: decode jobs are children of it, so
  * they are cancelled automatically if the Activity is destroyed mid-decode, on top of the
@@ -81,21 +125,75 @@ private const val BITMAP_CACHE_BYTES = 8 * 1024 * 1024
  */
 open class BookGridAdapter(
     private val scope: CoroutineScope,
-    private val onClick: (BookEntity) -> Unit,
-) : ListAdapter<BookEntity, BookGridAdapter.ViewHolder>(DIFF_CALLBACK) {
+    private val onBookClick: (BookEntity) -> Unit,
+    private val onFolderClick: (String) -> Unit,
+) : ListAdapter<LibraryRow, RecyclerView.ViewHolder>(DIFF_CALLBACK) {
+
+    /**
+     * The active presentation. Not set directly by callers — [render] owns it, so a change is
+     * always paired with the full rebind a view-type switch needs (see [render]). Defaults to
+     * [ViewMode.TILES] so an adapter that is never told otherwise renders today's grid.
+     */
+    var viewMode: ViewMode = ViewMode.TILES
+        private set
 
     private val bitmapCache = object : LruCache<String, Bitmap>(BITMAP_CACHE_BYTES) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_book, parent, false)
-        return ViewHolder(view)
+    /**
+     * Submit the rows to show and the mode to show them in, in one call. When only the rows change
+     * (a new Room emission, a folder descent, a flatten/sort change) this is a plain `submitList`
+     * and DiffUtil does the minimal rebind. When the **mode** changes the row list is typically
+     * identical, so DiffUtil would compute no change and leave every holder painted in the old
+     * presentation — a view-type switch needs each holder recreated, so this forces a full rebind
+     * once the list has committed. [RecyclerView.setItemAnimator] is null (see [LibraryActivity]),
+     * so that full rebind is a single clean redraw, not an animated cross-fade — a toggle stays
+     * e-ink-safe.
+     */
+    fun render(rows: List<LibraryRow>, mode: ViewMode) {
+        if (mode == viewMode) {
+            submitList(rows)
+            return
+        }
+        viewMode = mode
+        // Commit the (usually identical) list first, then invalidate everything so RecyclerView
+        // re-queries getItemViewType and recreates holders in the new presentation. Plain
+        // submitList alone would no-op on identical content and never swap the view types.
+        submitList(rows) { notifyDataSetChanged() }
     }
 
-    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val book = getItem(position)
+    override fun getItemViewType(position: Int): Int = when (getItem(position)) {
+        is LibraryRow.Book -> if (viewMode == ViewMode.TILES) VIEW_TYPE_BOOK_TILE else VIEW_TYPE_BOOK_ROW
+        is LibraryRow.Folder -> if (viewMode == ViewMode.TILES) VIEW_TYPE_FOLDER_TILE else VIEW_TYPE_FOLDER_ROW
+    }
 
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return when (viewType) {
+            VIEW_TYPE_BOOK_TILE -> BookTileViewHolder(inflater.inflate(R.layout.item_book, parent, false))
+            VIEW_TYPE_FOLDER_TILE -> FolderViewHolder(inflater.inflate(R.layout.item_folder_tile, parent, false))
+            VIEW_TYPE_BOOK_ROW -> BookRowViewHolder(inflater.inflate(R.layout.item_book_row, parent, false))
+            VIEW_TYPE_FOLDER_ROW -> FolderViewHolder(inflater.inflate(R.layout.item_folder_row, parent, false))
+            else -> error("Unknown view type $viewType")
+        }
+    }
+
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (val row = getItem(position)) {
+            is LibraryRow.Book -> when (holder) {
+                is BookTileViewHolder -> bindBookTile(holder, row.entity)
+                is BookRowViewHolder -> bindBookRow(holder, row.entity)
+                else -> error("Book row bound to ${holder::class.simpleName}")
+            }
+            is LibraryRow.Folder -> when (holder) {
+                is FolderViewHolder -> bindFolder(holder, row)
+                else -> error("Folder row bound to ${holder::class.simpleName}")
+            }
+        }
+    }
+
+    private fun bindBookTile(holder: BookTileViewHolder, book: BookEntity) {
         // A rebind (view reused for a different list position without going through
         // onViewRecycled — e.g. a DiffUtil move) must cancel any decode still in flight for
         // whatever this holder was previously bound to, same as onViewRecycled does.
@@ -104,7 +202,7 @@ open class BookGridAdapter(
 
         holder.title.text = book.title
         holder.author.text = book.author ?: ""
-        holder.itemView.setOnClickListener { onClick(book) }
+        holder.itemView.setOnClickListener { onBookClick(book) }
 
         holder.status.text = when {
             book.unreadable -> book.unreadableReason ?: "Unreadable"
@@ -115,7 +213,22 @@ open class BookGridAdapter(
         bindCover(holder, book)
     }
 
-    private fun bindCover(holder: ViewHolder, book: BookEntity) {
+    private fun bindBookRow(holder: BookRowViewHolder, book: BookEntity) {
+        holder.title.text = book.title
+        holder.author.text = book.author ?: ""
+        holder.author.visibility = if (book.author.isNullOrEmpty()) View.GONE else View.VISIBLE
+        holder.size.text = humanReadableSize(book.sizeBytes)
+        holder.status.text = statusText(book)
+        holder.itemView.setOnClickListener { onBookClick(book) }
+    }
+
+    private fun bindFolder(holder: FolderViewHolder, folder: LibraryRow.Folder) {
+        // A drawn glyph, not an image asset: "▸ name (count)", black on white, crisp on e-ink.
+        holder.label.text = "▸ ${folder.name} (${folder.bookCount})"
+        holder.itemView.setOnClickListener { onFolderClick(folder.path) }
+    }
+
+    private fun bindCover(holder: BookTileViewHolder, book: BookEntity) {
         val path = book.coverPath
         if (path == null) {
             holder.boundCacheKey = null
@@ -150,9 +263,12 @@ open class BookGridAdapter(
         }
     }
 
-    override fun onViewRecycled(holder: ViewHolder) {
-        holder.job?.cancel()
-        holder.job = null
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+        // Only book tiles ever start a decode; the other three row types have no job to cancel.
+        if (holder is BookTileViewHolder) {
+            holder.job?.cancel()
+            holder.job = null
+        }
     }
 
     /**
@@ -172,7 +288,12 @@ open class BookGridAdapter(
         null
     }
 
-    class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+    /**
+     * A book cover tile — the only holder that runs the cover-decode machinery. Its fields
+     * ([cover], [boundCacheKey], [job]) are exactly what [bindCover] and [BookGridAdapterBindTest]
+     * reach for; the three other row types deliberately have none of them.
+     */
+    class BookTileViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val cover: ImageView = view.findViewById(R.id.cover)
         val title: TextView = view.findViewById(R.id.title)
         val author: TextView = view.findViewById(R.id.author)
@@ -189,12 +310,35 @@ open class BookGridAdapter(
         var job: Job? = null
     }
 
-    private companion object {
-        val DIFF_CALLBACK = object : DiffUtil.ItemCallback<BookEntity>() {
-            override fun areItemsTheSame(oldItem: BookEntity, newItem: BookEntity) =
-                oldItem.path == newItem.path
+    /** A book in list mode: text only, no cover, no decode. */
+    class BookRowViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val title: TextView = view.findViewById(R.id.title)
+        val author: TextView = view.findViewById(R.id.author)
+        val size: TextView = view.findViewById(R.id.size)
+        val status: TextView = view.findViewById(R.id.status)
+    }
 
-            override fun areContentsTheSame(oldItem: BookEntity, newItem: BookEntity) =
+    /** A folder in either mode — the tile and list folder layouts share this one label field. */
+    class FolderViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val label: TextView = view.findViewById(R.id.folder_label)
+    }
+
+    companion object {
+        const val VIEW_TYPE_BOOK_TILE = 0
+        const val VIEW_TYPE_FOLDER_TILE = 1
+        const val VIEW_TYPE_BOOK_ROW = 2
+        const val VIEW_TYPE_FOLDER_ROW = 3
+
+        private val DIFF_CALLBACK = object : DiffUtil.ItemCallback<LibraryRow>() {
+            override fun areItemsTheSame(oldItem: LibraryRow, newItem: LibraryRow): Boolean = when {
+                oldItem is LibraryRow.Book && newItem is LibraryRow.Book ->
+                    oldItem.entity.path == newItem.entity.path
+                oldItem is LibraryRow.Folder && newItem is LibraryRow.Folder ->
+                    oldItem.path == newItem.path
+                else -> false
+            }
+
+            override fun areContentsTheSame(oldItem: LibraryRow, newItem: LibraryRow): Boolean =
                 oldItem == newItem
         }
     }

@@ -37,8 +37,8 @@ class BookGridAdapterBindTest {
     fun `rebinding a holder cancels the decode still in flight for the previous book`() {
         val adapter = TestableAdapter(scope)
         adapter.blockDecode = CountDownLatch(1)
-        adapter.submitList(listOf(book("/a.epub", coverPath = "/covers/a.png"), book("/b.epub", coverPath = "/covers/b.png")))
-        val holder = adapter.onCreateViewHolder(FrameLayout(RuntimeEnvironment.getApplication()), 0)
+        adapter.submitList(listOf(bookRow("/a.epub", coverPath = "/covers/a.png"), bookRow("/b.epub", coverPath = "/covers/b.png")))
+        val holder = adapter.onCreateViewHolder(FrameLayout(RuntimeEnvironment.getApplication()), BookGridAdapter.VIEW_TYPE_BOOK_TILE) as BookGridAdapter.BookTileViewHolder
 
         adapter.onBindViewHolder(holder, 0)
         assertThat(adapter.decodeEntered.await(5, TimeUnit.SECONDS)).isTrue()
@@ -56,8 +56,8 @@ class BookGridAdapterBindTest {
     fun `a stale decode finishing after a rebind never paints into the cell`() {
         val adapter = TestableAdapter(scope)
         adapter.blockDecode = CountDownLatch(1)
-        adapter.submitList(listOf(book("/a.epub", coverPath = "/covers/a.png"), book("/b.epub", coverPath = null)))
-        val holder = adapter.onCreateViewHolder(FrameLayout(RuntimeEnvironment.getApplication()), 0)
+        adapter.submitList(listOf(bookRow("/a.epub", coverPath = "/covers/a.png"), bookRow("/b.epub", coverPath = null)))
+        val holder = adapter.onCreateViewHolder(FrameLayout(RuntimeEnvironment.getApplication()), BookGridAdapter.VIEW_TYPE_BOOK_TILE) as BookGridAdapter.BookTileViewHolder
 
         adapter.onBindViewHolder(holder, 0)
         assertThat(adapter.decodeEntered.await(5, TimeUnit.SECONDS)).isTrue()
@@ -82,11 +82,11 @@ class BookGridAdapterBindTest {
         val adapter = TestableAdapter(scope)
         adapter.submitList(
             listOf(
-                book("/a.epub", coverPath = "/covers/a.png", modifiedAtMs = 1_000L),
-                book("/a2.epub", coverPath = "/covers/a.png", modifiedAtMs = 2_000L),
+                bookRow("/a.epub", coverPath = "/covers/a.png", modifiedAtMs = 1_000L),
+                bookRow("/a2.epub", coverPath = "/covers/a.png", modifiedAtMs = 2_000L),
             ),
         )
-        val holder = adapter.onCreateViewHolder(FrameLayout(RuntimeEnvironment.getApplication()), 0)
+        val holder = adapter.onCreateViewHolder(FrameLayout(RuntimeEnvironment.getApplication()), BookGridAdapter.VIEW_TYPE_BOOK_TILE) as BookGridAdapter.BookTileViewHolder
 
         adapter.onBindViewHolder(holder, 0)
         val firstKey = holder.boundCacheKey
@@ -98,8 +98,32 @@ class BookGridAdapterBindTest {
         assertThat(firstKey).isNotEqualTo(secondKey)
     }
 
+    @Test
+    fun `a book in list mode binds a text row and never touches the cover machinery`() {
+        // The list-mode invariant: a book row must not enter the cover cache or launch a decode
+        // coroutine, no matter that the book has a coverPath. blockDecode is armed so that if a
+        // decode ever DID start it would block and the assertion below would still catch it (the
+        // latch would have counted down).
+        val adapter = TestableAdapter(scope)
+        adapter.blockDecode = CountDownLatch(1)
+        adapter.render(listOf(bookRow("/a.epub", coverPath = "/covers/a.png")), ViewMode.LIST)
+        idleUntil { adapter.currentList.size == 1 }
+
+        assertThat(adapter.getItemViewType(0)).isEqualTo(BookGridAdapter.VIEW_TYPE_BOOK_ROW)
+        val holder = adapter.onCreateViewHolder(FrameLayout(RuntimeEnvironment.getApplication()), BookGridAdapter.VIEW_TYPE_BOOK_ROW)
+        assertThat(holder).isInstanceOf(BookGridAdapter.BookRowViewHolder::class.java)
+
+        adapter.onBindViewHolder(holder, 0)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // decodeCover was never called: the latch is untouched (a book tile bind would have
+        // counted decodeEntered down to 0).
+        assertThat(adapter.decodeEntered.count).isEqualTo(1L)
+        adapter.blockDecode!!.countDown()
+    }
+
     /** [BookGridAdapter] whose decode is latched, so tests control exactly when it finishes. */
-    private class TestableAdapter(scope: CoroutineScope) : BookGridAdapter(scope, onClick = {}) {
+    private class TestableAdapter(scope: CoroutineScope) : BookGridAdapter(scope, onBookClick = {}, onFolderClick = {}) {
         val decodeEntered = CountDownLatch(1)
         var blockDecode: CountDownLatch? = null
 
@@ -117,6 +141,9 @@ class BookGridAdapterBindTest {
             Thread.sleep(20)
         }
     }
+
+    private fun bookRow(path: String, coverPath: String?, modifiedAtMs: Long = 1_700_000_000_000L) =
+        LibraryRow.Book(book(path, coverPath, modifiedAtMs))
 
     private fun book(path: String, coverPath: String?, modifiedAtMs: Long = 1_700_000_000_000L) = BookEntity(
         path = path,

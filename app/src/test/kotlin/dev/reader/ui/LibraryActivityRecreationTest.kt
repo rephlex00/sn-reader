@@ -44,6 +44,9 @@ class LibraryActivityRecreationTest {
     @Before
     fun setUp() {
         app = RuntimeEnvironment.getApplication() as ReaderApplication
+        // Pin the library root so folderListing's root-filtering is deterministic regardless of
+        // the device's external-storage path: the seeded books all live under /Document.
+        LibraryPrefs(app).rootPath = "/Document"
     }
 
     @After
@@ -257,8 +260,11 @@ class LibraryActivityRecreationTest {
         /** Exposes the protected [adapter]'s count — only a subclass can reach it at all. */
         val itemCount: Int get() = adapter.itemCount
 
-        /** The title of the first grid item, or null if empty — lets a test read the sort order. */
-        val firstTitle: String? get() = adapter.currentList.firstOrNull()?.title
+        /**
+         * The title of the first grid item if it is a book, else null — lets a test read the sort
+         * order (the adapter now holds [LibraryRow]s, not raw [BookEntity]s).
+         */
+        val firstTitle: String? get() = (adapter.currentList.firstOrNull() as? LibraryRow.Book)?.entity?.title
     }
 
     /**

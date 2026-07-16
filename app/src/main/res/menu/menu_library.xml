@@ -24,8 +24,29 @@
             android:id="@+id/sort_recently_opened"
             android:title="Recently opened" />
     </group>
-    <!-- Outside the checkable sort group: this is an action, not a sort selection, so it must not
-         join the radio behavior or carry a check mark. Opens SettingsActivity. -->
+    <!-- The tiles/list toggle, styled like the sort group: checkableBehavior="single" makes the
+         two items a radio pair so the active view mode carries a visible mark. LibraryActivity
+         sets the initial check after inflating (a freshly inflated menu — every rotation gets one
+         — starts with nothing checked, regardless of the persisted ViewMode). -->
+    <group
+        android:id="@+id/view_group"
+        android:checkableBehavior="single">
+        <item
+            android:id="@+id/view_tiles"
+            android:title="Tiles" />
+        <item
+            android:id="@+id/view_list"
+            android:title="List" />
+    </group>
+    <!-- A standalone checkable toggle (not a radio group): flatten collapses the folder tree to
+         every book under the root. LibraryActivity restores its check state after inflating, the
+         same way it does for the sort and view-mode marks. -->
+    <item
+        android:id="@+id/action_flatten"
+        android:checkable="true"
+        android:title="Flatten folders" />
+    <!-- Outside every checkable group: this is an action, not a selection, so it must not carry a
+         check mark. Opens SettingsActivity. -->
     <item
         android:id="@+id/action_settings"
         android:title="Settings" />
