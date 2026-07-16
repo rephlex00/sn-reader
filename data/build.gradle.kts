@@ -36,7 +36,9 @@ kotlin {
 
 ksp {
     // @Database(exportSchema = true) needs a real directory to write into, or KSP warns
-    // on every build. Schemas are build output, not source — not checked in.
+    // on every build. These exported schemas ARE checked in: they are committed
+    // migration-test fixtures, not build output — MigrationTestHelper replays them to prove
+    // a version's on-disk schema (and later, that vN -> vN+1 migrations preserve data).
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
