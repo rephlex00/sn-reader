@@ -59,7 +59,16 @@ data class IndexResult(
 /**
  * Incremental library sync: walks [roots] collecting `(path, size, mtime)` only — no file is
  * opened — diffs that against [BookDao.getAllStats], and opens (via [extractor]) only the files
- * that are new or whose `(size, mtime)` changed. Vanished paths are deleted.
+ * that are new or whose `(size, mtime)` changed.
+ *
+ * Deletion is **scoped to the current [roots]**: a DB row is deleted only if its path is under a
+ * root the walk actually covered but its file is gone from disk. A row for a book outside every
+ * current root is left completely untouched — not refreshed, not deleted, not counted in
+ * [IndexResult]. That scoping is the data-loss guard behind a configurable root: re-pointing the
+ * root *hides* the books it no longer covers, but must never destroy their reading positions, and
+ * switching the root back reinstates them unchanged. (When [roots] is fixed, as it was before the
+ * root became configurable, the scope is the whole indexed library and this reduces to the old
+ * "every vanished path is deleted" behavior.)
  *
  * A file already indexed as `unreadable` whose `(size, mtime)` is unchanged is never reopened:
  * that falls straight out of the diff (its stat still matches, so it lands in the untouched
@@ -83,7 +92,10 @@ class LibraryIndexer(
         val onDisk = walk()
         val known = dao.getAllStats().associateBy { it.path }
 
-        val vanished = known.keys - onDisk.keys
+        // Only paths UNDER a walked root are deletion candidates. A path the walk didn't find but
+        // that lies outside every current root isn't a vanished file — the walk was never asked to
+        // look there — so it must survive with its position intact (the re-pointed-root guard).
+        val vanished = (known.keys - onDisk.keys).filter(::isUnderAnyRoot)
         if (vanished.isNotEmpty()) {
             // Capture cover paths before the row disappears — dao.deleteByPaths only removes the
             // row; the thumbnail file it pointed at is not Room's to know about, so it would
@@ -286,6 +298,15 @@ class LibraryIndexer(
             // See above: best-effort only.
         }
     }
+
+    /**
+     * Whether [path] lies within one of the walked [roots] — the deletion-scope test (see [sync]'s
+     * KDoc). Segment-correct on purpose: matching is against `root.path + separator`, never a bare
+     * `startsWith(root.path)`, so a `/Document` root does not claim `/Documents/x.epub` and delete a
+     * position on a folder-name near-miss. [roots] are absolute, so no canonicalization is needed.
+     */
+    private fun isUnderAnyRoot(path: String): Boolean =
+        roots.any { root -> path == root.path || path.startsWith(root.path + File.separator) }
 
     /** `(path, size, mtime)` for every `.epub` file under [roots]. Opens nothing. */
     private fun walk(): Map<String, FileStat> {

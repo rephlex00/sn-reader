@@ -523,6 +523,97 @@ class LibraryIndexerTest {
     }
 
     @Test
+    fun `narrowing the root leaves out-of-root rows and their positions untouched`(): Unit = runBlocking {
+        // The data-loss guard: re-pointing the root must HIDE books outside it, never delete them.
+        // A row whose path is under no current root is not a "vanished" file — the walk simply
+        // wasn't asked to look there — so its reading position must survive intact.
+        val rootA = tempFolder.newFolder("A")
+        val rootB = tempFolder.newFolder("B")
+        val a = File(rootA, "a.epub").apply { writeText("stub") }
+        val b = File(rootB, "b.epub").apply { writeText("stub") }
+        LibraryIndexer(dao, listOf(rootA, rootB), FakeExtractor()).sync()
+        dao.updatePosition(b.path, spineIndex = 3, charOffset = 120, lastOpenedAtMs = 7_000L)
+        val bBefore = dao.getByPath(b.path)!!
+
+        // Root narrowed to just A. b.epub is under B, which is no longer walked.
+        val result = LibraryIndexer(dao, listOf(rootA), FakeExtractor()).sync()
+
+        // Nothing was removed — b is out of scope, not vanished.
+        assertThat(result.removed).isEqualTo(0)
+        val bAfter = dao.getByPath(b.path)!!
+        assertThat(bAfter.spineIndex).isEqualTo(3)
+        assertThat(bAfter.charOffset).isEqualTo(120)
+        assertThat(bAfter.lastOpenedAtMs).isEqualTo(7_000L)
+        assertThat(bAfter.addedAtMs).isEqualTo(bBefore.addedAtMs)
+        // a is still present too.
+        assertThat(dao.getByPath(a.path)).isNotNull()
+    }
+
+    @Test
+    fun `restoring the root reinstates the survivors without re-cracking them`(): Unit = runBlocking {
+        // After a narrow-then-widen round trip the survivor's (size, mtime) is unchanged, so it
+        // falls straight into the untouched bucket — no extractor call, position still intact.
+        val rootA = tempFolder.newFolder("A")
+        val rootB = tempFolder.newFolder("B")
+        File(rootA, "a.epub").writeText("stub")
+        val b = File(rootB, "b.epub").apply { writeText("stub") }
+        LibraryIndexer(dao, listOf(rootA, rootB), FakeExtractor()).sync()
+        dao.updatePosition(b.path, spineIndex = 3, charOffset = 120, lastOpenedAtMs = 7_000L)
+
+        // Narrow to A (b survives, hidden), then widen back to both.
+        LibraryIndexer(dao, listOf(rootA), FakeExtractor()).sync()
+        val extractor = FakeExtractor()
+        val result = LibraryIndexer(dao, listOf(rootA, rootB), extractor).sync()
+
+        // b reappears with no work: its stat matched, so it was never reopened.
+        assertThat(extractor.calls).isEmpty()
+        assertThat(result.added).isEqualTo(0)
+        assertThat(result.updated).isEqualTo(0)
+        val row = dao.getByPath(b.path)!!
+        assertThat(row.spineIndex).isEqualTo(3)
+        assertThat(row.charOffset).isEqualTo(120)
+        assertThat(row.lastOpenedAtMs).isEqualTo(7_000L)
+    }
+
+    @Test
+    fun `a file deleted from disk under the current root is still removed`(): Unit = runBlocking {
+        // The scoping must not blunt the genuine case: a file gone from a root that IS walked is a
+        // real deletion and its row must go, exactly as before.
+        val rootA = tempFolder.newFolder("A")
+        val rootB = tempFolder.newFolder("B")
+        val a = File(rootA, "a.epub").apply { writeText("stub") }
+        File(rootB, "b.epub").writeText("stub")
+        LibraryIndexer(dao, listOf(rootA, rootB), FakeExtractor()).sync()
+
+        assertThat(a.delete()).isTrue()
+        val result = LibraryIndexer(dao, listOf(rootA, rootB), FakeExtractor()).sync()
+
+        assertThat(result.removed).isEqualTo(1)
+        assertThat(dao.getByPath(a.path)).isNull()
+    }
+
+    @Test
+    fun `a sibling-prefix root does not treat an outside row as vanished`(): Unit = runBlocking {
+        // Segment-correct ancestry: a "/Document" root must not claim "/Documents/x.epub". A naive
+        // startsWith(root.path) would see the row as under the root, find its file missing from the
+        // (empty) Document walk, and delete it — destroying a position on a folder-name near-miss.
+        val storage = tempFolder.newFolder("storage")
+        val document = File(storage, "Document").apply { mkdirs() }
+        val documents = File(storage, "Documents").apply { mkdirs() }
+        val x = File(documents, "x.epub").apply { writeText("stub") }
+        LibraryIndexer(dao, listOf(documents), FakeExtractor()).sync()
+        dao.updatePosition(x.path, spineIndex = 2, charOffset = 50, lastOpenedAtMs = 4_000L)
+
+        // Re-point the root to the sibling directory whose name is a prefix of the real one.
+        val result = LibraryIndexer(dao, listOf(document), FakeExtractor()).sync()
+
+        assertThat(result.removed).isEqualTo(0)
+        val row = dao.getByPath(x.path)!!
+        assertThat(row.spineIndex).isEqualTo(2)
+        assertThat(row.charOffset).isEqualTo(50)
+    }
+
+    @Test
     fun `multiple vanished books each have their own cover file deleted`(): Unit = runBlocking {
         val a = writeEpub("a.epub")
         val b = writeEpub("b.epub")
