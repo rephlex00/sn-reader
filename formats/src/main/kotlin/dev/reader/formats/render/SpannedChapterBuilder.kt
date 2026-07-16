@@ -36,14 +36,20 @@ class SpannedChapterBuilder {
                 continue
             }
             if (sb.isNotEmpty()) sb.append(BLOCK_SEPARATOR)
-            // Recorded after the separator (if any) so the offset lands on the
-            // boundary right before the next block's own text, not before the
-            // blank line that visually separates it from the previous block.
-            if (pendingBreak) {
-                breaks += sb.length
+            val start = sb.length
+            appendBlock(sb, block, config)
+            // The break offset is recorded only once a block actually contributes text,
+            // and pins to that block's own first character — after the separator, and
+            // past any text-free block (a Block.Image appends nothing) sitting between
+            // the break and the text. Recording eagerly on the next block regardless
+            // would land the break on the blank separator line, opening the new page
+            // with an empty line (or, for a trailing break, a blank final page). A
+            // pending break that never meets another text-bearing block contributes
+            // no break at all.
+            if (pendingBreak && sb.length > start) {
+                breaks += start
                 pendingBreak = false
             }
-            appendBlock(sb, block, config)
         }
         return ChapterText(sb, breaks)
     }
@@ -83,7 +89,12 @@ class SpannedChapterBuilder {
                 appendStyled(sb, block.text)
             }
 
-            // Inline images arrive with the reading UI; a placeholder would be worse than nothing.
+            // Inline images arrive with the reading UI; a placeholder would be worse than
+            // nothing. Known, deliberate asymmetry until the image-rendering plan: an
+            // image-ONLY chapter (cover-image first chapters, commonly) yields one blank
+            // page, while a missing chapter yields zero pages. The reader's first-open
+            // behavior on real books was tuned on hardware around exactly that blank
+            // page — do not "fix" the page count blind; it changes with image rendering.
             is Block.Image -> Unit
 
             Block.PageBreak -> Unit

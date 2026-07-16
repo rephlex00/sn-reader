@@ -1,20 +1,19 @@
 package dev.reader.ui
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.provider.Settings
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
+import dev.reader.ReaderApplication
+import dev.reader.engine.Locator
 import dev.reader.engine.PageNavigator
 import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.advance
+import dev.reader.engine.pageIndexFor
 import dev.reader.engine.retreat
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
@@ -30,21 +29,42 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Opens the first EPUB found under the Supernote's /Document folder and turns its pages.
+ * Opens one EPUB and turns its pages.
+ *
+ * Normally launched from [LibraryActivity] with [EXTRA_BOOK_PATH] set to the tapped book's path.
+ * Still works standalone (e.g. `adb shell am start -n dev.reader/.ui.ReaderActivity`, as Plan 2
+ * Task 1's device measurement used) — with no extra, it falls back to [findFirstEpub], exactly
+ * its pre-library behavior.
  *
  * All calls into [EpubDocument.chapter] happen from this Activity's UI thread (either directly
  * from a lifecycleScope coroutine resumed on Dispatchers.Main, or from [PageView]'s tap
  * callback, which View always delivers on the main thread) because `chapter()`'s cache is
  * documented as not thread-safe. Only opening the document (pure I/O, no cache involved yet)
  * runs on Dispatchers.IO.
+ *
+ * `open`, not `final`: [ReaderActivityTest]'s Robolectric coverage substitutes
+ * [isAllFilesAccessGranted], [openDocument], and [findFirstEpub] via a test subclass — the three
+ * points where this class reaches out to real device permissions, real multi-second EPUB opens,
+ * and a real /Document tree, none of which a JVM test can exercise meaningfully. The same seam
+ * pattern as [LibraryActivity]; no other member is `open`.
  */
-class ReaderActivity : AppCompatActivity() {
+open class ReaderActivity : AppCompatActivity() {
 
     private lateinit var pageView: PageView
     private var document: EpubDocument? = null
     private var navigator: PageNavigator? = null
     private var state = ReadingState(0, 0)
     private var config: RenderConfig? = null
+
+    /** The pure position-memory logic: the restore rules and the in-memory page-turn debounce. */
+    private val session = ReadingSession()
+
+    /**
+     * The absolute path of the open book, i.e. the `books` row key that position writes target. Set
+     * once the document opens; null before that and for the (impossible-in-practice) case where no
+     * book opened. [onStop] and [persistPosition] both need it after the opening coroutine is gone.
+     */
+    private var bookPath: String? = null
 
     /**
      * Guards against opening the book twice — set synchronously, before any coroutine starts.
@@ -68,7 +88,7 @@ class ReaderActivity : AppCompatActivity() {
         pageView = PageView(this)
         setContentView(pageView)
 
-        if (!Environment.isExternalStorageManager()) {
+        if (!isAllFilesAccessGranted()) {
             requestAllFilesAccess()
             return
         }
@@ -77,8 +97,76 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (document == null && !opening && Environment.isExternalStorageManager()) {
-            pageView.doOnLayout { openFirstBook() }
+        if (document != null || opening) return
+        if (!isAllFilesAccessGranted()) {
+            // Without the permission there is nothing this screen can ever show, and silently
+            // doing nothing here (as this branch used to) leaves a blank white page
+            // indistinguishable from a broken app. Say why and bow out; reopening after
+            // granting starts clean. (In the normal flow this is unreachable: LibraryActivity
+            // already gated on the same permission before launching us.)
+            showMessage("Reader needs all-files access to open books.")
+            finish()
+            return
+        }
+        pageView.doOnLayout { openFirstBook() }
+    }
+
+    /**
+     * Whether all-files access is currently granted — the same thin `protected open` wrapper
+     * around [hasAllFilesAccess] as [LibraryActivity]'s, and for the same reason: Robolectric
+     * cannot fake `Environment.isExternalStorageManager()`, so [ReaderActivityTest] stubs this
+     * one point via a test subclass.
+     */
+    protected open fun isAllFilesAccessGranted(): Boolean = hasAllFilesAccess()
+
+    /**
+     * A final [flushPosition] on the way out. Every page turn already persists its own position (see
+     * [flushPosition] and [showPage]), so by the time onStop runs there is usually nothing pending and
+     * this drains to null. It stays as a backstop for the one position change that a turn does not
+     * cover: the open-time write. The write is launched into the application scope, not lifecycleScope,
+     * because onStop is immediately followed by onDestroy cancelling lifecycleScope, which could cancel
+     * the UPDATE before it commits — see [persistPosition] and [ReaderApplication.positionWriteScope].
+     */
+    override fun onStop() {
+        flushPosition()
+        super.onStop()
+    }
+
+    /**
+     * Persists the latest recorded position, if any, to this book's row. Called after every page turn
+     * and once more from [onStop]. [ReadingSession.drainPending] returns the position last recorded by
+     * [showPage] and clears it, so a flush with nothing new to write (a second flush after the same
+     * turn) writes nothing rather than re-committing a stale row.
+     *
+     * Writing on every turn — rather than coalescing until exit — is what keeps the on-disk progress
+     * current: close the app, pull the battery, or have the process killed, and it reopens on the page
+     * last turned to, not the page the book was opened at. It does not cost the idle promise: the write
+     * is triggered by the user's own page turn (never at rest), runs off the main thread so it adds no
+     * latency to the e-ink refresh, and is a single sub-millisecond keyed UPDATE — negligible beside
+     * the full-screen EPD redraw the same turn already paid for.
+     */
+    private fun flushPosition() {
+        session.drainPending()?.let { persistPosition(it) }
+    }
+
+    /**
+     * Writes [locator] to this book's row via [dev.reader.data.BookDao.updatePosition], stamping
+     * `lastOpenedAtMs` to now. Launched into [ReaderApplication.positionWriteScope] — an
+     * application-scoped, cancel-independent scope — rather than `lifecycleScope`, because [onStop]
+     * calls this and onDestroy (cancelling lifecycleScope) follows onStop immediately: a write on
+     * lifecycleScope could be cancelled before it commits, the "work cancelled before it ran" bug.
+     * The scope is dormant until this launch, so it never wakes the process on its own.
+     *
+     * A book that is not in the library ([bookPath] never matched a row, e.g. a standalone adb
+     * launch) makes updatePosition match 0 rows and silently no-op; that book simply doesn't persist.
+     */
+    private fun persistPosition(locator: Locator) {
+        val path = bookPath ?: return
+        val app = application as ReaderApplication
+        val dao = app.database.bookDao()
+        val now = System.currentTimeMillis()
+        app.positionWriteScope.launch {
+            dao.updatePosition(path, locator.spineIndex, locator.charOffset, now)
         }
     }
 
@@ -86,39 +174,6 @@ class ReaderActivity : AppCompatActivity() {
         document?.close()
         document = null
         super.onDestroy()
-    }
-
-    /**
-     * Supernote keeps user books in /Document; reading them in place is the whole point,
-     * so all-files access is the only workable permission on Android 11.
-     *
-     * This is the one path every first-time user takes, and the one path we could not verify
-     * on hardware: Supernote ships a heavily customized Android 11 build where stripped-down
-     * Settings screens are common, and the per-package all-files screen
-     * (ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION) is exactly the kind of narrow, deep-linked
-     * screen a customized ROM tends to drop, throwing ActivityNotFoundException. Fall back to
-     * the all-apps list screen (ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION, still API 30), and if
-     * even that isn't present, tell the user where to grant access by hand instead of crashing.
-     */
-    private fun requestAllFilesAccess() {
-        showMessage("Grant all-files access so Reader can open books in your Document folder.")
-        try {
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                    Uri.parse("package:$packageName"),
-                )
-            )
-        } catch (e: ActivityNotFoundException) {
-            try {
-                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-            } catch (e2: ActivityNotFoundException) {
-                showMessage(
-                    "Couldn't open Settings automatically. Please grant Reader " +
-                        "\"All files access\" from Settings > Apps > Special access."
-                )
-            }
-        }
     }
 
     private fun openFirstBook() {
@@ -161,35 +216,66 @@ class ReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             var opened: EpubDocument? = null
             try {
-                val file = withContext(Dispatchers.IO) { findFirstEpub() }
+                val explicitPath = intent.getStringExtra(EXTRA_BOOK_PATH)
+                val file = withContext(Dispatchers.IO) {
+                    if (explicitPath != null) File(explicitPath).takeIf { it.isFile } else findFirstEpub()
+                }
                 if (file == null) {
-                    // Not a permanent failure: the user may drop a book in and come back, and
-                    // onResume re-arms only while `opening` is false.
                     opening = false
-                    showMessage("No EPUB found in /Document.")
+                    if (explicitPath != null) {
+                        // The tapped book vanished between the grid painting and the tap landing
+                        // (the index can be behind the filesystem). Falling back to findFirstEpub
+                        // here — as this path used to — silently opens a DIFFERENT book than the
+                        // one tapped, and once Task 6 wires position memory it would write that
+                        // book's position onto the wrong row. Name the problem and bow out; the
+                        // library re-syncs on re-entry and drops the stale cell.
+                        showMessage("That book is no longer there.")
+                        finish()
+                    } else {
+                        // No extra at all: the standalone adb launch path. Not a permanent
+                        // failure — the user may drop a book in and come back, and onResume
+                        // re-arms only while `opening` is false.
+                        showMessage("No EPUB found in /Document.")
+                    }
                     return@launch
                 }
                 withContext(Dispatchers.IO) {
-                    opened = EpubDocument.open(
-                        file,
-                        AndroidTextMeasurer(SpannedChapterBuilder(), TypefaceProvider.Platform),
-                    )
+                    opened = openDocument(file)
                 }
                 val doc = opened!!
                 document = doc
+                bookPath = file.path
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
 
-                // Real EPUBs almost always open on a cover-image page, and images are dropped
-                // until a later plan renders them — so spine item 0 routinely paginates to zero
-                // pages. Landing there would greet every book with an empty screen, so skip
-                // forward to the first chapter that actually has pages, exactly as a page turn
-                // would. Only a book that is empty the whole way through has nothing to show.
-                var start = ReadingState(0, 0)
-                if (doc.chapter(0, renderConfig).pages.isEmpty()) {
-                    start = advance(navigator!!, start) { doc.chapter(it, renderConfig).pages.size }
-                        ?: ReadingState(0, 0)
-                }
+                // The stored position for this book, if it is in the library. getByPath is the only
+                // read on IO; resolveStart and every chapter() below stay on the main thread, as
+                // chapter()'s unsynchronized cache requires. A book not in the library (the
+                // standalone adb launch, or one indexing hasn't reached) has no row -> null -> a
+                // fresh read from the start, exactly the pre-Task-6 behavior.
+                val dao = (application as ReaderApplication).database.bookDao()
+                val storedEntity = withContext(Dispatchers.IO) { dao.getByPath(file.path) }
+                val stored = storedEntity?.let { session.storedLocator(it.spineIndex, it.charOffset) }
+
+                // resolveStart owns the clamp / empty-chapter fallback / offset->page rules (unit-
+                // tested in ReadingSessionTest). The lambdas are the only impure parts:
+                //  - firstNonEmptyFrom generalizes the old cover-skip: advance() from the stored (or
+                //    0th) chapter, skipping empty chapters exactly as a page turn would. Real EPUBs
+                //    almost always open on a cover-image page that paginates to zero pages, so a
+                //    fresh read still lands on the first chapter with text.
+                //  - offsetToPageIndex maps the stored char offset back to a page; pageIndexFor
+                //    already survives a re-pagination after a font-size/margin change (:engine test).
+                val pageCountFor: (Int) -> Int = { doc.chapter(it, renderConfig).pages.size }
+                val start = session.resolveStart(
+                    stored = stored,
+                    spineSize = doc.spineSize,
+                    pageCountFor = pageCountFor,
+                    offsetToPageIndex = { spineIndex, charOffset ->
+                        pageIndexFor(doc.chapter(spineIndex, renderConfig).pages, charOffset)
+                    },
+                    firstNonEmptyFrom = { from -> advance(navigator!!, ReadingState(from, 0), pageCountFor) },
+                )
+
                 val firstChapter = doc.chapter(start.spineIndex, renderConfig)
                 if (firstChapter.pages.isEmpty()) {
                     // A missing or empty chapter file paginates to zero pages. showPage() would
@@ -199,6 +285,11 @@ class ReaderActivity : AppCompatActivity() {
                     showMessage("This book has no readable text.")
                 } else {
                     showPage(start)
+                    // Write the resolved start back immediately: stamps lastOpenedAtMs (so the
+                    // RECENTLY_OPENED sort works, and it survives a process kill that skips onStop)
+                    // AND heals a stale or clamped stored position on disk. showPage recorded the
+                    // resolved start, so flushPosition persists exactly the page that was shown.
+                    flushPosition()
                 }
             } catch (e: CancellationException) {
                 // The activity was destroyed while open() was in flight. lifecycleScope cancelled
@@ -223,9 +314,27 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun findFirstEpub(): File? = try {
+    /**
+     * Opens [file] as an EPUB — always called on [Dispatchers.IO]. `protected open` purely as a
+     * test seam: [ReaderActivityTest] substitutes implementations that count invocations, block
+     * until released, or throw, to exercise the [opening]-flag race, the cancel-mid-open close
+     * path, and failed-open recovery without racing real multi-second book opens. Production
+     * always opens the real file with the real Android measurer.
+     */
+    protected open fun openDocument(file: File): EpubDocument = EpubDocument.open(
+        file,
+        AndroidTextMeasurer(SpannedChapterBuilder(), TypefaceProvider.Platform),
+    )
+
+    /**
+     * The standalone-launch fallback (no [EXTRA_BOOK_PATH] on the intent): the first EPUB under
+     * /Document. `protected open` purely as a test seam — [ReaderActivityTest] substitutes it to
+     * exercise the fallback path without a real /Document tree.
+     */
+    protected open fun findFirstEpub(): File? = try {
         val documents = File(Environment.getExternalStorageDirectory(), "Document")
         documents.walkTopDown()
+            .maxDepth(10) // Closes an unbounded symlink-loop walk; matches LibraryIndexer.walk().
             .filter { it.isFile && it.extension.equals("epub", ignoreCase = true) }
             .firstOrNull()
     } catch (e: SecurityException) {
@@ -269,8 +378,15 @@ class ReaderActivity : AppCompatActivity() {
                 TapZone.TOGGLE_OVERLAY -> null
             }
             // null = nowhere to go (start/end of book, or everything beyond is empty): stay put and
-            // draw nothing, so a tap at the end of the book costs no invalidate.
-            if (next != null) showPage(next)
+            // draw nothing, so a tap at the end of the book costs no invalidate — and nothing to
+            // persist, since the position did not change.
+            if (next != null) {
+                showPage(next)
+                // Persist the new position now, not at onStop: reopening lands on the page last
+                // turned to even across a battery pull. showPage recorded it; this writes it, off
+                // the main thread and serialized (see flushPosition / positionWriteScope).
+                flushPosition()
+            }
         } catch (e: EpubException) {
             showMessage("Couldn't turn the page: ${e.message}")
         } catch (e: Exception) {
@@ -297,9 +413,20 @@ class ReaderActivity : AppCompatActivity() {
         // than widening MeasuredChapter's contract for a single caller.
         val layout = (chapter.measured as AndroidMeasuredChapter).layout
         pageView.show(layout, chapter.pages[pageIndex], cfg.marginPx)
+
+        // Record the new position: the page's startOffset is the stable char offset a later restore
+        // maps back to a page. This only sets an in-memory field; the caller (onTap, or the open
+        // path) follows with flushPosition to write it. Keeping the write out of showPage means the
+        // main-thread draw path never touches the DB — the UPDATE happens on the write scope.
+        session.recordPageTurn(Locator(state.spineIndex, chapter.pages[pageIndex].startOffset))
     }
 
     private fun showMessage(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    companion object {
+        /** String extra: an absolute book path, set by [LibraryActivity] when opening a tap. */
+        const val EXTRA_BOOK_PATH = "dev.reader.ui.EXTRA_BOOK_PATH"
     }
 }

@@ -4,6 +4,7 @@ import dev.reader.engine.BookMetadata
 import dev.reader.formats.ResourceSource
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import org.jsoup.parser.Parser
 
 data class ManifestItem(
@@ -71,7 +72,7 @@ class EpubPackageParser {
             throw EpubException.Malformed("The spine is empty — the book has no readable content.")
         }
 
-        val ncxId = opf.selectFirst("spine")?.attr("toc")?.takeIf { it.isNotEmpty() }
+        val ncxId = opf.firstByLocalName("spine")?.attr("toc")?.takeIf { it.isNotEmpty() }
 
         return EpubPackage(
             opfPath = opfPath,
@@ -120,7 +121,7 @@ class EpubPackageParser {
     }
 
     private fun parseManifest(opf: Document, opfPath: String): Map<String, ManifestItem> =
-        opf.select("manifest > item").mapNotNull { el ->
+        opf.firstByLocalName("manifest")?.childrenByLocalName("item").orEmpty().mapNotNull { el ->
             val id = el.attr("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
             val href = el.attr("href").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
             id to ManifestItem(
@@ -132,7 +133,7 @@ class EpubPackageParser {
         }.toMap()
 
     private fun parseSpine(opf: Document, manifest: Map<String, ManifestItem>): List<String> =
-        opf.select("spine > itemref")
+        opf.firstByLocalName("spine")?.childrenByLocalName("itemref").orEmpty()
             .map { it.attr("idref") }
             // A dangling idref is common in the wild; skip it rather than reject the book.
             .filter { it.isNotEmpty() && manifest.containsKey(it) }
@@ -140,23 +141,42 @@ class EpubPackageParser {
     private fun parseMetadata(
         opf: Document,
         manifest: Map<String, ManifestItem>,
-    ): BookMetadata = BookMetadata(
-        title = opf.selectFirst("metadata > dc|title")?.text()?.trim()?.takeIf { it.isNotEmpty() }
-            ?: "Untitled",
-        author = opf.selectFirst("metadata > dc|creator")?.text()?.trim()?.takeIf { it.isNotEmpty() },
-        language = opf.selectFirst("metadata > dc|language")?.text()?.trim()?.takeIf { it.isNotEmpty() },
-        coverHref = findCover(opf, manifest),
-    )
+    ): BookMetadata {
+        val metadata = opf.firstByLocalName("metadata")
+        fun dcText(localName: String): String? = metadata?.childrenByLocalName(localName)
+            ?.firstOrNull()?.text()?.trim()?.takeIf { it.isNotEmpty() }
+        return BookMetadata(
+            title = dcText("title") ?: "Untitled",
+            author = dcText("creator"),
+            language = dcText("language"),
+            coverHref = findCover(opf, manifest),
+        )
+    }
 
     private fun findCover(opf: Document, manifest: Map<String, ManifestItem>): String? {
         // EPUB 3: a manifest item carrying the cover-image property.
         manifest.values.firstOrNull { "cover-image" in it.properties }?.let { return it.href }
 
         // EPUB 2: <meta name="cover" content="<manifest id>"/>.
-        val coverId = opf.select("metadata > meta")
-            .firstOrNull { it.attr("name") == "cover" }
+        val coverId = opf.firstByLocalName("metadata")?.childrenByLocalName("meta")
+            ?.firstOrNull { it.attr("name") == "cover" }
             ?.attr("content")
             ?: return null
         return manifest[coverId]?.href
     }
 }
+
+/**
+ * OPF elements matched by local name, ignoring any namespace prefix: real-world producers
+ * emit both `<manifest><item>` and `<opf:manifest><opf:item>`, and a prefix-blind match
+ * is exactly how [EpubPackageParser.extractEncryptionAlgorithms] and the NCX parser
+ * already handle the same variance. Attribute names (`id`, `href`, `idref`, `toc`, ...)
+ * are conventionally unprefixed and are matched as-is.
+ */
+private fun Element.localTag(): String = tagName().substringAfter(':')
+
+private fun Document.firstByLocalName(name: String): Element? =
+    allElements.firstOrNull { it.localTag() == name }
+
+private fun Element.childrenByLocalName(name: String): List<Element> =
+    children().filter { it.localTag() == name }

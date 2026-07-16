@@ -233,6 +233,39 @@ class EpubPackageParserTest {
         assertThat(pkg.opfPath).isEqualTo("OEBPS Files/content.opf")
     }
 
+    // --- Fix wave A, M8: an OPF whose elements carry a namespace prefix
+    // (<opf:manifest><opf:item>) must parse like an unprefixed one — the NCX and
+    // encryption parsers already match by local name. ---
+
+    @Test
+    fun `parses an opf whose elements carry a namespace prefix`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="2.0">
+  <opf:metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Prefixed Book</dc:title>
+    <dc:creator>P. Author</dc:creator>
+    <opf:meta name="cover" content="cover-img"/>
+  </opf:metadata>
+  <opf:manifest>
+    <opf:item id="cover-img" href="cover.png" media-type="image/png"/>
+    <opf:item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <opf:item id="ch1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+  </opf:manifest>
+  <opf:spine toc="ncx"><opf:itemref idref="ch1"/></opf:spine>
+</opf:package>""")
+        }
+        val pkg = source.use(parser::parse)
+
+        assertThat(pkg.spine).containsExactly("ch1")
+        assertThat(pkg.manifest.getValue("ch1").href).isEqualTo("OEBPS/text/ch1.xhtml")
+        assertThat(pkg.metadata.title).isEqualTo("Prefixed Book")
+        assertThat(pkg.metadata.author).isEqualTo("P. Author")
+        assertThat(pkg.metadata.coverHref).isEqualTo("OEBPS/cover.png")
+        assertThat(pkg.ncxItemId).isEqualTo("ncx")
+    }
+
     @Test
     fun `titles an untitled book rather than failing`() {
         val source = buildEpub(file()) {

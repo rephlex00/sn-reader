@@ -23,10 +23,14 @@ package dev.reader.formats.epub
  */
 class CssRules private constructor(
     private val tagRules: Map<String, Map<String, String>>,
-    private val classRules: Map<String, Map<String, String>>,
-    private val compoundRules: Map<String, Map<String, String>>,
-    private val classRuleOrder: Map<String, Int>,
-    private val compoundRuleOrder: Map<String, Int>,
+    // Class-tier rules keep one entry per declaration BLOCK, each with the stylesheet
+    // index of the rule that produced it — never merged into one map per selector.
+    // Merging would replay a repeated selector's earlier declarations at its last
+    // block's position, letting an early `.a { font-weight: bold }` beat a later
+    // `.b { font-weight: normal }`. Tag rules can stay merged: within their tier only
+    // same-tag rules compete, and blocks are merged in stylesheet order (later wins).
+    private val classRules: Map<String, List<Pair<Int, Map<String, String>>>>,
+    private val compoundRules: Map<String, List<Pair<Int, Map<String, String>>>>,
 ) {
 
     /**
@@ -49,20 +53,16 @@ class CssRules private constructor(
 
         tagRules[lowerTag]?.let { result.putAll(it) }
 
-        // Collect every matching class-tier rule together with its
-        // stylesheet source index, then apply them in that order - so two
-        // conflicting classes resolve by stylesheet position regardless of
-        // which order the caller's `classes` list happens to put them in.
+        // Collect every matching class-tier declaration block together with
+        // its stylesheet source index, then apply them in that order - so
+        // conflicting classes (and repeated selectors) resolve by stylesheet
+        // position regardless of which order the caller's `classes` list
+        // happens to put them in.
         val classTierMatches = mutableListOf<Pair<Int, Map<String, String>>>()
         for (className in classes) {
             val lowerClass = className.lowercase()
-            classRules[lowerClass]?.let { decls ->
-                classTierMatches += classRuleOrder.getValue(lowerClass) to decls
-            }
-            val compoundKey = "$lowerTag.$lowerClass"
-            compoundRules[compoundKey]?.let { decls ->
-                classTierMatches += compoundRuleOrder.getValue(compoundKey) to decls
-            }
+            classRules[lowerClass]?.let { classTierMatches += it }
+            compoundRules["$lowerTag.$lowerClass"]?.let { classTierMatches += it }
         }
         classTierMatches.sortBy { it.first }
         for ((_, decls) in classTierMatches) result.putAll(decls)
@@ -74,7 +74,7 @@ class CssRules private constructor(
 
     companion object {
 
-        val EMPTY = CssRules(emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptyMap())
+        val EMPTY = CssRules(emptyMap(), emptyMap(), emptyMap())
 
         /**
          * Parses a stylesheet into a [CssRules]. Never throws: any block
@@ -84,10 +84,8 @@ class CssRules private constructor(
          */
         fun parse(css: String): CssRules {
             val tagRules = LinkedHashMap<String, MutableMap<String, String>>()
-            val classRules = LinkedHashMap<String, MutableMap<String, String>>()
-            val compoundRules = LinkedHashMap<String, MutableMap<String, String>>()
-            val classRuleOrder = LinkedHashMap<String, Int>()
-            val compoundRuleOrder = LinkedHashMap<String, Int>()
+            val classRules = LinkedHashMap<String, MutableList<Pair<Int, Map<String, String>>>>()
+            val compoundRules = LinkedHashMap<String, MutableList<Pair<Int, Map<String, String>>>>()
             var nextRuleIndex = 0
 
             val stripped = stripComments(css)
@@ -126,21 +124,18 @@ class CssRules private constructor(
                     when (val parsed = parseSimpleSelector(selector)) {
                         is SimpleSelector.Tag ->
                             tagRules.getOrPut(parsed.tag) { LinkedHashMap() }.putAll(declarations)
-                        is SimpleSelector.Class -> {
-                            classRules.getOrPut(parsed.className) { LinkedHashMap() }.putAll(declarations)
-                            classRuleOrder[parsed.className] = ruleIndex
-                        }
-                        is SimpleSelector.TagAndClass -> {
-                            val key = "${parsed.tag}.${parsed.className}"
-                            compoundRules.getOrPut(key) { LinkedHashMap() }.putAll(declarations)
-                            compoundRuleOrder[key] = ruleIndex
-                        }
+                        is SimpleSelector.Class ->
+                            classRules.getOrPut(parsed.className) { mutableListOf() }
+                                .add(ruleIndex to declarations)
+                        is SimpleSelector.TagAndClass ->
+                            compoundRules.getOrPut("${parsed.tag}.${parsed.className}") { mutableListOf() }
+                                .add(ruleIndex to declarations)
                         null -> Unit // unsupported selector (descendant, pseudo, attribute, ...): ignore
                     }
                 }
             }
 
-            return CssRules(tagRules, classRules, compoundRules, classRuleOrder, compoundRuleOrder)
+            return CssRules(tagRules, classRules, compoundRules)
         }
 
         private fun stripComments(css: String): String {

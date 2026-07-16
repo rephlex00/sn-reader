@@ -6,17 +6,22 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class TestEpubBuilder {
-    private val entries = LinkedHashMap<String, String>()
+    private val entries = LinkedHashMap<String, ByteArray>()
 
     fun entry(path: String, content: String) {
-        entries[path] = content
+        entries[path] = content.toByteArray(Charsets.UTF_8)
+    }
+
+    /** Binary variant, for entries that aren't text — a cover image, first and so far only. */
+    fun entry(path: String, bytes: ByteArray) {
+        entries[path] = bytes
     }
 
     fun writeTo(file: File) {
         ZipOutputStream(file.outputStream().buffered()).use { zip ->
-            entries.forEach { (path, content) ->
+            entries.forEach { (path, bytes) ->
                 zip.putNextEntry(ZipEntry(path))
-                zip.write(content.toByteArray(Charsets.UTF_8))
+                zip.write(bytes)
                 zip.closeEntry()
             }
         }

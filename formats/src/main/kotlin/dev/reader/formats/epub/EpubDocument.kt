@@ -53,11 +53,15 @@ class EpubDocument private constructor(
     private var cacheConfig: RenderConfig? = null
     private val cache = LruChapterCache()
 
-    // Keyed by the exact set of stylesheet sources a chapter resolves to (see cssFor):
+    // Keyed by the exact list of stylesheet sources a chapter resolves to (see cssFor):
     // in the overwhelmingly common shape - one stylesheet shared by every chapter in the
     // book - every chapter maps to the same key, so the stylesheet is parsed exactly
-    // once for the life of the document rather than once per chapter.
-    private val cssCache = mutableMapOf<String, CssRules>()
+    // once for the life of the document rather than once per chapter. The key is the
+    // (hrefs, inline blocks) Pair of Lists (both have value equality), NOT a joined or
+    // concatenated form: an href containing a space would make ["a b.css"] and
+    // ["a", "b.css"] collide as joined strings, and flat concatenation would lose the
+    // boundary between the href list and the inline-block list.
+    private val cssCache = mutableMapOf<Pair<List<String>, List<String>>, CssRules>()
 
     override val metadata: BookMetadata get() = pkg.metadata
     override val spineSize: Int get() = pkg.spine.size
@@ -124,7 +128,7 @@ class EpubDocument private constructor(
         if (refs.hrefs.isEmpty() && refs.inlineBlocks.isEmpty()) return CssRules.EMPTY
 
         val resolvedHrefs = refs.hrefs.map { resolveHref(chapterPath, it) }
-        val cacheKey = (resolvedHrefs + refs.inlineBlocks).joinToString(" ")
+        val cacheKey = resolvedHrefs to refs.inlineBlocks
 
         return cssCache.getOrPut(cacheKey) {
             val combined = buildString {
@@ -190,8 +194,15 @@ private data class StylesheetRefs(val hrefs: List<String>, val inlineBlocks: Lis
  * here rather than doubling the HTML-parsing cost of every chapter load.
  */
 private fun extractStylesheetRefs(doc: JsoupDocument): StylesheetRefs {
-    val hrefs = doc.select("link").filter { it.attr("rel").lowercase() == "stylesheet" }
+    // `rel` is a space-separated token list (e.g. rel="stylesheet alternate"), not a
+    // single value — match by token membership, case-insensitively, same as the
+    // epub:type fix in EpubToc. We don't implement alternate-stylesheet *selection*;
+    // a multi-token rel that includes "stylesheet" simply loads like any other.
+    val hrefs = doc.select("link")
+        .filter { "stylesheet" in it.attr("rel").lowercase().split(relTokenSeparator) }
         .mapNotNull { it.attr("href").takeIf(String::isNotBlank) }
     val inlineBlocks = doc.select("style").map { it.data() }.filter(String::isNotBlank)
     return StylesheetRefs(hrefs, inlineBlocks)
 }
+
+private val relTokenSeparator = Regex("\\s+")

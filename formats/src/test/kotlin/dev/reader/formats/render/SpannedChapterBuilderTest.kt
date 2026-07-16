@@ -73,6 +73,41 @@ class SpannedChapterBuilderTest {
         assertThat(chapter.breakOffsets).containsExactly(6)
     }
 
+    // --- Fix wave A, M4: a PageBreak followed by a text-free block (an Image, which
+    // appends no text) must pin the break to the start of the NEXT text-bearing block,
+    // not to the blank separator line — and a trailing break with no following text
+    // must contribute no break at all. ---
+
+    @Test
+    fun `a page break followed by an image pins to the next text-bearing block`() {
+        val chapter = builder.build(
+            listOf(para("One."), Block.PageBreak, Block.Image("img/x.png"), para("Two.")),
+            config,
+        )
+
+        // "One." + "\n\n" (image's separator) + "\n\n" (Two's separator) = offset 8.
+        assertThat(chapter.breakOffsets).containsExactly(8)
+        val offset = chapter.breakOffsets.single()
+        assertThat(chapter.text.subSequence(offset, chapter.text.length).toString()).isEqualTo("Two.")
+    }
+
+    @Test
+    fun `a trailing page break followed only by an image contributes no break`() {
+        val chapter = builder.build(
+            listOf(para("One."), Block.PageBreak, Block.Image("img/x.png")),
+            config,
+        )
+
+        assertThat(chapter.breakOffsets).isEmpty()
+    }
+
+    @Test
+    fun `a trailing page break with nothing after it contributes no break`() {
+        val chapter = builder.build(listOf(para("One."), Block.PageBreak), config)
+
+        assertThat(chapter.breakOffsets).isEmpty()
+    }
+
     @Test
     fun `headings are scaled relative to body text`() {
         val chapter = builder.build(

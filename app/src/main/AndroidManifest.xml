@@ -4,18 +4,48 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
+        android:name=".ReaderApplication"
         android:label="Reader"
         android:allowBackup="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.Reader">
 
+        <!-- The library grid is now the app's entry point (Plan 2, Task 5). -->
         <activity
-            android:name=".ui.ReaderActivity"
+            android:name=".ui.LibraryActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          exported="false": nothing outside this app has any business starting the reader, and an
+          exported activity with no intent-filter is a needless surface. The adb workflow
+          (`adb shell am start -n dev.reader/.ui.ReaderActivity`, as Plan 2 Task 1's device
+          measurement used) still works: on debuggable builds the shell may start non-exported
+          activities of debuggable apps by component name.
+
+          launchMode="singleTop": the second half of the double-tap defense. LibraryActivity's
+          in-Activity debounce catches two taps dispatched in the same interactive window;
+          singleTop dedupes the re-entry case where a start request arrives while a ReaderActivity
+          for this task is already on top, so a stray duplicate can never stack a second reader
+          (two open ZipFiles, and dueling position writers once Task 6 lands).
+        -->
+        <activity
+            android:name=".ui.ReaderActivity"
+            android:exported="false"
+            android:launchMode="singleTop" />
+
+        <!-- exported="false": both are internal screens reached only from within the app (the
+             library overflow, and Settings' book-folder row). Nothing outside has any business
+             starting them. -->
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.DirectoryChooserActivity"
+            android:exported="false" />
     </application>
 </manifest>

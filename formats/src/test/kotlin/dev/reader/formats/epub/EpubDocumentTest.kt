@@ -261,6 +261,88 @@ class EpubDocumentTest {
         }
     }
 
+    // --- Fix wave A, M3: the css cache was keyed by joinToString(" "), so an href
+    // containing a space collided with a different chapter's two-href list and reused
+    // the wrong CssRules. ---
+
+    @Test
+    fun `stylesheet cache does not collide when an href contains a space`() {
+        val file = temp.newFile("collide.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Collide</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/><itemref idref="ch2"/></spine>
+</package>""")
+            // Chapter 1 references ONE stylesheet whose name contains a space —
+            // "OEBPS/x OEBPS/y.css", which doesn't exist, so it contributes no rules.
+            // Under the old joined-string key this is indistinguishable from chapter 2's
+            // TWO stylesheets ["OEBPS/x", "OEBPS/y.css"], so chapter 2 wrongly reused
+            // chapter 1's empty rules and lost its emphasis.
+            entry(
+                "OEBPS/ch1.xhtml",
+                """<html><head><link rel="stylesheet" href="x OEBPS/y.css"/></head>""" +
+                    """<body><p>Plain.</p></body></html>""",
+            )
+            entry(
+                "OEBPS/ch2.xhtml",
+                """<html><head><link rel="stylesheet" href="x"/><link rel="stylesheet" href="y.css"/></head>""" +
+                    """<body><p>A <span class="italic">word</span>.</p></body></html>""",
+            )
+            entry("OEBPS/x", ".italic { font-style: italic }")
+            entry("OEBPS/y.css", "p { color: black }")
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            doc.chapter(0, config) // populates the cache under the would-be colliding key
+            val chapter = doc.chapter(1, config)
+            val text = (chapter.measured as AndroidMeasuredChapter).layout.text as Spanned
+            val italicSpans = text.getSpans(0, text.length, StyleSpan::class.java)
+                .filter { it.style == Typeface.ITALIC }
+
+            assertThat(italicSpans).isNotEmpty()
+        }
+    }
+
+    // --- Fix wave A, M5: rel is a space-separated token list; rel="stylesheet alternate"
+    // must still be treated as a stylesheet (we don't implement alternate selection). ---
+
+    @Test
+    fun `a multi-token rel attribute still loads the stylesheet`() {
+        val file = temp.newFile("multitoken-rel.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Multi Rel</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+            entry(
+                "OEBPS/text/ch1.xhtml",
+                """<html><head><link rel="stylesheet alternate" href="../styles/s.css"/></head>""" +
+                    """<body><p>A <span class="italic">word</span>.</p></body></html>""",
+            )
+            entry("OEBPS/styles/s.css", ".italic { font-style: italic }")
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            val chapter = doc.chapter(0, config)
+            val text = (chapter.measured as AndroidMeasuredChapter).layout.text as Spanned
+            val italicSpans = text.getSpans(0, text.length, StyleSpan::class.java)
+                .filter { it.style == Typeface.ITALIC }
+
+            assertThat(italicSpans).isNotEmpty()
+        }
+    }
+
     @Test
     fun `a chapter referencing a missing stylesheet degrades to no emphasis rather than throwing`() {
         val file = temp.newFile("missing-css.epub")

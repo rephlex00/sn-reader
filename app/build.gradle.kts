@@ -20,6 +20,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 
@@ -27,16 +31,41 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        // No separate targetSdk override here (unlike :data/:formats): this is an application
+        // module, so defaultConfig.targetSdk (36) already applies to Robolectric directly —
+        // testOptions.targetSdk is only settable (and only needed) for library modules.
+        unitTests {
+            // LibraryActivityTest's Robolectric coverage inflates menu_library.xml and builds
+            // real Views (Toolbar, RecyclerView) — needs real resource resolution, not stubs.
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 dependencies {
     implementation(project(":formats"))
+    // Task 5 wires the seam: :data owns LibraryIndexer/BookDao, :app supplies the
+    // EPUB-backed MetadataExtractor that composes it with :formats. :data declares Room
+    // as `implementation`, not `api`, so :app also needs room-runtime directly below to
+    // call Room.databaseBuilder(...) itself.
+    implementation(project(":data"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx) // lifecycleScope in ReaderActivity
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.recyclerview) // grid only: Views, no Compose
+    implementation(libs.androidx.room.runtime)
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)
+    testImplementation(libs.robolectric)
 }

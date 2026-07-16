@@ -1,9 +1,54 @@
 package dev.reader.formats.epub
 
 import com.google.common.truth.Truth.assertThat
+import dev.reader.formats.ResourceSource
+import java.io.IOException
+import java.io.InputStream
 import org.junit.Test
 
 class PathsTest {
+
+    /** A minimal in-memory [ResourceSource] so these tests don't need a real zip file. */
+    private class FakeSource(private val bytes: Map<String, ByteArray> = emptyMap()) : ResourceSource {
+        override fun open(path: String): InputStream? = bytes[path]?.inputStream()
+        override fun readText(path: String): String? = bytes[path]?.toString(Charsets.UTF_8)
+        override fun exists(path: String): Boolean = path in bytes
+        override fun close() = Unit
+    }
+
+    @Test
+    fun `readBytesChecked returns the raw bytes of an existing entry`() {
+        val source = FakeSource(mapOf("images/cover.jpg" to byteArrayOf(1, 2, 3, 4)))
+        assertThat(readBytesChecked(source, "images/cover.jpg")).isEqualTo(byteArrayOf(1, 2, 3, 4))
+    }
+
+    @Test
+    fun `readBytesChecked returns null for a missing entry`() {
+        val source = FakeSource()
+        assertThat(readBytesChecked(source, "images/missing.jpg")).isNull()
+    }
+
+    @Test
+    fun `readBytesChecked translates an IOException into EpubException Malformed`() {
+        val source = object : ResourceSource {
+            override fun open(path: String): InputStream = object : InputStream() {
+                override fun read(): Int = throw IOException("declares size beyond the cap")
+            }
+            override fun readText(path: String): String? = null
+            override fun exists(path: String): Boolean = true
+            override fun close() = Unit
+        }
+
+        val thrown = try {
+            readBytesChecked(source, "images/bomb.jpg")
+            null
+        } catch (e: EpubException.Malformed) {
+            e
+        }
+
+        assertThat(thrown).isNotNull()
+        assertThat(thrown!!.message).contains("images/bomb.jpg")
+    }
 
     @Test
     fun `resolves href relative to the opf directory`() {
