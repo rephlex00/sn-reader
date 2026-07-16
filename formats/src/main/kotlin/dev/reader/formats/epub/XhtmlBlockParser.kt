@@ -71,7 +71,7 @@ class XhtmlBlockParser {
         dispatch(el, chapterPath, produced, css, inferHeadings)
         if (produced.isEmpty()) return
 
-        if (requestsPageBreak(el)) addBlock(out, Block.PageBreak)
+        if (requestsPageBreak(el, css)) addBlock(out, Block.PageBreak)
         produced.forEach { addBlock(out, it) }
     }
 
@@ -91,13 +91,9 @@ class XhtmlBlockParser {
 
             "blockquote" -> emitBlockquote(el, chapterPath, out, css, inferHeadings)
 
-            "ul" -> listItems(el).forEach { li ->
-                emitTextBlock(li, chapterPath, out, css) { Block.ListItem(it, ordinal = null) }
-            }
+            "ul" -> emitList(el, chapterPath, out, css, inferHeadings, ordered = false)
 
-            "ol" -> listItems(el).forEachIndexed { index, li ->
-                emitTextBlock(li, chapterPath, out, css) { Block.ListItem(it, ordinal = index + 1) }
-            }
+            "ol" -> emitList(el, chapterPath, out, css, inferHeadings, ordered = true)
 
             "img" -> emitImage(el, chapterPath, out)
 
@@ -212,19 +208,21 @@ class XhtmlBlockParser {
                         }
                     }
                     else -> {
-                        // CSS emphasis is only ever taken as an inline run for elements
-                        // that are inline BY TAG, or that carry no block-level descendant
-                        // of their own — never for an arbitrary container. A publisher
-                        // stylesheet routinely puts `font-style: italic` on a bare tag
-                        // selector (`blockquote { ... }`, `div.epigraph { ... }`); treating
-                        // every such element as one inline run would flatten its <p>/
-                        // heading/list children into a single merged block, silently
-                        // losing their structure. Containers that DO qualify (a `<span>`,
-                        // or a `<div>` whose only content is text/inline elements) still
-                        // take the inline path exactly as before.
+                        // An element joins the enclosing inline run when it is inline BY
+                        // TAG (`<a>`, `<span>`, `<sup>`, ... — styled or not: an unstyled
+                        // link mid-sentence must not shatter the sentence into separate
+                        // Paragraphs) or when CSS emphasis makes an otherwise-unknown
+                        // element behave like one — but never when it carries a
+                        // block-level descendant of its own. A publisher stylesheet
+                        // routinely puts `font-style: italic` on a bare tag selector
+                        // (`blockquote { ... }`, `div.epigraph { ... }`); treating every
+                        // such element as one inline run would flatten its <p>/heading/
+                        // list children into a single merged block, silently losing
+                        // their structure — and even a genuine `<a>` around a `<p>` must
+                        // recurse so the paragraph keeps its own Block.
                         val styles = effectiveStyles(node, css)
-                        val emphasiseAsInlineRun = styles.isNotEmpty() &&
-                            (isInlineByTag(tag) || !containsBlockLevelDescendant(node))
+                        val emphasiseAsInlineRun = (isInlineByTag(tag) || styles.isNotEmpty()) &&
+                            !containsBlockLevelDescendant(node)
                         when {
                             emphasiseAsInlineRun -> {
                                 // Skip pushing (and later popping) any style already open
@@ -243,6 +241,15 @@ class XhtmlBlockParser {
                                 walkRun(node, chapterPath, builder, flush, out, factory, flatten, css, inferHeadings)
                             }
                             else -> {
+                                // TODO(Plan 3): a container whose CSS emphasis was NOT
+                                // taken as an inline run (because it holds a block-level
+                                // or text-free descendant, e.g. `<div class="it">caption
+                                // <img/></div>` with `.it { font-style: italic }`) loses
+                                // that emphasis entirely on this path: visit() re-derives
+                                // styles per descendant and never sees the container's
+                                // own declarations. Plan 3's resolved-style model (styles
+                                // inherited down the walk, not looked up per element)
+                                // must carry container emphasis onto descendant text.
                                 flush()
                                 visit(node, chapterPath, out, css, inferHeadings)
                             }
@@ -254,11 +261,58 @@ class XhtmlBlockParser {
         }
     }
 
-    private fun listItems(el: Element) = el.children().filter { it.tagName().lowercase() == "li" }
+    /**
+     * Emits a list's items. Direct `<li>` children are the well-formed case, but real
+     * EPUBs also wrap `<li>`s in a non-`<li>` element (`<div>`, most commonly) inside the
+     * list, and leave bare text sitting directly inside `<ul>` — so this recurses into
+     * non-`<li>` wrapper children looking for `<li>`s at any depth, and keeps bare text
+     * as a plain paragraph, rather than silently dropping either. A nested `<ul>`/`<ol>`
+     * met while scanning is its own list, not a source of this list's items: it re-enters
+     * normal dispatch so its items are emitted exactly once, as its own. (A nested list
+     * *inside* an `<li>` never reaches here — [emitTextBlock] flattens it into that
+     * item's text, see [walkInline].)
+     */
+    private fun emitList(
+        el: Element,
+        chapterPath: String,
+        out: MutableList<Block>,
+        css: CssRules,
+        inferHeadings: Boolean,
+        ordered: Boolean,
+    ) {
+        var ordinal = 0
+        fun walk(container: Element) {
+            container.childNodes().forEach { node ->
+                when (node) {
+                    is TextNode -> {
+                        val builder = InlineBuilder()
+                        builder.appendText(node.wholeText)
+                        val text = builder.build()
+                        if (text.text.isNotBlank()) out += Block.Paragraph(text)
+                    }
+                    is Element -> when (node.tagName().lowercase()) {
+                        "li" -> emitTextBlock(node, chapterPath, out, css) {
+                            Block.ListItem(it, ordinal = if (ordered) ++ordinal else null)
+                        }
+                        "ul", "ol" -> visit(node, chapterPath, out, css, inferHeadings)
+                        "style", "script" -> Unit
+                        else -> walk(node)
+                    }
+                    else -> Unit
+                }
+            }
+        }
+        walk(el)
+    }
 
-    private fun requestsPageBreak(el: Element): Boolean {
-        val style = el.attr("style").lowercase().replace(" ", "")
-        return "page-break-before:always" in style || "break-before:page" in style
+    /**
+     * Whether [el] asks for a page break before itself, from its *cascaded* declarations —
+     * calibre standardly declares `page-break-before: always` via a class rule, not the
+     * inline `style` attribute, and [declarationsFor] already resolves both (inline wins).
+     */
+    private fun requestsPageBreak(el: Element, css: CssRules): Boolean {
+        val declarations = declarationsFor(el, css)
+        return declarations["page-break-before"] == "always" || declarations["break-before"] == "page"
     }
 
     private fun emitImage(el: Element, chapterPath: String, out: MutableList<Block>) {
@@ -330,6 +384,19 @@ class XhtmlBlockParser {
                 "img" -> {
                     flush()
                     emitImage(node, chapterPath, out)
+                }
+                // A block-level tag inside a flattening walk (block children of an <li>,
+                // most commonly) is a boundary: its words must never concatenate with the
+                // surrounding text without a separator, so a line break brackets it on
+                // both sides. The content itself still flattens into the enclosing block
+                // — rendering e.g. a nested list as real nested ListItems is later work.
+                "p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "div", "ul", "ol", "li" -> {
+                    val styles = effectiveStyles(node, css).filterNot { builder.hasOpenStyle(it) }
+                    builder.appendBlockBoundary()
+                    styles.forEach { builder.pushStyle(it) }
+                    node.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, css) }
+                    styles.forEach { builder.popStyle() }
+                    builder.appendBlockBoundary()
                 }
                 else -> {
                     // See the matching comment in walkRun: don't re-push a style an
@@ -593,6 +660,17 @@ private class InlineBuilder {
     fun appendLineBreak() {
         while (sb.isNotEmpty() && sb.last() == ' ') sb.setLength(sb.length - 1)
         sb.append('\n')
+    }
+
+    /**
+     * A block boundary inside flattened inline content (a `<p>` child of an `<li>`, a
+     * nested list, ...): guarantees a line break separates whatever text sits on either
+     * side, without stacking blank lines when boundaries meet ([appendLineBreak], by
+     * contrast, always appends — two literal `<br/>`s SHOULD produce a blank line).
+     */
+    fun appendBlockBoundary() {
+        while (sb.isNotEmpty() && sb.last() == ' ') sb.setLength(sb.length - 1)
+        if (sb.isNotEmpty() && sb.last() != '\n') sb.append('\n')
     }
 
     /** Marks [style] as open from the current offset; matched by a later [popStyle]. */

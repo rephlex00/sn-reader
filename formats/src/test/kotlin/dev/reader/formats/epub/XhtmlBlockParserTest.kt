@@ -754,4 +754,163 @@ class XhtmlBlockParserTest {
         val blocks = parse("""<p><a href="x"><span class="wrap">Ordinary short link.</span></a></p>""", css)
         assertThat(blocks.single()).isInstanceOf(Block.Paragraph::class.java)
     }
+
+    // --- Fix wave A, C1: an UNSTYLED inline-by-tag element (<a>, <sup>, <span>, ...) as a
+    // direct child of a container must join the surrounding text run, not shatter it into
+    // one Paragraph per fragment. The earlier fix only covered *styled* inline children. ---
+
+    @Test
+    fun `unstyled anchor inside a container joins the surrounding text run`() {
+        val blocks = parse("""<div>Hello <a href="x">link</a> world.</div>""")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Paragraph).text.text).isEqualTo("Hello link world.")
+    }
+
+    @Test
+    fun `unstyled sup footnote marker inside a container joins the run`() {
+        val blocks = parse("<div>Text with a footnote<sup><a>1</a></sup> continuing here.</div>")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Paragraph).text.text)
+            .isEqualTo("Text with a footnote1 continuing here.")
+    }
+
+    @Test
+    fun `styled and unstyled inline siblings in a container stay one run`() {
+        val blocks = parse("<div><i>lead</i> middle <a>tail</a></div>")
+
+        assertThat(blocks).hasSize(1)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.text).isEqualTo("lead middle tail")
+        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `control - the same inline markup inside a p stays one paragraph`() {
+        val blocks = parse("""<p>Hello <a href="x">link</a> world.</p>""")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Paragraph).text.text).isEqualTo("Hello link world.")
+    }
+
+    @Test
+    fun `unstyled anchor directly inside body joins the surrounding run`() {
+        val blocks = parser.parse(
+            """<html><body>Hello <a href="x">link</a> world.</body></html>""",
+            "OEBPS/text/ch1.xhtml",
+        )
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.Paragraph).text.text).isEqualTo("Hello link world.")
+    }
+
+    @Test
+    fun `styled and unstyled inline siblings directly inside body stay one run`() {
+        val blocks = parser.parse(
+            "<html><body><i>lead</i> middle <a>tail</a></body></html>",
+            "OEBPS/text/ch1.xhtml",
+        )
+
+        assertThat(blocks).hasSize(1)
+        val text = (blocks.single() as Block.Paragraph).text
+        assertThat(text.text).isEqualTo("lead middle tail")
+        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle.ITALIC))
+    }
+
+    @Test
+    fun `an anchor wrapping block content still recurses so paragraphs stay separate`() {
+        val blocks = parse("<div><a><p>A</p><p>B</p></a></div>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("A")
+        assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("B")
+    }
+
+    // --- Fix wave A, I1: block-level children of an <li> are boundaries — their words
+    // must never concatenate with the surrounding text without a separator. ---
+
+    @Test
+    fun `paragraph children of a list item do not merge words`() {
+        val blocks = parse("<ul><li><p>one</p><p>two</p></li></ul>")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.ListItem).text.text).isEqualTo("one\ntwo")
+    }
+
+    @Test
+    fun `a nested list inside a list item does not merge words`() {
+        val blocks = parse("<ul><li>outer<ul><li>inner</li></ul></li></ul>")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.ListItem).text.text).isEqualTo("outer\ninner")
+    }
+
+    @Test
+    fun `a blockquote inside a list item does not merge words`() {
+        val blocks = parse("<ul><li>note:<blockquote>quoted</blockquote></li></ul>")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.ListItem).text.text).isEqualTo("note:\nquoted")
+    }
+
+    // --- Fix wave A, M1: a list whose <li>s are wrapped in a non-<li> element (or that
+    // holds bare text directly) must not silently vanish. ---
+
+    @Test
+    fun `list items wrapped in a div inside the list still emit`() {
+        val blocks = parse("<ul><div><li>item one</li><li>item two</li></div></ul>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.ListItem).text.text).isEqualTo("item one")
+        assertThat((blocks[1] as Block.ListItem).text.text).isEqualTo("item two")
+    }
+
+    @Test
+    fun `ordered list items wrapped in a div keep their ordinals`() {
+        val blocks = parse("<ol><div><li>a</li><li>b</li></div></ol>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.ListItem).ordinal).isEqualTo(1)
+        assertThat((blocks[1] as Block.ListItem).ordinal).isEqualTo(2)
+    }
+
+    @Test
+    fun `bare text directly inside a list becomes a paragraph instead of vanishing`() {
+        val blocks = parse("<ul>loose text<li>item</li></ul>")
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Paragraph).text.text).isEqualTo("loose text")
+        assertThat((blocks[1] as Block.ListItem).text.text).isEqualTo("item")
+    }
+
+    @Test
+    fun `a nested list met while scanning wrappers emits its items exactly once`() {
+        val blocks = parse("<ul><div><ul><li>only once</li></ul></div></ul>")
+
+        assertThat(blocks).hasSize(1)
+        assertThat((blocks.single() as Block.ListItem).text.text).isEqualTo("only once")
+    }
+
+    // --- Fix wave A, M6: page-break-before declared via a class rule (calibre's standard
+    // shape) must produce a PageBreak, not just the inline style attribute. ---
+
+    @Test
+    fun `emits a page break for a class-declared page-break-before`() {
+        val css = CssRules.parse(".pb { page-break-before: always }")
+        val blocks = parse("""<p>Before</p><div class="pb"><p>After</p></div>""", css)
+
+        assertThat(blocks).hasSize(3)
+        assertThat(blocks[1]).isEqualTo(Block.PageBreak)
+        assertThat((blocks[2] as Block.Paragraph).text.text).isEqualTo("After")
+    }
+
+    @Test
+    fun `emits a page break for a class-declared modern break-before property`() {
+        val css = CssRules.parse(".pb { break-before: page }")
+        val blocks = parse("""<p>A</p><div class="pb"><p>B</p></div>""", css)
+
+        assertThat(blocks).hasSize(3)
+        assertThat(blocks[1]).isEqualTo(Block.PageBreak)
+    }
 }
