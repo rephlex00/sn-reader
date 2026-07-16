@@ -57,10 +57,11 @@ class EpubDocument private constructor(
     // in the overwhelmingly common shape - one stylesheet shared by every chapter in the
     // book - every chapter maps to the same key, so the stylesheet is parsed exactly
     // once for the life of the document rather than once per chapter. The key is the
-    // List itself (lists have value equality), NOT a joined string: an href containing
-    // a space would make ["a b.css"] and ["a", "b.css"] collide as joined strings and
-    // reuse the wrong CssRules.
-    private val cssCache = mutableMapOf<List<String>, CssRules>()
+    // (hrefs, inline blocks) Pair of Lists (both have value equality), NOT a joined or
+    // concatenated form: an href containing a space would make ["a b.css"] and
+    // ["a", "b.css"] collide as joined strings, and flat concatenation would lose the
+    // boundary between the href list and the inline-block list.
+    private val cssCache = mutableMapOf<Pair<List<String>, List<String>>, CssRules>()
 
     override val metadata: BookMetadata get() = pkg.metadata
     override val spineSize: Int get() = pkg.spine.size
@@ -127,7 +128,7 @@ class EpubDocument private constructor(
         if (refs.hrefs.isEmpty() && refs.inlineBlocks.isEmpty()) return CssRules.EMPTY
 
         val resolvedHrefs = refs.hrefs.map { resolveHref(chapterPath, it) }
-        val cacheKey = resolvedHrefs + refs.inlineBlocks
+        val cacheKey = resolvedHrefs to refs.inlineBlocks
 
         return cssCache.getOrPut(cacheKey) {
             val combined = buildString {

@@ -26,7 +26,10 @@ import dev.reader.data.SortOrder
 import dev.reader.library.EpubMetadataExtractor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /** [MenuItem.getItemId] -> the [SortOrder] it selects, or null for an item this menu doesn't own. */
@@ -283,7 +286,10 @@ open class LibraryActivity : AppCompatActivity() {
      * - The `previous?.join()` inside the launched coroutine handles the rotation case: the old
      *   instance's destruction *cancelled* the old job, so it reads `isActive == false` here even
      *   while its body is still executing a blocking walk/extract on Dispatchers.IO. The new sync
-     *   therefore waits for the old body to actually unwind before doing anything.
+     *   therefore waits for the old body to actually unwind before doing anything. The join is
+     *   wrapped in [NonCancellable] so the wait survives *this* activity's own destruction too —
+     *   otherwise a second rotation would complete the waiter instantly and let its successor
+     *   start alongside the still-unwinding original body.
      *
      * **Why [CancellationException] is caught and rethrown, not left to the broad `catch`
      * below it.** [CancellationException] extends [Exception] — this project has already been
@@ -308,7 +314,18 @@ open class LibraryActivity : AppCompatActivity() {
             // that body has unwound. Never a deadlock: `previous` is already cancelled or
             // completed here (the isActive guard above returned otherwise), so it cannot be
             // waiting on anything this coroutine owns.
-            previous?.join()
+            //
+            // NonCancellable, because join() is itself a cancellable suspend: without it, a
+            // second destruction while we wait here would complete THIS job instantly (join
+            // throws CancellationException) while `previous`'s body is still unwinding — and
+            // the next runSync, joining us, would then start a sync concurrent with that body.
+            // Wrapped, a cancelled waiter stays in Cancelling until its predecessor has actually
+            // unwound, so the no-two-bodies invariant holds through any chain of recreations.
+            // The wait is bounded: the predecessor is cancelled and exits at its next
+            // ensureActive()/suspension. createSync() below stays outside the wrapper — a
+            // cancelled waiter must still not START new work.
+            withContext(NonCancellable) { previous?.join() }
+            ensureActive()
             try {
                 createSync().invoke()
             } catch (e: CancellationException) {
