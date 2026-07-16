@@ -4,9 +4,12 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Environment
 import android.util.Log
+import android.view.Gravity
 import android.view.MenuItem
+import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
@@ -119,6 +122,24 @@ open class LibraryActivity : AppCompatActivity() {
     /** `protected`, not `private`: [LibraryActivityRecreationTest] reads `itemCount` after recreation. */
     protected lateinit var adapter: BookGridAdapter
 
+    /**
+     * The persistent "grant all-files access" message shown instead of a silent blank grid when
+     * the user comes back from Settings without granting. `protected`, not `private`:
+     * [LibraryActivityInteractionTest] asserts on its visibility and text.
+     */
+    protected lateinit var emptyStateView: TextView
+
+    /**
+     * Debounces [openBook]. E-ink's delayed visual feedback makes double-taps routine — nothing
+     * on screen changes for hundreds of milliseconds after the first tap, so users tap again —
+     * and without this guard both taps start a [ReaderActivity]: two Activities stacked, two open
+     * ZipFiles over the same book, and (once Task 6 wires position memory) two writers racing the
+     * same row. Set when a launch starts, reset in [onResume] — the moment this Activity is
+     * interactive again the next tap is a fresh intent. `singleTop` on [ReaderActivity] (see the
+     * manifest) dedupes the cross-Activity re-entry case this same-frame guard can't see.
+     */
+    private var launching = false
+
     private var currentSort = SortOrder.TITLE
     private var observeJob: Job? = null
 
@@ -148,9 +169,16 @@ open class LibraryActivity : AppCompatActivity() {
             setOnMenuItemClickListener(::onSortMenuItemClicked)
         }
 
+        emptyStateView = TextView(this).apply {
+            gravity = Gravity.CENTER
+            setPadding(48, 96, 48, 96)
+            visibility = View.GONE
+        }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(emptyStateView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(recyclerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         setContentView(root)
@@ -159,12 +187,6 @@ open class LibraryActivity : AppCompatActivity() {
             requestAllFilesAccess()
             return
         }
-        // Verification instrumentation for the rotation fix (Plan 2 Task 5 review, fix waves 1 &
-        // 2): db's identityHashCode staying constant across onCreate calls proves it's the same
-        // ReaderApplication-scoped Room instance, not a fresh one per Activity/rotation. Placed
-        // after the permission gate (not before, as fix wave 1 had it) so a permission-denied
-        // launch never forces the lazy Room build just to log a line nothing needs yet.
-        Log.i(TAG, "onCreate db=${System.identityHashCode(db)} restoredSort=$currentSort")
         // Start observing before onStart's sync even launches — see this class's KDoc and
         // onStart's. Rows already in the DB (a prior process's index, or a sync this same process
         // already completed before a rotation) paint immediately instead of waiting on a fresh
@@ -174,7 +196,16 @@ open class LibraryActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (!isAllFilesAccessGranted()) return
+        if (!isAllFilesAccessGranted()) {
+            // The user came back from Settings without granting (or hasn't left yet). A silent
+            // blank grid here is indistinguishable from a broken app — say what's missing, and
+            // persistently (not a Toast): the user may sit on this screen for a while before
+            // acting.
+            emptyStateView.text = "Grant all-files access in Settings to see your library."
+            emptyStateView.visibility = View.VISIBLE
+            return
+        }
+        emptyStateView.visibility = View.GONE
         if (observeJob == null) {
             // Permission was granted after onCreate returned early above (the user just came back
             // from the system "All files access" settings screen, same Activity instance) — start
@@ -182,6 +213,13 @@ open class LibraryActivity : AppCompatActivity() {
             observeSorted(currentSort)
         }
         runSync()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-arm openBook: whatever launch set this flag has either landed (we're back from the
+        // reader) or never happened; either way the next tap is a fresh intent, not a double-tap.
+        launching = false
     }
 
     /**
@@ -313,11 +351,30 @@ open class LibraryActivity : AppCompatActivity() {
         }
     }
 
-    private fun openBook(book: BookEntity) {
+    /**
+     * The adapter's tap callback. `protected`, not `private`:
+     * [LibraryActivityInteractionTest] drives it directly to exercise the debounce and the
+     * unreadable-retry path without simulating RecyclerView touch dispatch.
+     */
+    protected fun openBook(book: BookEntity) {
         if (book.unreadable) {
             Toast.makeText(this, "Unreadable: ${book.unreadableReason ?: "unknown reason"}", Toast.LENGTH_LONG).show()
+            // A transiently-unreadable book (half-synced file, permission hiccup) would otherwise
+            // be unreadable forever: the indexer never re-cracks a row whose (size, mtime) is
+            // unchanged. Tapping it is the user asking "try again" — invalidate the stored stat
+            // so the sync triggered next re-cracks exactly this file. User-triggered and bounded:
+            // one tap buys one retry, no timers, no polling (the idle promise holds).
+            lifecycleScope.launch {
+                db.bookDao().clearStat(book.path)
+                runSync()
+            }
             return
         }
+        // Debounce, not a lock: see [launching]. A second tap in the same interactive window is
+        // always the double-tap artifact, never a genuine second intent — the first tap's
+        // ReaderActivity hasn't covered the screen yet.
+        if (launching) return
+        launching = true
         startActivity(
             Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_BOOK_PATH, book.path)
         )
