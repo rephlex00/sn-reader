@@ -49,7 +49,10 @@ fun statusOf(book: BookEntity): BookStatus = when {
  *
  * Otherwise the listing is scoped to [currentDir], clamped back to [root] whenever it is not under
  * [root] (a stale `lastFolderPath` after a root change, or a since-deleted folder — non-ancestry is
- * "outside"). It contains, in order:
+ * "outside"). A [currentDir] that happens to equal a book's *file* path yields an empty listing, not
+ * a clamp: with no filesystem access this function cannot tell a file from a directory of the same
+ * name, and in production `lastFolderPath` only ever holds directories the user tapped into. It
+ * contains, in order:
  *  1. one [LibraryRow.Folder] per immediate child directory of the scope that has ≥ 1 in-root book
  *     anywhere beneath it, sorted by [NATURAL_NAME_ORDER] (so `page2` precedes `page10`), each with
  *     a recursive [LibraryRow.Folder.bookCount]; then
