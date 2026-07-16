@@ -28,9 +28,18 @@ import androidx.room.PrimaryKey
  * set once, on first discovery, and carried forward by [LibraryIndexer] from then on.
  *
  * `lastOpenedAtMs` is null until the reader opens this book at least once; [BookDao.updatePosition]
- * is the only writer. It follows the same "same path, same entry" carry-forward as `addedAtMs`
- * across a re-index, for the same reason: it isn't a coordinate into file content (unlike
- * `spineIndex`/`charOffset`), just a historical fact about this library entry.
+ * is its intended writer (Plan 2 Task 6 — no production caller yet). It survives a re-index of the
+ * same path for the same reason as `addedAtMs`: it isn't a coordinate into file content (unlike
+ * `spineIndex`/`charOffset`), just a historical fact about this library entry. Mechanically that
+ * happens two ways in [LibraryIndexer]: the full-row upsert for new/content-changed rows carries
+ * it forward explicitly, and the partial [BookDao.updateMetadata] for content-unchanged rows
+ * simply never touches it.
+ *
+ * No SQLite indices on the sort columns (`title`, `author`, `addedAtMs`, `lastOpenedAtMs`) —
+ * considered and deliberately omitted: the library is hundreds of rows at most, read via
+ * whole-table queries ([BookDao.observeAllSorted]) where a sort of that size is microseconds,
+ * while every index taxes each upsert the sync performs. Revisit only if the library model ever
+ * changes scale.
  */
 @Entity(tableName = "books")
 data class BookEntity(

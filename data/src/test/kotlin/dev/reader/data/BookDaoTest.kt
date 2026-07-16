@@ -182,6 +182,88 @@ class BookDaoTest {
     }
 
     @Test
+    fun `clearStat sets modifiedAtMs to the -1 sentinel and touches nothing else`(): Unit = runBlocking {
+        dao.upsertAll(
+            listOf(
+                book(
+                    path = "/broken.epub",
+                    modifiedAtMs = 1_700_000_000_000L,
+                    sizeBytes = 555L,
+                    spineIndex = 2,
+                    charOffset = 99,
+                    unreadable = true,
+                    unreadableReason = "half-synced",
+                ),
+            ),
+        )
+
+        dao.clearStat("/broken.epub")
+
+        val found = dao.getByPath("/broken.epub")!!
+        // -1 can never equal a real mtime (File.lastModified() is 0 on error, positive
+        // otherwise), so the indexer's stat diff is guaranteed to re-crack this row once.
+        assertThat(found.modifiedAtMs).isEqualTo(-1L)
+        assertThat(found.sizeBytes).isEqualTo(555L)
+        assertThat(found.spineIndex).isEqualTo(2)
+        assertThat(found.charOffset).isEqualTo(99)
+        assertThat(found.unreadable).isTrue()
+        assertThat(found.unreadableReason).isEqualTo("half-synced")
+    }
+
+    @Test
+    fun `clearStat on an unknown path is a no-op, not a crash`(): Unit = runBlocking {
+        dao.clearStat("/nowhere.epub")
+
+        assertThat(dao.observeAll().first()).isEmpty()
+    }
+
+    @Test
+    fun `updateMetadata refreshes metadata and stat columns but never position or timestamps`(): Unit = runBlocking {
+        dao.upsertAll(
+            listOf(
+                book(
+                    path = "/a.epub",
+                    title = "Old Title",
+                    author = "Old Author",
+                    coverPath = "/covers/old.png",
+                    sizeBytes = 100L,
+                    modifiedAtMs = 200L,
+                    spineIndex = 3,
+                    charOffset = 4521,
+                    unreadable = true,
+                    unreadableReason = "was broken",
+                    addedAtMs = 1_650_000_000_000L,
+                    lastOpenedAtMs = 9_000L,
+                ),
+            ),
+        )
+
+        dao.updateMetadata(
+            path = "/a.epub",
+            title = "New Title",
+            author = "New Author",
+            coverPath = "/covers/new.png",
+            sizeBytes = 100L,
+            modifiedAtMs = 300L,
+            unreadable = false,
+            unreadableReason = null,
+        )
+
+        val found = dao.getByPath("/a.epub")!!
+        assertThat(found.title).isEqualTo("New Title")
+        assertThat(found.author).isEqualTo("New Author")
+        assertThat(found.coverPath).isEqualTo("/covers/new.png")
+        assertThat(found.modifiedAtMs).isEqualTo(300L)
+        assertThat(found.unreadable).isFalse()
+        assertThat(found.unreadableReason).isNull()
+        // The deliberate omissions — the whole point of this method (see its KDoc):
+        assertThat(found.spineIndex).isEqualTo(3)
+        assertThat(found.charOffset).isEqualTo(4521)
+        assertThat(found.lastOpenedAtMs).isEqualTo(9_000L)
+        assertThat(found.addedAtMs).isEqualTo(1_650_000_000_000L)
+    }
+
+    @Test
     fun `a book marked unreadable can still be read back through observeAll`(): Unit = runBlocking {
         dao.upsertAll(listOf(book(path = "/broken.epub")))
         dao.markUnreadable(path = "/broken.epub", reason = "DRM protected")

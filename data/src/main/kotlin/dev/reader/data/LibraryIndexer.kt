@@ -94,8 +94,14 @@ class LibraryIndexer(
         }
 
         val toUpsert = mutableListOf<BookEntity>()
+        // Rows whose content is unchanged get a partial metadata UPDATE, never a whole-row
+        // upsert: the position columns must not round-trip through the `known` snapshot read at
+        // the top of this sync, or a BookDao.updatePosition that commits mid-scan (the reader
+        // returning to the library while a slow sync is still walking) would be silently
+        // reverted by the flush below. See BookDao.updateMetadata's KDoc.
+        val toUpdate = mutableListOf<MetadataUpdate>()
         // Old cover files that a replaced/re-extracted row no longer references — deleted only
-        // after upsertAll succeeds below, the "replaced book" half of the same leak: a changed
+        // after the DB writes succeed below, the "replaced book" half of the same leak: a changed
         // book that gets a new cover (or loses one entirely, on a fresh crack failure) must not
         // leave its old thumbnail orphaned on disk.
         val staleCoverPaths = mutableListOf<String>()
@@ -104,10 +110,11 @@ class LibraryIndexer(
         var newlyUnreadable = 0
 
         for ((path, stat) in onDisk) {
-            // The only suspension point below is the conditional dao.getByPath, which is skipped
-            // for every newly-discovered file — without this, a large first scan over an
-            // all-new library has no suspend call in the loop at all and can't be cancelled
-            // mid-walk.
+            // The loop's only guaranteed cancellation check: a first scan over an all-new
+            // library has no suspend call in the loop at all (dao.getByPath below only runs for
+            // a same-content re-crack that failed) and couldn't be cancelled mid-walk without
+            // this. Cancellation lands before any DB write, so a cancelled sync writes nothing
+            // and the next full run heals completely.
             ensureActive()
 
             val existing = known[path]
@@ -120,20 +127,13 @@ class LibraryIndexer(
             }
 
             // A touch/re-sync that bumps mtime but leaves sizeBytes identical is the same content
-            // (cloud sync, `touch`, a re-copy) — carry the reader's position, and title/author on a
-            // re-break, forward. A changed sizeBytes means the bytes are genuinely different: a
-            // stored spineIndex/charOffset would be a coordinate into a book the reader never
-            // opened, and an old title would misdescribe the new content, so neither is preserved.
+            // (cloud sync, `touch`, a re-copy, or a BookDao.clearStat retry) — the row keeps its
+            // identity and its reading position; only the metadata columns are refreshed, via the
+            // partial-update path below. A changed sizeBytes means the bytes are genuinely
+            // different: a stored spineIndex/charOffset would be a coordinate into a book the
+            // reader never opened, and an old title would misdescribe the new content, so the
+            // whole row is rewritten.
             val sameContent = existing != null && existing.sizeBytes == stat.sizeBytes
-            val priorPosition = if (sameContent) dao.getByPath(path) else null
-
-            // addedAtMs (and lastOpenedAtMs) are carried forward from the existing row on ANY
-            // re-index of the same path, regardless of the sameContent gate above: even a genuine
-            // content replacement (changed sizeBytes) is not a new acquisition, just a new version
-            // of the same library entry. This is unlike spineIndex/charOffset, which really are
-            // meaningless coordinates into content that no longer exists once the bytes change.
-            val addedAtMs = existing?.addedAtMs ?: clock()
-            val lastOpenedAtMs = existing?.lastOpenedAtMs
 
             val file = File(path)
             val result = try {
@@ -153,63 +153,117 @@ class LibraryIndexer(
                 BookMetadataResult.Failure(e.message ?: e.javaClass.simpleName)
             }
 
-            val entity = when (result) {
-                // A fresh Success always trusts the just-produced coverPath, exactly like it
-                // already trusts result.title/result.author over anything priorPosition holds —
-                // if the caller's extractor re-ran, it re-extracted (or regenerated a placeholder
-                // for) the cover too, at a path of its own choosing.
-                is BookMetadataResult.Success -> BookEntity(
-                    path = path,
-                    sizeBytes = stat.sizeBytes,
-                    modifiedAtMs = stat.modifiedAtMs,
-                    title = result.title,
-                    author = result.author,
-                    coverPath = result.coverPath,
-                    spineIndex = priorPosition?.spineIndex ?: 0,
-                    charOffset = priorPosition?.charOffset ?: 0,
-                    unreadable = false,
-                    unreadableReason = null,
-                    addedAtMs = addedAtMs,
-                    lastOpenedAtMs = lastOpenedAtMs,
-                )
+            val newCoverPath: String?
+            if (sameContent) {
+                val update = when (result) {
+                    // A fresh Success always trusts the just-produced coverPath, exactly like it
+                    // trusts result.title/result.author over anything the row holds — if the
+                    // caller's extractor re-ran, it re-extracted (or regenerated a placeholder
+                    // for) the cover too, at a path of its own choosing.
+                    is BookMetadataResult.Success -> MetadataUpdate(
+                        path = path,
+                        title = result.title,
+                        author = result.author,
+                        coverPath = result.coverPath,
+                        sizeBytes = stat.sizeBytes,
+                        modifiedAtMs = stat.modifiedAtMs,
+                        unreadable = false,
+                        unreadableReason = null,
+                    )
 
-                // A Failure has nothing new to offer, so — same as title/author/position — the
-                // cover is only preserved when priorPosition is available (sameContent): a
-                // genuinely replaced book that fails to crack has no valid old cover to point at,
-                // and null here is exactly what marks it stale for deletion below.
-                is BookMetadataResult.Failure -> BookEntity(
-                    path = path,
-                    sizeBytes = stat.sizeBytes,
-                    modifiedAtMs = stat.modifiedAtMs,
-                    title = priorPosition?.title ?: file.name,
-                    author = priorPosition?.author,
-                    coverPath = priorPosition?.coverPath,
-                    spineIndex = priorPosition?.spineIndex ?: 0,
-                    charOffset = priorPosition?.charOffset ?: 0,
-                    unreadable = true,
-                    unreadableReason = result.reason,
-                    addedAtMs = addedAtMs,
-                    lastOpenedAtMs = lastOpenedAtMs,
-                )
+                    // Same content, failed crack (a transient I/O error, most likely): keep what
+                    // the last successful crack produced. This getByPath reads only
+                    // title/author/coverPath — never the position columns — so the snapshot it
+                    // takes cannot revert a concurrent updatePosition.
+                    is BookMetadataResult.Failure -> {
+                        val prior = dao.getByPath(path)
+                        MetadataUpdate(
+                            path = path,
+                            title = prior?.title ?: file.name,
+                            author = prior?.author,
+                            coverPath = prior?.coverPath,
+                            sizeBytes = stat.sizeBytes,
+                            modifiedAtMs = stat.modifiedAtMs,
+                            unreadable = true,
+                            unreadableReason = result.reason,
+                        )
+                    }
+                }
+                toUpdate += update
+                newCoverPath = update.coverPath
+                updated++
+                if (update.unreadable) newlyUnreadable++
+            } else {
+                // New row, or genuinely different bytes at a known path: a full row, with the
+                // position deliberately reset. addedAtMs (and lastOpenedAtMs) are still carried
+                // forward on a content replacement — a new version of a book is not a new
+                // acquisition, and neither is a coordinate into file content the way
+                // spineIndex/charOffset are.
+                val entity = when (result) {
+                    is BookMetadataResult.Success -> BookEntity(
+                        path = path,
+                        sizeBytes = stat.sizeBytes,
+                        modifiedAtMs = stat.modifiedAtMs,
+                        title = result.title,
+                        author = result.author,
+                        coverPath = result.coverPath,
+                        spineIndex = 0,
+                        charOffset = 0,
+                        unreadable = false,
+                        unreadableReason = null,
+                        addedAtMs = existing?.addedAtMs ?: clock(),
+                        lastOpenedAtMs = existing?.lastOpenedAtMs,
+                    )
+
+                    // A replaced book that fails to crack has nothing valid to carry: the old
+                    // title would misdescribe the new bytes and the old cover depicts content
+                    // that is gone — null coverPath is exactly what marks it stale below.
+                    is BookMetadataResult.Failure -> BookEntity(
+                        path = path,
+                        sizeBytes = stat.sizeBytes,
+                        modifiedAtMs = stat.modifiedAtMs,
+                        title = file.name,
+                        author = null,
+                        coverPath = null,
+                        spineIndex = 0,
+                        charOffset = 0,
+                        unreadable = true,
+                        unreadableReason = result.reason,
+                        addedAtMs = existing?.addedAtMs ?: clock(),
+                        lastOpenedAtMs = existing?.lastOpenedAtMs,
+                    )
+                }
+                toUpsert += entity
+                newCoverPath = entity.coverPath
+                if (existing == null) added++ else updated++
+                if (entity.unreadable) newlyUnreadable++
             }
-            toUpsert += entity
 
             // The old cover this path used to point at is stale the moment the new row points
             // somewhere else (a new file, or nowhere) — queue it for deletion once the DB write
             // that stops referencing it has actually landed.
-            if (existing?.coverPath != null && existing.coverPath != entity.coverPath) {
+            if (existing?.coverPath != null && existing.coverPath != newCoverPath) {
                 staleCoverPaths += existing.coverPath
             }
-
-            if (existing == null) added++ else updated++
-            if (entity.unreadable) newlyUnreadable++
         }
 
         if (toUpsert.isNotEmpty()) {
             dao.upsertAll(toUpsert)
         }
-        // Deleted only after the upsert above has committed: deleting first and then failing the
-        // write would leave a row still pointing at a file that no longer exists.
+        for (update in toUpdate) {
+            dao.updateMetadata(
+                path = update.path,
+                title = update.title,
+                author = update.author,
+                coverPath = update.coverPath,
+                sizeBytes = update.sizeBytes,
+                modifiedAtMs = update.modifiedAtMs,
+                unreadable = update.unreadable,
+                unreadableReason = update.unreadableReason,
+            )
+        }
+        // Deleted only after the writes above have committed: deleting first and then failing
+        // the write would leave a row still pointing at a file that no longer exists.
         staleCoverPaths.forEach(::deleteCoverFile)
 
         IndexResult(
@@ -255,4 +309,16 @@ class LibraryIndexer(
     }
 
     private data class FileStat(val sizeBytes: Long, val modifiedAtMs: Long)
+
+    /** One pending [BookDao.updateMetadata] call — the content-unchanged write path's payload. */
+    private data class MetadataUpdate(
+        val path: String,
+        val title: String,
+        val author: String?,
+        val coverPath: String?,
+        val sizeBytes: Long,
+        val modifiedAtMs: Long,
+        val unreadable: Boolean,
+        val unreadableReason: String?,
+    )
 }

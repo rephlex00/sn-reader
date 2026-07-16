@@ -42,14 +42,53 @@ interface BookDao {
     suspend fun getAllStats(): List<BookStat>
 
     /**
-     * Written when the reader opens a book (setting [lastOpenedAtMs] to now) and on every
-     * debounced page turn thereafter — never touches any other column.
+     * Intended writer: the reader, on open (setting [BookEntity.lastOpenedAtMs] to now) and on
+     * every debounced page turn thereafter (Plan 2 Task 6 — no production caller yet). Never
+     * touches any other column.
      */
     @Query(
         "UPDATE books SET spineIndex = :spineIndex, charOffset = :charOffset, " +
             "lastOpenedAtMs = :lastOpenedAtMs WHERE path = :path",
     )
     suspend fun updatePosition(path: String, spineIndex: Int, charOffset: Int, lastOpenedAtMs: Long)
+
+    /**
+     * [LibraryIndexer]'s write path for a re-indexed row whose CONTENT is unchanged (same
+     * `sizeBytes`: an mtime-only bump, or a [clearStat] retry): refreshes everything a re-crack
+     * of the same bytes can legitimately change, and deliberately never touches
+     * `spineIndex`/`charOffset`/`lastOpenedAtMs`/`addedAtMs`. That omission is the point — the
+     * indexer reads its stats snapshot potentially seconds before it flushes, and round-tripping
+     * the position columns through that snapshot (as a whole-row upsert would) reverts any
+     * [updatePosition] that committed in between: the every-return-from-reader race once Task 6
+     * wires position writes. Genuinely new or content-changed rows (where a position reset is
+     * intended) still go through [upsertAll].
+     */
+    @Query(
+        "UPDATE books SET title = :title, author = :author, coverPath = :coverPath, " +
+            "sizeBytes = :sizeBytes, modifiedAtMs = :modifiedAtMs, unreadable = :unreadable, " +
+            "unreadableReason = :unreadableReason WHERE path = :path",
+    )
+    suspend fun updateMetadata(
+        path: String,
+        title: String,
+        author: String?,
+        coverPath: String?,
+        sizeBytes: Long,
+        modifiedAtMs: Long,
+        unreadable: Boolean,
+        unreadableReason: String?,
+    )
+
+    /**
+     * Invalidates a row's stored stat so the next [LibraryIndexer] sync re-cracks the file even
+     * though its on-disk `(size, mtime)` is unchanged. -1 can never equal a real mtime
+     * ([java.io.File.lastModified] returns 0 on error and a positive epoch millis otherwise), so
+     * the stat diff is guaranteed to see this row as changed exactly once — the sync then stores
+     * the real mtime back. User-triggered only (tapping an unreadable book buys one immediate
+     * retry); nothing polls or schedules behind this.
+     */
+    @Query("UPDATE books SET modifiedAtMs = -1 WHERE path = :path")
+    suspend fun clearStat(path: String)
 
     /** Marks a book broken with a reason so the indexer never re-cracks it while unchanged. */
     @Query("UPDATE books SET unreadable = 1, unreadableReason = :reason WHERE path = :path")

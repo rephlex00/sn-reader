@@ -2,6 +2,8 @@ package dev.reader.data
 
 import androidx.room.Room
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -12,6 +14,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 class LibraryIndexerTest {
@@ -412,6 +417,109 @@ class LibraryIndexerTest {
 
         assertThat(cover.exists()).isTrue()
         assertThat(dao.getByPath(a.path)!!.coverPath).isEqualTo(cover.path)
+    }
+
+    @Test
+    fun `a position written mid-sync, after the stat but before the flush, survives the flush`(): Unit = runBlocking {
+        // The Task 6 reader will call updatePosition on every return from a book. A sync that
+        // round-trips the position columns through a whole-row snapshot read seconds earlier
+        // would silently revert that write — this pins the fix: content-unchanged rows get a
+        // partial metadata UPDATE that never touches spineIndex/charOffset/lastOpenedAtMs.
+        val a = writeEpub("a.epub")
+        LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+        dao.updatePosition(a.path, spineIndex = 1, charOffset = 10, lastOpenedAtMs = 500L)
+
+        // Touch: same bytes, bumped mtime — the content-unchanged re-index path.
+        a.writeText("stub")
+        a.setLastModified(a.lastModified() + 60_000)
+
+        // Deterministic interleaving without threads: by the time extract() runs for a path the
+        // indexer has already read whatever prior row it is going to read, and its flush is
+        // still ahead — so a position write issued from inside extract() lands exactly in the
+        // window under test.
+        val racingExtractor = MetadataExtractor { file ->
+            runBlocking {
+                dao.updatePosition(file.path, spineIndex = 7, charOffset = 99, lastOpenedAtMs = 2_000L)
+            }
+            BookMetadataResult.Success(title = "A")
+        }
+        LibraryIndexer(dao, listOf(root), racingExtractor).sync()
+
+        val row = dao.getByPath(a.path)!!
+        assertThat(row.spineIndex).isEqualTo(7)
+        assertThat(row.charOffset).isEqualTo(99)
+        assertThat(row.lastOpenedAtMs).isEqualTo(2_000L)
+        // The metadata refresh itself still landed — only the position columns are off-limits.
+        assertThat(row.title).isEqualTo("A")
+    }
+
+    @Test
+    fun `a cleared stat makes the next sync re-crack an otherwise unchanged file`(): Unit = runBlocking {
+        // The transiently-unreadable escape hatch: tapping an unreadable book clears its stored
+        // stat (BookDao.clearStat), so the next sync re-cracks that one file even though its
+        // on-disk (size, mtime) never changed.
+        val broken = writeEpub("broken.epub")
+        val extractor = FakeExtractor()
+        extractor.onPath(broken.path, BookMetadataResult.Failure("half-synced"))
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+        indexer.sync()
+        assertThat(dao.getByPath(broken.path)!!.unreadable).isTrue()
+
+        dao.clearStat(broken.path)
+        extractor.onPath(broken.path, BookMetadataResult.Success(title = "Recovered"))
+        extractor.calls.clear()
+        indexer.sync()
+
+        val row = dao.getByPath(broken.path)!!
+        assertThat(extractor.calls).containsExactly(broken.path)
+        assertThat(row.unreadable).isFalse()
+        assertThat(row.unreadableReason).isNull()
+        assertThat(row.title).isEqualTo("Recovered")
+        // The real mtime is stored back, so the retry is exactly one retry: a further sync is
+        // back to being a pure stat diff that opens nothing.
+        assertThat(row.modifiedAtMs).isEqualTo(broken.lastModified())
+        extractor.calls.clear()
+        indexer.sync()
+        assertThat(extractor.calls).isEmpty()
+    }
+
+    @Test
+    fun `a sync cancelled mid-loop writes nothing and a full re-run heals`(): Unit = runBlocking {
+        // The ensureActive() claim in the loop: cancellation aborts before the flush, so a
+        // cancelled sync leaves either the old state or the new state — never a torn one — and
+        // the next full run converges to the complete index.
+        writeEpub("a.epub")
+        writeEpub("b.epub")
+        writeEpub("c.epub")
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger(0)
+        val blockingExtractor = MetadataExtractor { file ->
+            // Block inside the second extract — a non-suspending section, like a real slow
+            // crack — so the test can cancel mid-loop deterministically.
+            if (calls.incrementAndGet() == 2) {
+                entered.countDown()
+                release.await()
+            }
+            BookMetadataResult.Success(title = file.nameWithoutExtension)
+        }
+        // Dispatchers.IO, not runBlocking's own event loop: entered.await() below BLOCKS this
+        // thread, so a job launched on the default (inherited) dispatcher would never even start.
+        val job = launch(Dispatchers.IO) {
+            LibraryIndexer(dao, listOf(root), blockingExtractor).sync()
+        }
+        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue()
+        job.cancel()
+        release.countDown()
+        job.join()
+
+        // The loop's ensureActive() fired on the next iteration, before the flush: nothing was
+        // half-written.
+        assertThat(dao.getAllStats()).isEmpty()
+
+        val healed = LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+        assertThat(healed.added).isEqualTo(3)
+        assertThat(dao.getAllStats()).hasSize(3)
     }
 
     @Test
