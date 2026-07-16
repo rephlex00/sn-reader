@@ -9,30 +9,79 @@ class BlocksTest {
 
     @Test
     fun `rejects negative start`() {
-        val e = runCatching { StyleSpan(-1, 3, InlineStyle.BOLD) }.exceptionOrNull()
+        val e = runCatching { StyleSpan(-1, 3, InlineStyle(bold = true)) }.exceptionOrNull()
         assertThat(e).isInstanceOf(IllegalArgumentException::class.java)
         assertThat(e).hasMessageThat().contains("-1")
     }
 
     @Test
     fun `rejects end equal to start`() {
-        val e = runCatching { StyleSpan(2, 2, InlineStyle.ITALIC) }.exceptionOrNull()
+        val e = runCatching { StyleSpan(2, 2, InlineStyle(italic = true)) }.exceptionOrNull()
         assertThat(e).isInstanceOf(IllegalArgumentException::class.java)
         assertThat(e).hasMessageThat().contains("2")
     }
 
     @Test
     fun `rejects end before start`() {
-        val e = runCatching { StyleSpan(5, 2, InlineStyle.MONOSPACE) }.exceptionOrNull()
+        val e = runCatching { StyleSpan(5, 2, InlineStyle(monospace = true)) }.exceptionOrNull()
         assertThat(e).isInstanceOf(IllegalArgumentException::class.java)
         assertThat(e).hasMessageThat().contains("5")
     }
 
     @Test
     fun `accepts a valid span`() {
-        val span = StyleSpan(0, 3, InlineStyle.BOLD)
+        val span = StyleSpan(0, 3, InlineStyle(bold = true))
         assertThat(span.start).isEqualTo(0)
         assertThat(span.end).isEqualTo(3)
+    }
+
+    // -- InlineStyle / BlockStyle: null-means-unspecified defaults --
+
+    @Test
+    fun `InlineStyle defaults every field to null`() {
+        val s = InlineStyle()
+        assertThat(s.bold).isNull()
+        assertThat(s.italic).isNull()
+        assertThat(s.monospace).isNull()
+        assertThat(s.sizeRatio).isNull()
+        assertThat(s.underline).isNull()
+        assertThat(s.strikethrough).isNull()
+        assertThat(s.letterSpacingEm).isNull()
+        assertThat(s.grayLevel).isNull()
+    }
+
+    @Test
+    fun `InlineStyle setting one field leaves the rest null`() {
+        val s = InlineStyle(italic = true)
+        assertThat(s.italic).isTrue()
+        assertThat(s.bold).isNull()
+        assertThat(s.monospace).isNull()
+    }
+
+    @Test
+    fun `BlockStyle defaults every field to null`() {
+        val s = BlockStyle()
+        assertThat(s.align).isNull()
+        assertThat(s.marginTopEm).isNull()
+        assertThat(s.marginBottomEm).isNull()
+        assertThat(s.textIndentEm).isNull()
+        assertThat(s.lineHeightMultiplier).isNull()
+    }
+
+    @Test
+    fun `TextAlign has the four publisher alignments`() {
+        assertThat(TextAlign.entries)
+            .containsExactly(TextAlign.LEFT, TextAlign.RIGHT, TextAlign.CENTER, TextAlign.JUSTIFY)
+    }
+
+    // -- Block text-style default --
+
+    @Test
+    fun `text blocks default to an all-null BlockStyle`() {
+        assertThat(Block.Paragraph(StyledText("a")).style).isEqualTo(BlockStyle())
+        assertThat(Block.Heading(1, StyledText("a")).style).isEqualTo(BlockStyle())
+        assertThat(Block.Quote(StyledText("a")).style).isEqualTo(BlockStyle())
+        assertThat(Block.ListItem(StyledText("a")).style).isEqualTo(BlockStyle())
     }
 
     // -- Block.Heading --
@@ -64,7 +113,7 @@ class BlocksTest {
     @Test
     fun `rejects a span past the end of the text`() {
         val e = runCatching {
-            StyledText("hi", listOf(StyleSpan(0, 900, InlineStyle.BOLD)))
+            StyledText("hi", listOf(StyleSpan(0, 900, InlineStyle(bold = true))))
         }.exceptionOrNull()
         assertThat(e).isInstanceOf(IllegalArgumentException::class.java)
         assertThat(e).hasMessageThat().contains("900")
@@ -73,7 +122,7 @@ class BlocksTest {
 
     @Test
     fun `accepts a span exactly reaching text length`() {
-        val text = StyledText("hi", listOf(StyleSpan(0, 2, InlineStyle.BOLD)))
+        val text = StyledText("hi", listOf(StyleSpan(0, 2, InlineStyle(bold = true))))
         assertThat(text.spans.single().end).isEqualTo(2)
     }
 
