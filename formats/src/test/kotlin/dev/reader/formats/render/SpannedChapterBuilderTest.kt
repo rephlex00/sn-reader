@@ -6,6 +6,7 @@ import android.text.Spanned
 import android.text.style.AlignmentSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
+import android.text.style.LineHeightSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
@@ -197,7 +198,6 @@ class SpannedChapterBuilderTest {
                 is LeadingMarginSpan.Standard -> "margin=${s.getLeadingMargin(true)}"
                 is AlignmentSpan.Standard -> "align=${s.alignment}"
                 is LetterSpacingSpan -> "letterSpacing"
-                is MultiplierLineHeightSpan -> "lineHeight"
                 is UnderlineSpan -> "underline"
                 is StrikethroughSpan -> "strike"
                 else -> s.javaClass.simpleName
@@ -387,15 +387,16 @@ class SpannedChapterBuilderTest {
     }
 
     @Test
-    fun `line height multiplier maps to a line-height span when on`() {
-        val text = paraBlock(BlockStyle(lineHeightMultiplier = 1.8f))
-        assertThat(text.getSpans(0, text.length, MultiplierLineHeightSpan::class.java)).hasLength(1)
-    }
-
-    @Test
-    fun `null line height leaves the block to the reader line spacing`() {
-        val text = paraBlock(BlockStyle(lineHeightMultiplier = null))
-        assertThat(text.getSpans(0, text.length, MultiplierLineHeightSpan::class.java)).isEmpty()
+    fun `publisher line-height is never applied - the reader line spacing always governs`() {
+        // Owner decision: unlike font-size, a publisher's per-block line-height is ignored
+        // entirely; the reader's whole-chapter line spacing always wins. No span, on or off.
+        val on = paraBlock(BlockStyle(lineHeightMultiplier = 1.8f))
+        val off = builder.build(
+            listOf(Block.Paragraph(StyledText("Body"), BlockStyle(lineHeightMultiplier = 1.8f))),
+            config.copy(publisherStyling = false),
+        ).text
+        assertThat(on.getSpans(0, on.length, LineHeightSpan::class.java)).isEmpty()
+        assertThat(off.getSpans(0, off.length, LineHeightSpan::class.java)).isEmpty()
     }
 
     // --- Heading double-enlarge: publisher size wins over the semantic scale ---

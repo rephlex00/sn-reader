@@ -196,9 +196,10 @@ class SpannedChapterBuilder {
      * StaticLayout in AndroidTextMeasurer. Consequence: whether a paragraph is justified
      * remains a whole-chapter setting; LEFT/RIGHT/CENTER overrides are honored per-paragraph.
      *
-     * Line-height: a non-null multiplier sets this block's line height relative to the
-     * font's natural height; it composes with (does not replace) the reader's whole-chapter
-     * line-spacing multiplier, so a null value simply falls back to that reader setting.
+     * Line-height ([BlockStyle.lineHeightMultiplier]) is deliberately NOT applied — by owner
+     * decision the reader's own whole-chapter line spacing always governs, so a publisher's
+     * per-block line-height is never honored (unlike font-size, which scales relative to the
+     * reader). It is still resolved into the model; the renderer simply ignores it.
      *
      * Margins ([BlockStyle.marginTopEm]/[marginBottomEm]) are deliberately NOT applied here:
      * inter-block spacing would mean a style-driven separator, and the page-break offset
@@ -226,7 +227,7 @@ class SpannedChapterBuilder {
         style.textIndentEm?.let { indent ->
             set(LeadingMarginSpan.Standard((indent * config.textSizePx).roundToInt(), 0))
         }
-        style.lineHeightMultiplier?.let { set(MultiplierLineHeightSpan(it)) }
+        // lineHeightMultiplier: intentionally ignored — the reader's line spacing always wins.
         // marginTopEm / marginBottomEm: deferred — see KDoc.
     }
 }
