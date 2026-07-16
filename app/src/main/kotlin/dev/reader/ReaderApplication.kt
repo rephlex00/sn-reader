@@ -69,18 +69,27 @@ class ReaderApplication : Application() {
 
     /**
      * The scope that position writes ([dev.reader.data.BookDao.updatePosition]) are launched into —
-     * on both open and the `onStop` flush. It exists to make a terminal position write **survive the
-     * Activity's own destruction**: `onStop` is immediately followed by `onDestroy`, which cancels
-     * the Activity's `lifecycleScope`, so a quick `onStop -> onDestroy` launched onto `lifecycleScope`
-     * could cancel the UPDATE before it commits — the exact "the work got cancelled before it ran"
-     * bug this project has hit before. Being application-scoped, this scope is not cancelled when any
-     * Activity dies; it lives and dies with the process.
+     * on open, on **every page turn**, and on the `onStop` flush. It exists to make a position write
+     * **survive the Activity's own destruction**: `onStop` is immediately followed by `onDestroy`,
+     * which cancels the Activity's `lifecycleScope`, so a quick `onStop -> onDestroy` launched onto
+     * `lifecycleScope` could cancel the UPDATE before it commits — the exact "the work got cancelled
+     * before it ran" bug this project has hit before. Being application-scoped, this scope is not
+     * cancelled when any Activity dies; it lives and dies with the process.
+     *
+     * **Single-threaded on purpose.** `limitedParallelism(1)` serializes every position write through
+     * one thread, so writes commit in the order they were launched. Persisting on each page turn means
+     * two quick turns launch two writes; on the multi-threaded [Dispatchers.IO] pool they could run
+     * concurrently and race, letting the *earlier* page's offset land after the later one and leave a
+     * stale position on disk. FIFO serialization removes that reordering window; each UPDATE is a
+     * sub-millisecond keyed write, so a single writer thread is never a bottleneck at human page-turn
+     * speed.
      *
      * It does **not** violate the idle promise. It is entirely dormant unless a coroutine is launched
      * into it — there is no timer, no `postDelayed`, no polling, no periodic work here. It never wakes
-     * the process on its own; it only lets a write that the user's own action (leaving the screen)
-     * already triggered run to completion. [SupervisorJob] so one failed write never cancels the
-     * scope or a sibling write; [Dispatchers.IO] because these are blocking SQLite UPDATEs.
+     * the process on its own; it only lets a write that the user's own action (turning a page or
+     * leaving the screen) already triggered run to completion. [SupervisorJob] so one failed write
+     * never cancels the scope or a sibling write; [Dispatchers.IO] because these are blocking SQLite
+     * UPDATEs.
      */
-    val positionWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val positionWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 }

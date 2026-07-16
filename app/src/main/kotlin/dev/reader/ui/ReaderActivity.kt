@@ -120,23 +120,33 @@ open class ReaderActivity : AppCompatActivity() {
     protected open fun isAllFilesAccessGranted(): Boolean = hasAllFilesAccess()
 
     /**
-     * Flushes the pending page-turn position on the way out — the whole of the debounce's write
-     * side. Page turns only touch memory ([ReadingSession.recordPageTurn]); the single DB write
-     * happens here, when the user leaves the reader. This is a deliberate design (see the class
-     * design notes and [ReaderApplication.positionWriteScope]):
-     *  - No timer, postDelayed, or periodic write coalesces turns — that would wake the process at
-     *    rest and break the idle promise. In-memory coalescing plus a flush-on-exit does not.
-     *  - The tradeoff: a hard power-loss that skips onStop entirely (a battery pull) loses only the
-     *    progress made since the book was opened, because the open-time write already stamped the
-     *    starting position. That window is the price of zero background wakeups; nothing here tries
-     *    to narrow it with a periodic write.
-     *  - The write is launched into the application scope, not lifecycleScope: onStop is immediately
-     *    followed by onDestroy cancelling lifecycleScope, which could cancel this UPDATE before it
-     *    commits. See [persistPosition].
+     * A final [flushPosition] on the way out. Every page turn already persists its own position (see
+     * [flushPosition] and [showPage]), so by the time onStop runs there is usually nothing pending and
+     * this drains to null. It stays as a backstop for the one position change that a turn does not
+     * cover: the open-time write. The write is launched into the application scope, not lifecycleScope,
+     * because onStop is immediately followed by onDestroy cancelling lifecycleScope, which could cancel
+     * the UPDATE before it commits — see [persistPosition] and [ReaderApplication.positionWriteScope].
      */
     override fun onStop() {
-        session.drainPending()?.let { persistPosition(it) }
+        flushPosition()
         super.onStop()
+    }
+
+    /**
+     * Persists the latest recorded position, if any, to this book's row. Called after every page turn
+     * and once more from [onStop]. [ReadingSession.drainPending] returns the position last recorded by
+     * [showPage] and clears it, so a flush with nothing new to write (a second flush after the same
+     * turn) writes nothing rather than re-committing a stale row.
+     *
+     * Writing on every turn — rather than coalescing until exit — is what keeps the on-disk progress
+     * current: close the app, pull the battery, or have the process killed, and it reopens on the page
+     * last turned to, not the page the book was opened at. It does not cost the idle promise: the write
+     * is triggered by the user's own page turn (never at rest), runs off the main thread so it adds no
+     * latency to the e-ink refresh, and is a single sub-millisecond keyed UPDATE — negligible beside
+     * the full-screen EPD redraw the same turn already paid for.
+     */
+    private fun flushPosition() {
+        session.drainPending()?.let { persistPosition(it) }
     }
 
     /**
@@ -277,9 +287,9 @@ open class ReaderActivity : AppCompatActivity() {
                     showPage(start)
                     // Write the resolved start back immediately: stamps lastOpenedAtMs (so the
                     // RECENTLY_OPENED sort works, and it survives a process kill that skips onStop)
-                    // AND heals a stale or clamped stored position on disk. state was set by
-                    // showPage, so its coerced pageIndex is the one actually shown.
-                    persistPosition(Locator(state.spineIndex, firstChapter.pages[state.pageIndex].startOffset))
+                    // AND heals a stale or clamped stored position on disk. showPage recorded the
+                    // resolved start, so flushPosition persists exactly the page that was shown.
+                    flushPosition()
                 }
             } catch (e: CancellationException) {
                 // The activity was destroyed while open() was in flight. lifecycleScope cancelled
@@ -368,8 +378,15 @@ open class ReaderActivity : AppCompatActivity() {
                 TapZone.TOGGLE_OVERLAY -> null
             }
             // null = nowhere to go (start/end of book, or everything beyond is empty): stay put and
-            // draw nothing, so a tap at the end of the book costs no invalidate.
-            if (next != null) showPage(next)
+            // draw nothing, so a tap at the end of the book costs no invalidate — and nothing to
+            // persist, since the position did not change.
+            if (next != null) {
+                showPage(next)
+                // Persist the new position now, not at onStop: reopening lands on the page last
+                // turned to even across a battery pull. showPage recorded it; this writes it, off
+                // the main thread and serialized (see flushPosition / positionWriteScope).
+                flushPosition()
+            }
         } catch (e: EpubException) {
             showMessage("Couldn't turn the page: ${e.message}")
         } catch (e: Exception) {
@@ -397,9 +414,10 @@ open class ReaderActivity : AppCompatActivity() {
         val layout = (chapter.measured as AndroidMeasuredChapter).layout
         pageView.show(layout, chapter.pages[pageIndex], cfg.marginPx)
 
-        // Record — not write — the new position: the page's startOffset is the stable char offset a
-        // later restore maps back to a page. This only overwrites an in-memory field (coalescing);
-        // the actual DB write is deferred to onStop's flush. Zero I/O per page turn.
+        // Record the new position: the page's startOffset is the stable char offset a later restore
+        // maps back to a page. This only sets an in-memory field; the caller (onTap, or the open
+        // path) follows with flushPosition to write it. Keeping the write out of showPage means the
+        // main-thread draw path never touches the DB — the UPDATE happens on the write scope.
         session.recordPageTurn(Locator(state.spineIndex, chapter.pages[pageIndex].startOffset))
     }
 

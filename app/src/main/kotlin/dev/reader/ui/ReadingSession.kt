@@ -13,30 +13,31 @@ import dev.reader.engine.ReadingState
  * Two responsibilities:
  *  - **Restore on open** ([resolveStart]): map a stored [Locator] back to a page, surviving a spine
  *    that shrank under us, a chapter that went empty, and a corrupt (negative) row.
- *  - **Debounce page turns without a timer** ([recordPageTurn] / [drainPending]): coalesce every
- *    turn into a single in-memory field and flush it once, when the reader is left. See
- *    [recordPageTurn]'s comment for why this is the only debounce mechanism that keeps the idle
- *    promise (0% CPU at rest — no timer, no postDelayed, no periodic write).
+ *  - **Hand each page-turn position to the writer** ([recordPageTurn] / [drainPending]): hold the
+ *    latest position in one in-memory field so the Activity can persist it off the main thread. The
+ *    Activity flushes after every turn (and once on exit); this class just decouples "where we are"
+ *    from "write it," and never itself does I/O or schedules anything — the idle promise (0% CPU at
+ *    rest) is kept because writes are triggered by the user's page turns, not by any timer here.
  */
 class ReadingSession {
 
     /**
-     * The latest position the user has turned to but not yet written to disk, or null if there is
-     * nothing pending. A single field, overwritten on every turn — that overwrite *is* the debounce:
-     * a hundred taps cost a hundred cheap memory writes and exactly one DB UPDATE at flush time. No
-     * timer schedules that flush (that would wake the process and break the idle promise); the
-     * Activity drains it in `onStop`, when the user is already leaving.
+     * The latest position the user has turned to but not yet handed to the writer, or null if there
+     * is nothing pending. A single field, overwritten on every turn: if two turns happen before the
+     * writer drains (rare — the Activity drains after each turn), only the newer survives, which is
+     * exactly what should be written. Setting it does no I/O and schedules nothing, so it never wakes
+     * the process; the Activity is what launches the actual DB write, off the main thread.
      */
     private var pending: Locator? = null
 
-    /** Records a page turn, overwriting any earlier pending value (coalescing). Pure memory, no I/O. */
+    /** Records a page turn, overwriting any earlier pending value. Pure memory, no I/O. */
     fun recordPageTurn(locator: Locator) {
         pending = locator
     }
 
     /**
-     * Returns the pending position and clears it. Called once from `onStop`: the drain is one-shot
-     * so a second flush (e.g. a later `onStop` with no intervening page turn) writes nothing rather
+     * Returns the pending position and clears it. The drain is one-shot, so a flush with no
+     * intervening page turn (e.g. onStop right after a turn already persisted) writes nothing rather
      * than re-committing a stale position.
      */
     fun drainPending(): Locator? {

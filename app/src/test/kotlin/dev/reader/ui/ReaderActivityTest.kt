@@ -151,19 +151,19 @@ class ReaderActivityTest {
         assertThat(activity.openCalls).isEqualTo(2)
     }
 
-    // -- Task 6: the debounced, cancel-proof position flush ------------------------------------
+    // -- Task 6: per-page-turn, cancel-proof position persistence ------------------------------
 
     @Test
-    fun `a page turn writes nothing until onStop, whose flush survives onDestroy`() {
-        // This is the one thing ReadingSessionTest (pure) cannot cover: that the wiring flushes the
-        // pending position to the DAO, and that it does so on the application-scoped write scope so
-        // the write survives onDestroy cancelling lifecycleScope — the "work cancelled before it
-        // ran" trap. It also pins the debounce: a page turn touches memory only, never the DB.
+    fun `a page turn persists its position immediately, while the reader is still open`() {
+        // This is the one thing ReadingSessionTest (pure) cannot cover: that the wiring persists the
+        // turned-to position to the DAO on the turn itself — not deferred to onStop — so progress on
+        // disk is current even if the process is later killed. It also pins that the write is on the
+        // application-scoped writer (see the destroy-survival test below for the cancel-proof half).
         val app = RuntimeEnvironment.getApplication() as ReaderApplication
         val book = multiPageEpub(tempFolder.newFile("book.epub"))
         // The reader is not the indexer: it UPDATEs an existing row. Pre-insert one, never opened
         // (lastOpenedAtMs null, charOffset 0), so the open-time write is detectable via
-        // lastOpenedAtMs and the later flush via a changed charOffset.
+        // lastOpenedAtMs and the page-turn write via a changed charOffset.
         runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
 
         val controller = readerFor(intentWithExtra(book.path))
@@ -171,27 +171,43 @@ class ReaderActivityTest {
 
         // Wait for the open-time write-back to land: it stamps lastOpenedAtMs (null -> non-null).
         idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
-        val openRow = rowFor(app, book.path)!!
-        assertThat(openRow.charOffset).isEqualTo(0) // first page of chapter 0 starts at offset 0
+        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(0) // page 0 starts at offset 0
 
         // Turn the page. The Activity delivers taps to PageView.onTap on the main thread; invoking
-        // it directly is the same entry point. This advances to page 1 and records it as pending.
+        // it directly is the same entry point. This advances to page 1 and persists it.
         pageViewOf(controller.get()).onTap!!.invoke(TapZone.NEXT)
 
-        // The page turn must not have written anything — the whole point of coalesce-in-memory.
-        // recordPageTurn launches no coroutine, so this is deterministic, not merely "not yet".
-        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(0)
+        // No onStop, no destroy: the turn alone must move the on-disk offset off page 0. The write is
+        // async on the write scope, so idle until it lands rather than reading it synchronously.
+        idleUntil { rowFor(app, book.path)!!.charOffset != 0 }
+        val turned = rowFor(app, book.path)!!
+        assertThat(turned.charOffset).isGreaterThan(0) // page 1 begins past offset 0
+        assertThat(turned.spineIndex).isEqualTo(0)
+        assertThat(turned.lastOpenedAtMs).isNotNull()
+    }
 
-        // onStop flushes; onDestroy (which cancels lifecycleScope) follows immediately. A write on
-        // lifecycleScope could be cancelled here before committing; the app-scoped write scope is
-        // what makes it survive.
+    @Test
+    fun `a page turn's position write survives an immediate onDestroy`() {
+        // The write is launched on the application-scoped writer, not lifecycleScope, so tearing the
+        // Activity down right after a turn (onDestroy cancels lifecycleScope) cannot lose it — the
+        // "work cancelled before it ran" trap this project has hit before.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+
+        // Turn the page, then immediately tear the Activity all the way down before draining the
+        // write scope. A write on lifecycleScope would be cancelled here; the app-scoped one is not.
+        pageViewOf(controller.get()).onTap!!.invoke(TapZone.NEXT)
         controller.pause().stop().destroy()
 
         idleUntil { rowFor(app, book.path)!!.charOffset != 0 }
-        val flushed = rowFor(app, book.path)!!
-        assertThat(flushed.charOffset).isGreaterThan(0) // page 1 begins past offset 0
-        assertThat(flushed.spineIndex).isEqualTo(0)
-        assertThat(flushed.lastOpenedAtMs).isNotNull()
+        val persisted = rowFor(app, book.path)!!
+        assertThat(persisted.charOffset).isGreaterThan(0)
+        assertThat(persisted.spineIndex).isEqualTo(0)
     }
 
     // -- M3: denied permission is a message + finish, not a silent blank page ------------------
