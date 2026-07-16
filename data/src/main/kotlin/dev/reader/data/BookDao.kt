@@ -42,15 +42,21 @@ interface BookDao {
     suspend fun getAllStats(): List<BookStat>
 
     /**
-     * Intended writer: the reader, on open (setting [BookEntity.lastOpenedAtMs] to now) and on
-     * every debounced page turn thereafter (Plan 2 Task 6 — no production caller yet). Never
-     * touches any other column.
+     * Written by the reader: on open (setting [BookEntity.lastOpenedAtMs] to now) and on every
+     * page turn thereafter. Never touches any other column.
+     *
+     * Deliberately NOT `suspend`: a suspend `@Query` hops to Room's own multi-threaded query
+     * executor, so two writes launched in order could still acquire SQLite's write lock out of
+     * order. As a blocking call it executes on the caller's thread — and the only production
+     * caller is `ReaderApplication.positionWriteScope`, a single-threaded dispatcher, which is
+     * what makes "writes commit in launch order" actually true rather than merely intended.
+     * Callers must not invoke this on the main thread.
      */
     @Query(
         "UPDATE books SET spineIndex = :spineIndex, charOffset = :charOffset, " +
             "lastOpenedAtMs = :lastOpenedAtMs WHERE path = :path",
     )
-    suspend fun updatePosition(path: String, spineIndex: Int, charOffset: Int, lastOpenedAtMs: Long)
+    fun updatePosition(path: String, spineIndex: Int, charOffset: Int, lastOpenedAtMs: Long)
 
     /**
      * [LibraryIndexer]'s write path for a re-indexed row whose CONTENT is unchanged (same

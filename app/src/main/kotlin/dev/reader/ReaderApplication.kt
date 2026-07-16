@@ -80,9 +80,12 @@ class ReaderApplication : Application() {
      * one thread, so writes commit in the order they were launched. Persisting on each page turn means
      * two quick turns launch two writes; on the multi-threaded [Dispatchers.IO] pool they could run
      * concurrently and race, letting the *earlier* page's offset land after the later one and leave a
-     * stale position on disk. FIFO serialization removes that reordering window; each UPDATE is a
-     * sub-millisecond keyed write, so a single writer thread is never a bottleneck at human page-turn
-     * speed.
+     * stale position on disk. FIFO serialization removes that reordering window — but ONLY because
+     * [dev.reader.data.BookDao.updatePosition] is a *blocking* query executed right here on this
+     * thread: a `suspend` query would hop to Room's own multi-threaded executor and reintroduce the
+     * race behind the scenes (see updatePosition's KDoc — the two declarations are one design). Each
+     * UPDATE is a sub-millisecond keyed write, so a single writer thread is never a bottleneck at
+     * human page-turn speed.
      *
      * It does **not** violate the idle promise. It is entirely dormant unless a coroutine is launched
      * into it — there is no timer, no `postDelayed`, no polling, no periodic work here. It never wakes
