@@ -171,7 +171,7 @@ open class LibraryActivity : AppCompatActivity() {
             // rotation gets one) starts with nothing checked regardless of currentSort. Restore
             // the mark here so the active order is still visible after restore, not just correct.
             menu.findItem(menuItemIdForSortOrder(currentSort))?.isChecked = true
-            setOnMenuItemClickListener(::onSortMenuItemClicked)
+            setOnMenuItemClickListener(::onMenuItemClicked)
         }
 
         emptyStateView = TextView(this).apply {
@@ -234,6 +234,19 @@ open class LibraryActivity : AppCompatActivity() {
      * test subclass instead of faking the underlying `Environment.isExternalStorageManager()`.
      */
     protected open fun isAllFilesAccessGranted(): Boolean = hasAllFilesAccess()
+
+    /**
+     * The toolbar overflow's single non-sort action: open [SettingsActivity]. Sort items are
+     * delegated to [onSortMenuItemClicked]; anything this menu doesn't own returns false so the
+     * framework can fall back to its default handling.
+     */
+    private fun onMenuItemClicked(item: MenuItem): Boolean {
+        if (item.itemId == R.id.action_settings) {
+            startActivity(Intent(this, SettingsActivity::class.java))
+            return true
+        }
+        return onSortMenuItemClicked(item)
+    }
 
     private fun onSortMenuItemClicked(item: MenuItem): Boolean {
         val order = sortOrderForMenuItemId(item.itemId) ?: return false

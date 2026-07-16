@@ -37,5 +37,15 @@
             android:name=".ui.ReaderActivity"
             android:exported="false"
             android:launchMode="singleTop" />
+
+        <!-- exported="false": both are internal screens reached only from within the app (the
+             library overflow, and Settings' book-folder row). Nothing outside has any business
+             starting them. -->
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.DirectoryChooserActivity"
+            android:exported="false" />
     </application>
 </manifest>

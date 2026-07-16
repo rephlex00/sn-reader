@@ -24,4 +24,9 @@
             android:id="@+id/sort_recently_opened"
             android:title="Recently opened" />
     </group>
+    <!-- Outside the checkable sort group: this is an action, not a sort selection, so it must not
+         join the radio behavior or carry a check mark. Opens SettingsActivity. -->
+    <item
+        android:id="@+id/action_settings"
+        android:title="Settings" />
 </menu>
