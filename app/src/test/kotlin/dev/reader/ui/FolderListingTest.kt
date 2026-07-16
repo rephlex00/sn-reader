@@ -65,6 +65,36 @@ class FolderListingTest {
             .isEqualTo(BookStatus.UNREADABLE)
     }
 
+    // -- clampToRoot ----------------------------------------------------------------------------
+    // The shared clamp the Activity normalizes its currentFolder with — same rule folderListing
+    // scopes its listing with, so title/Back and the rendered rows never disagree.
+
+    @Test
+    fun `clampToRoot keeps a folder that is under the root`() {
+        assertThat(clampToRoot("/lib/fiction", "/lib")).isEqualTo("/lib/fiction")
+    }
+
+    @Test
+    fun `clampToRoot keeps the root itself`() {
+        assertThat(clampToRoot("/lib", "/lib")).isEqualTo("/lib")
+    }
+
+    @Test
+    fun `clampToRoot collapses a folder outside the root back to the root`() {
+        assertThat(clampToRoot("/elsewhere/x", "/lib")).isEqualTo("/lib")
+    }
+
+    @Test
+    fun `clampToRoot is segment-correct - a name-prefixed sibling is outside`() {
+        // /Documents is not under /Document, so it clamps back to /Document.
+        assertThat(clampToRoot("/Documents", "/Document")).isEqualTo("/Document")
+    }
+
+    @Test
+    fun `clampToRoot tolerates a trailing separator on either argument`() {
+        assertThat(clampToRoot("/lib/fiction/", "/lib/")).isEqualTo("/lib/fiction")
+    }
+
     // -- root filtering -------------------------------------------------------------------------
 
     @Test

@@ -1,6 +1,7 @@
 package dev.reader.ui
 
 import com.google.common.truth.Truth.assertThat
+import dev.reader.data.BookEntity
 import org.junit.Test
 
 class BookGridAdapterTest {
@@ -58,4 +59,68 @@ class BookGridAdapterTest {
         val b = coverCacheKey(coverPath = "/data/covers/b.png", modifiedAtMs = 42L)
         assertThat(a).isNotEqualTo(b)
     }
+
+    // -- humanReadableSize ------------------------------------------------------------------
+
+    @Test
+    fun `a size under one kibibyte is shown in bytes`() {
+        assertThat(humanReadableSize(0L)).isEqualTo("0 B")
+        assertThat(humanReadableSize(1023L)).isEqualTo("1023 B")
+    }
+
+    @Test
+    fun `exactly one kibibyte rolls over to one decimal KB`() {
+        assertThat(humanReadableSize(1024L)).isEqualTo("1.0 KB")
+    }
+
+    @Test
+    fun `sizes step up through KB MB GB with one decimal place`() {
+        assertThat(humanReadableSize(1536L)).isEqualTo("1.5 KB")
+        assertThat(humanReadableSize(1024L * 1024)).isEqualTo("1.0 MB")
+        assertThat(humanReadableSize(5L * 1024 * 1024 + 512 * 1024)).isEqualTo("5.5 MB")
+        assertThat(humanReadableSize(3L * 1024 * 1024 * 1024)).isEqualTo("3.0 GB")
+    }
+
+    // -- statusText -------------------------------------------------------------------------
+
+    @Test
+    fun `a never-opened readable book reads Not started`() {
+        assertThat(statusText(book(lastOpenedAtMs = null))).isEqualTo("Not started")
+    }
+
+    @Test
+    fun `an opened book reads In progress`() {
+        assertThat(statusText(book(lastOpenedAtMs = 5L))).isEqualTo("In progress")
+    }
+
+    @Test
+    fun `an unreadable book spells out its stored reason`() {
+        assertThat(statusText(book(unreadable = true, unreadableReason = "corrupt zip")))
+            .isEqualTo("Unreadable: corrupt zip")
+    }
+
+    @Test
+    fun `an unreadable book with no stored reason falls back rather than printing null`() {
+        assertThat(statusText(book(unreadable = true, unreadableReason = null)))
+            .isEqualTo("Unreadable: unknown reason")
+    }
+
+    private fun book(
+        lastOpenedAtMs: Long? = null,
+        unreadable: Boolean = false,
+        unreadableReason: String? = null,
+    ) = BookEntity(
+        path = "/Document/a.epub",
+        sizeBytes = 1_000L,
+        modifiedAtMs = 1_700_000_000_000L,
+        title = "A Book",
+        author = null,
+        coverPath = null,
+        spineIndex = 0,
+        charOffset = 0,
+        unreadable = unreadable,
+        unreadableReason = unreadableReason,
+        addedAtMs = 1_700_000_000_000L,
+        lastOpenedAtMs = lastOpenedAtMs,
+    )
 }
