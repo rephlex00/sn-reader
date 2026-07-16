@@ -61,3 +61,24 @@ fun pageIndexFor(pages: List<Page>, charOffset: Int): Int {
     val index = pages.indexOfFirst { charOffset < it.endOffset }
     return if (index == -1) pages.lastIndex else index
 }
+
+/**
+ * The page in [newPages] to land on after a live typography change re-paginated the chapter the
+ * reader was showing as [oldPages]. This is the pure core of the Aa sheet's locator preservation:
+ * a settings change re-flows the current chapter to a *different* page count, and the reader must
+ * stay on the text it was showing — the page whose offset range contains the char offset at the top
+ * of the current page — NOT the same page index. A larger font that pushes that text from page 3 to
+ * page 5 lands the reader on page 5.
+ *
+ * It captures [oldPages]`[oldPageIndex].startOffset` — the stable char anchor the open-path restore
+ * uses too — and resolves it through [pageIndexFor] over [newPages]. The returned index is always a
+ * valid index into [newPages] (0 when it is empty), so a chapter that re-paginates to zero pages, or
+ * an [oldPageIndex] that has drifted out of range, clamps rather than throwing. Pure over its three
+ * arguments, so the headline locator-preservation property is unit-testable without an Activity or a
+ * real StaticLayout (see PaginatorTest).
+ */
+fun reflowedPageIndex(oldPages: List<Page>, oldPageIndex: Int, newPages: List<Page>): Int {
+    if (newPages.isEmpty() || oldPages.isEmpty()) return 0
+    val anchor = oldPages[oldPageIndex.coerceIn(0, oldPages.lastIndex)].startOffset
+    return pageIndexFor(newPages, anchor).coerceIn(0, newPages.lastIndex)
+}
