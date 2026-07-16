@@ -17,8 +17,19 @@ interface ResourceSource : Closeable {
     fun exists(path: String): Boolean
 }
 
-/** Legitimate container/OPF/chapter files are kilobytes; this is a generous ceiling. */
-private const val MAX_TEXT_SIZE = 16 * 1024 * 1024L
+/**
+ * Shared entry-size cap for both [readText] and the binary reader in the epub package
+ * ([dev.reader.formats.epub.readBytesChecked]). Legitimate container/OPF/chapter files are
+ * kilobytes, so this looks generous for text — but a cover image is the only entry type
+ * that plausibly approaches it, and this is the actual gate that keeps a hostile or
+ * oversized cover from being fully decoded downstream. Keep it tight rather than generous:
+ * [readCapped]'s `ByteArrayOutputStream` doubles its backing array as it grows and then
+ * `toByteArray()` copies it again, so even a cover comfortably under this cap carries a
+ * real transient cost — a 5 MB JPEG peaks around 13 MB in memory before decoding even
+ * starts. A rejected cover only degrades to the generated placeholder, so a tight cap here
+ * costs almost nothing.
+ */
+private const val MAX_ENTRY_SIZE = 16 * 1024 * 1024L
 
 /**
  * Random access into a zip archive (e.g. an EPUB container).
@@ -40,10 +51,10 @@ class ZipResourceSource(file: File) : ResourceSource {
         val entry = zip.getEntry(path) ?: return null
         // Fast path: a lying/unknown declared size (-1) never trips this, but an honest
         // large declared size lets us reject before spending any time decompressing.
-        if (entry.size > MAX_TEXT_SIZE) {
+        if (entry.size > MAX_ENTRY_SIZE) {
             throw IOException(
                 "Entry \"$path\" declares size ${entry.size} bytes, exceeding the " +
-                    "$MAX_TEXT_SIZE byte cap.",
+                    "$MAX_ENTRY_SIZE byte cap.",
             )
         }
         val bytes = zip.getInputStream(entry).use { input -> readCapped(input, path) }
@@ -56,7 +67,7 @@ class ZipResourceSource(file: File) : ResourceSource {
 }
 
 /**
- * Reads [input] fully but aborts as soon as more than [MAX_TEXT_SIZE] bytes have come
+ * Reads [input] fully but aborts as soon as more than [MAX_ENTRY_SIZE] bytes have come
  * through — a backstop for a decompression bomb whose declared size understates (or
  * omits) how much data it actually inflates to.
  *
@@ -72,9 +83,9 @@ internal fun readCapped(input: InputStream, path: String): ByteArray {
         val read = input.read(chunk)
         if (read == -1) break
         total += read
-        if (total > MAX_TEXT_SIZE) {
+        if (total > MAX_ENTRY_SIZE) {
             throw IOException(
-                "Entry \"$path\" exceeded the $MAX_TEXT_SIZE byte cap while reading " +
+                "Entry \"$path\" exceeded the $MAX_ENTRY_SIZE byte cap while reading " +
                     "(declared size was within the cap, or unknown).",
             )
         }

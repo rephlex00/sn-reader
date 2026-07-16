@@ -51,9 +51,16 @@ enum class CoverOutcome { EXTRACTED, GENERATED }
  * options, exactly how a later loader will read it back — reads color type 0 natively and
  * hands back R == G == B pixels.
  *
- * **Never throws.** A corrupt or truncated cover image — `BitmapFactory.decode*` returning
- * null is the most common failure shape, not an exception — falls back to the generated
- * placeholder rather than propagating. A broken cover must not abort a library sync.
+ * **Decoding never throws.** A corrupt or truncated cover image — `BitmapFactory.decode*`
+ * returning null is the most common failure shape, not an exception — falls back to the
+ * generated placeholder rather than propagating; a broken cover must not abort a library
+ * sync. This covers everything up through [decodeDownsampled] and the sampled decode
+ * itself. It does not cover [writeGrayscalePng]'s final `destination.writeBytes` call:
+ * that's a real disk write and can still throw `IOException` (a full disk, a missing
+ * parent directory) like any other file write. The `:data` module's indexer already wraps
+ * each book's processing in its own `catch (e: Exception)`, so a single bad destination
+ * degrades that one book to a `Failure` rather than aborting the whole sync — but `extract`
+ * itself is not unconditionally exception-free.
  */
 class EpubCoverExtractor(
     private val maxWidthPx: Int = DEFAULT_MAX_WIDTH_PX,
@@ -101,8 +108,14 @@ class EpubCoverExtractor(
         val sampled = try {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
         } catch (e: OutOfMemoryError) {
+            // Deliberately scoped to only this one call, not a blanket guard around the
+            // rest of the function: this is the sole allocation still sized by untrusted
+            // input (the source image's real dimensions, before sampling shrinks them).
             // Should be unreachable given the sampling above, but a hostile or bizarre
             // image must still degrade to the placeholder rather than crash the sync.
+            // Everything below this point (scaleToFit, grayscale conversion, PNG
+            // encoding) operates on the already-bounded `sampled` result, so it has no
+            // equivalent OOM risk and is intentionally left uncaught.
             null
         } ?: return null
 
@@ -149,13 +162,22 @@ class EpubCoverExtractor(
  * The standard power-of-two downsample factor (Android's own documented pattern): the
  * largest `inSampleSize` for which the halved dimensions are still at least the requested
  * size, so the real decode lands close to — never far below — the target footprint.
+ *
+ * The inner loop condition is deliberately `||`, not the `&&` in some versions of Android's
+ * own snippet: with `&&`, an extreme aspect ratio (e.g. a 30000x200 cover against a 240x360
+ * cell) never samples at all, because the already-small dimension (200) fails its half of
+ * the test on the very first check and the loop body never runs — leaving the enormous
+ * dimension (30000) fully unsampled and decoded at full resolution (measured at 22.9 MB
+ * ARGB for that exact input). `||` keeps doubling as long as *either* dimension is still
+ * oversized, so both axes get bounded; [scaleToFit] already trims whatever overshoot is
+ * left in the other axis, exactly as it does for the common case.
  */
 internal fun sampleSizeFor(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
     var inSampleSize = 1
     if (height > reqHeight || width > reqWidth) {
         val halfHeight = height / 2
         val halfWidth = width / 2
-        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+        while (halfHeight / inSampleSize >= reqHeight || halfWidth / inSampleSize >= reqWidth) {
             inSampleSize *= 2
         }
     }

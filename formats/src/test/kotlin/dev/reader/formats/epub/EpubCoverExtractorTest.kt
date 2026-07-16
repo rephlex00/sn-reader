@@ -142,6 +142,16 @@ class EpubCoverExtractorTest {
                 assertThat(g).isEqualTo(b)
             }
         }
+
+        // R == G == B only proves the file *renders* gray — an ARGB_8888 PNG drawn through
+        // a saturation-zeroing ColorMatrix (exactly the alternative the class doc rejects)
+        // would decode identically. Since bytes-on-disk is the entire justification for
+        // hand-rolling the encoder instead of `Bitmap.compress`, assert the on-disk format
+        // directly: byte 25 is IHDR's colour type, which must be 0 (grayscale). Offset
+        // derivation: 8-byte signature + 4-byte length + 4-byte "IHDR" type + 4-byte width +
+        // 4-byte height + 1-byte bit depth = 25.
+        val fileBytes = destination.readBytes()
+        assertThat(fileBytes[25].toInt()).isEqualTo(0)
     }
 
     @Test
