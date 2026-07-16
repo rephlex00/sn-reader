@@ -280,6 +280,37 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `a full-panel refresh fires every REFRESH_CADENCE page turns`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val pv = pageViewOf(activity)
+        assertThat(pv.fullRefreshCount).isEqualTo(0)
+
+        // Alternate NEXT/PREVIOUS on a 2-page book: each is a genuine turn (there is always
+        // somewhere to go between pages 0 and 1), so 8 of them reaches the cadence exactly once.
+        repeat(8) { i -> pv.onTap!!.invoke(if (i % 2 == 0) TapZone.NEXT else TapZone.PREVIOUS) }
+        assertThat(pv.fullRefreshCount).isEqualTo(1)
+
+        // The counter reset: the next 8 turns fire it again, the 7 in between do not.
+        repeat(7) { i -> pv.onTap!!.invoke(if (i % 2 == 0) TapZone.NEXT else TapZone.PREVIOUS) }
+        assertThat(pv.fullRefreshCount).isEqualTo(1)
+        pv.onTap!!.invoke(TapZone.NEXT)
+        assertThat(pv.fullRefreshCount).isEqualTo(2)
+    }
+
+    @Test
+    fun `overlay toggles do not count toward the refresh cadence`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val pv = pageViewOf(activity)
+
+        // Center taps only toggle the overlay — they are not page turns, so no number of them
+        // reaches the ghost-clear cadence. (Each pair of toggles returns to the hidden state.)
+        repeat(20) { pv.onTap!!.invoke(TapZone.TOGGLE_OVERLAY) }
+        assertThat(pv.fullRefreshCount).isEqualTo(0)
+    }
+
+    @Test
     fun `system Back closes the overlay when shown and finishes when hidden`() {
         val controller = openedMultiPage()
         val activity = controller.get()

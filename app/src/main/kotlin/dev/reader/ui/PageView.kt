@@ -54,6 +54,23 @@ class PageView(context: Context) : View(context) {
         invalidate()
     }
 
+    /** Test-visible count of [fullRefresh] calls — the one observable of a background nicety. */
+    internal var fullRefreshCount = 0
+        private set
+
+    /**
+     * Forces a full-panel redraw to clear accumulated e-ink ghosting, driven by [ReaderActivity]
+     * every `REFRESH_CADENCE` page turns. On stock Android this is a plain [invalidate] — the same
+     * full redraw a normal page turn already issues — so its ghost-clearing effect is
+     * vendor-dependent: it is the seam where a Supernote EPD full-refresh-mode hint would be applied
+     * (a research item; the app is fully functional without it). Counter-driven, never time-driven,
+     * so it adds no steady-state cost.
+     */
+    fun fullRefresh() {
+        fullRefreshCount++
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         val layout = layout ?: return
         val page = page ?: return

@@ -173,6 +173,9 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private var prefetchJob: Job? = null
 
+    /** Page turns since the last full-panel refresh; drives the [REFRESH_CADENCE] ghost-clear. */
+    private var turnsSinceRefresh = 0
+
     /** The pure position-memory logic: the restore rules and the in-memory page-turn debounce. */
     private val session = ReadingSession()
 
@@ -790,6 +793,15 @@ open class ReaderActivity : AppCompatActivity() {
                 // turned to even across a battery pull. showPage recorded it; this writes it, off
                 // the main thread and serialized (see flushPosition / positionWriteScope).
                 flushPosition()
+                // Refresh cadence: every REFRESH_CADENCE actual page turns, force a full-panel
+                // redraw to clear accumulated e-ink ghosting. Counter-driven, not time-driven, so
+                // it holds no steady state. Only genuine turns count — an overlay toggle (which
+                // yields null above and never reaches here), a settings re-paginate, or a TOC jump
+                // do not, matching "every N turns" rather than "every N redraws".
+                if (++turnsSinceRefresh >= REFRESH_CADENCE) {
+                    pageView.fullRefresh()
+                    turnsSinceRefresh = 0
+                }
             }
         } catch (e: EpubException) {
             showMessage("Couldn't turn the page: ${e.message}")
@@ -930,6 +942,9 @@ open class ReaderActivity : AppCompatActivity() {
     companion object {
         /** String extra: an absolute book path, set by [LibraryActivity] when opening a tap. */
         const val EXTRA_BOOK_PATH = "dev.reader.ui.EXTRA_BOOK_PATH"
+
+        /** Full-panel refresh cadence (spec default): a ghost-clearing redraw every N page turns. */
+        private const val REFRESH_CADENCE = 8
 
         // The Aa sheet's bounded value sets. Text size is a stepper over [MIN, MAX] by STEP; the
         // others are presets. All chosen so the resulting RenderConfig stays valid on the device
