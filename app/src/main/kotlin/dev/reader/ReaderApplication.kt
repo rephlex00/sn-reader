@@ -3,7 +3,10 @@ package dev.reader
 import android.app.Application
 import androidx.room.Room
 import dev.reader.data.LibraryDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 
 /**
  * App-scoped singletons that must outlive any single Activity instance.
@@ -63,4 +66,21 @@ class ReaderApplication : Application() {
      * Together they hold the invariant: no two sync bodies in flight, ever.
      */
     var librarySyncJob: Job? = null
+
+    /**
+     * The scope that position writes ([dev.reader.data.BookDao.updatePosition]) are launched into —
+     * on both open and the `onStop` flush. It exists to make a terminal position write **survive the
+     * Activity's own destruction**: `onStop` is immediately followed by `onDestroy`, which cancels
+     * the Activity's `lifecycleScope`, so a quick `onStop -> onDestroy` launched onto `lifecycleScope`
+     * could cancel the UPDATE before it commits — the exact "the work got cancelled before it ran"
+     * bug this project has hit before. Being application-scoped, this scope is not cancelled when any
+     * Activity dies; it lives and dies with the process.
+     *
+     * It does **not** violate the idle promise. It is entirely dormant unless a coroutine is launched
+     * into it — there is no timer, no `postDelayed`, no polling, no periodic work here. It never wakes
+     * the process on its own; it only lets a write that the user's own action (leaving the screen)
+     * already triggered run to completion. [SupervisorJob] so one failed write never cancels the
+     * scope or a sibling write; [Dispatchers.IO] because these are blocking SQLite UPDATEs.
+     */
+    val positionWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }
