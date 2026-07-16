@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The reading overlay: a monochrome chrome layer drawn ABOVE the page (added after PageView in
-     the content FrameLayout). Scope is Back + title + a read-only page scrubber ONLY — no TOC/Aa
-     buttons; those land in later tasks with their own panels.
+     the content FrameLayout). The top bar holds Back, the book title, and the Contents (TOC) and
+     Aa (typography) buttons; a read-only page scrubber sits at the bottom. The Contents list and
+     the Aa sheet are separate visibility-toggled panels inside this overlay.
 
      Touch model: this root FrameLayout is NOT clickable, so it does not consume touches — only its
      Back control does. A tap anywhere else on the overlay falls through to the PageView below, whose
