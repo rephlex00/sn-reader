@@ -86,17 +86,20 @@ fun sortOrderFromSavedValue(value: String?): SortOrder =
  * The library grid — the app's entry point (see the manifest: this is now the LAUNCHER activity,
  * [ReaderActivity] is not). `RecyclerView` + `GridLayoutManager`, Views only.
  *
- * On entry (once, not on a schedule): runs [LibraryIndexer.sync] on the library roots, then
- * observes [dev.reader.data.BookDao.observeAllSorted] for the chosen [SortOrder] and hands each
- * emission straight to [BookGridAdapter] — sorting is entirely SQL's job (see [BookDao]'s KDoc),
- * this Activity never re-sorts a list. Tapping a cell starts [ReaderActivity] with that book's
- * path.
+ * On every entry — cold start, a rotation, or simply returning to this screen from [ReaderActivity]
+ * or the background — [onStart] re-runs [LibraryIndexer.sync] on the library roots (see its KDoc for
+ * why "every entry" and not "once per process"). [onCreate] separately starts observing
+ * [dev.reader.data.BookDao.observeAllSorted] for the chosen [SortOrder] and hands each emission
+ * straight to [BookGridAdapter] — sorting is entirely SQL's job (see [BookDao]'s KDoc), this
+ * Activity never re-sorts a list. Tapping a cell starts [ReaderActivity] with that book's path.
  *
  * **No animations, no background service.** [RecyclerView.setItemAnimator] is set to null:
  * `DefaultItemAnimator` cross-fades on every change, which is a smear on e-ink and animation is
- * banned outright regardless of panel. Indexing runs once, right here, in a coroutine that
- * completes and stops — there is no `Service`/`WorkManager`/`FileObserver`/timer anywhere in this
- * class, so the idle promise (0% CPU once the grid has settled) is unaffected by any of this.
+ * banned outright regardless of panel. Each sync runs in a coroutine that completes and stops —
+ * there is no `Service`/`WorkManager`/`FileObserver`/timer anywhere in this class, so the idle
+ * promise (0% CPU once the grid has settled) is unaffected by re-syncing more often: a redundant
+ * sync over an unchanged library is just a stat call per file (see [LibraryIndexer]'s KDoc), not a
+ * scan that reopens anything.
  *
  * `open`, not `final`: [LibraryActivityRecreationTest]'s Robolectric coverage recreates this Activity via a
  * test subclass that overrides [isAllFilesAccessGranted] and [createSync] — the two points where
@@ -106,10 +109,9 @@ fun sortOrderFromSavedValue(value: String?): SortOrder =
 open class LibraryActivity : AppCompatActivity() {
 
     /**
-     * [LibraryDatabase] and the sync guards both live on [ReaderApplication] now, not here — see
-     * its KDoc. This Activity is recreated on every rotation; the Application is not, so both had
-     * to move for "once per process" to actually mean once per process rather than once per
-     * Activity instance.
+     * [LibraryDatabase] lives on [ReaderApplication], not here — see its KDoc. This Activity is
+     * recreated on every rotation; the Application is not, so the database had to move for it to
+     * be built exactly once per process rather than once per Activity instance.
      */
     private val db: LibraryDatabase
         get() = (application as ReaderApplication).database
@@ -163,15 +165,23 @@ open class LibraryActivity : AppCompatActivity() {
         // after the permission gate (not before, as fix wave 1 had it) so a permission-denied
         // launch never forces the lazy Room build just to log a line nothing needs yet.
         Log.i(TAG, "onCreate db=${System.identityHashCode(db)} restoredSort=$currentSort")
-        runLibrary()
+        // Start observing before onStart's sync even launches — see this class's KDoc and
+        // onStart's. Rows already in the DB (a prior process's index, or a sync this same process
+        // already completed before a rotation) paint immediately instead of waiting on a fresh
+        // scan; Room's Flow then re-emits on its own as onStart's sync writes rows.
+        observeSorted(currentSort)
     }
 
-    override fun onResume() {
-        super.onResume()
-        val app = application as ReaderApplication
-        if (!app.librarySynced && app.librarySyncJob?.isActive != true && isAllFilesAccessGranted()) {
-            runLibrary()
+    override fun onStart() {
+        super.onStart()
+        if (!isAllFilesAccessGranted()) return
+        if (observeJob == null) {
+            // Permission was granted after onCreate returned early above (the user just came back
+            // from the system "All files access" settings screen, same Activity instance) — start
+            // observing now so this instance isn't left with a permanently blank grid.
+            observeSorted(currentSort)
         }
+        runSync()
     }
 
     /**
@@ -204,76 +214,68 @@ open class LibraryActivity : AppCompatActivity() {
     }
 
     /**
-     * Starts observing the index immediately, then — unless a sync already succeeded or is
-     * already running in this process — runs the incremental sync once. [LibraryIndexer.sync]
-     * already confines all of its own work to [kotlinx.coroutines.Dispatchers.IO] and returns; it
-     * is not scheduled, retried on a timer, or repeated from here.
+     * Runs the incremental sync — unless one is already in flight this process — every time
+     * [onStart] fires: cold start, a rotation, returning from [ReaderActivity], or returning from
+     * the background. This is the owner-ruled design: index **on every entry**, not once per
+     * process. A book side-loaded while the process stays alive (which on this e-ink device can
+     * mean days) must show up the next time the user looks at the library, not only after the
+     * process happens to die and restart.
      *
-     * **Why [observeSorted] runs unconditionally, before the guard check.** Rows already in the
-     * DB — from a prior sync this process already completed, or from a previous process entirely
-     * — should paint immediately instead of waiting for this (possibly first-run, possibly
-     * multi-second) sync to finish; a blank grid for the whole first-run scan fails the plan's own
-     * "does not visibly stall the grid" checklist item. Room's Flow re-emits on its own as
-     * [LibraryIndexer.sync] writes rows, so nothing needs to re-subscribe once the sync completes.
-     * This also fixes the fix-wave-1 regression this same method used to special-case: a rotation
-     * whose sync was already done previously must still populate the brand-new [BookGridAdapter]
-     * the recreated Activity just built, not just skip straight past it.
+     * **Why re-syncing this often is cheap.** [LibraryIndexer.sync] is a stat walk of
+     * `(path, size, mtime)` that opens a file only when one is new or changed — for an unchanged
+     * 15-book library that's 15 stat calls, not 15 file opens. Re-running it on every entry spends
+     * exactly the budget "incremental" bought, rather than banking it behind a flag.
      *
-     * **Why [ReaderApplication.librarySynced] is set only on success, never before launching.**
-     * The guard lives on [ReaderApplication], not this Activity, because a rotation destroys and
-     * recreates the Activity (resetting any field it owned) but not the Application. But the
-     * *work* the guard guards — [createSync]'s coroutine — runs on `lifecycleScope`, which is
-     * Activity-scoped: a rotation or a Back press cancels it mid-diff. Setting the flag *before*
-     * launching (as an earlier version of this method did) would make the recreated Activity see
-     * "already synced" and never retry — every book the aborted sync never reached would be
-     * permanently missing from the grid until the process dies. Setting it only when `sync()`
-     * actually *returns* means a cancelled or thrown run is retried on the next entry instead,
-     * which is cheap: the diff is incremental, so unchanged files open nothing. The same applies
-     * to the `catch (e: Exception)` branch below — a failed sync (e.g. both roots denied) leaves
-     * the flag false too, so it is retried rather than given up on forever.
+     * **Why there is no "already synced" flag anymore.** There used to be one
+     * (`ReaderApplication.librarySynced`), set only once `sync()` returned, precisely so a
+     * cancelled run wouldn't be mistaken for a completed one. That reasoning was sound but the
+     * premise — "a completed sync never needs to run again this process" — is exactly what the
+     * owner ruled out. Removing the flag removes the entire bug class it enabled: there is no
+     * longer any state that can say "already done" while the work that was supposed to do it got
+     * cancelled or skipped a path. A rotation mid-sync now just means [onStart] re-runs the sync
+     * on the recreated Activity and self-heals, instead of relying on a flag being set at exactly
+     * the right moment.
+     *
+     * **Why [ReaderApplication.librarySyncJob] is still needed, on top of removing the flag.**
+     * `onStart` can run again for the same Activity instance without an intervening `onDestroy`
+     * (e.g. the user backgrounds and quickly re-foregrounds the app while a slow first-run scan is
+     * still going), and a rotation's `onStart` on the recreated Activity can briefly overlap the
+     * previous instance's not-yet-unwound cancellation (see [ReaderApplication.librarySyncJob]'s
+     * KDoc for that race in detail). Two concurrent [LibraryIndexer.sync] calls would race the same
+     * DAO, so the in-flight [Job] is still tracked and checked before launching another.
      *
      * **Why [CancellationException] is caught and rethrown, not left to the broad `catch`
      * below it.** [CancellationException] extends [Exception] — this project has already been
      * bitten once by a catch-all silently swallowing it (see [LibraryIndexer.sync]'s own KDoc).
-     * Swallowing it here would both mark a merely-cancelled sync as "handled" (masking the
-     * intentional early-return this whole method depends on) and pop a spurious error Toast for a
-     * sync the user simply rotated or backed away from, not one that failed.
-     *
-     * **Why [ReaderApplication.librarySyncJob] exists at all, on top of the flag.** `onResume`
-     * re-checks this guard immediately after `onCreate` returns — the two fire back-to-back in
-     * the normal Activity lifecycle, before the sync just launched here has had any chance to
-     * even reach its first `Dispatchers.IO` suspension point. Without tracking the in-flight
-     * [Job] itself, that second call would see the flag still `false` and launch a *second*,
-     * concurrent [LibraryIndexer.sync] racing the first one against the same DB.
+     * Swallowing it here would pop a spurious error Toast for a sync the user simply rotated or
+     * backed away from, not one that actually failed.
      */
-    private fun runLibrary() {
+    private fun runSync() {
         val app = application as ReaderApplication
-        observeSorted(currentSort)
-
-        if (app.librarySynced || app.librarySyncJob?.isActive == true) {
-            Log.i(TAG, "runLibrary: sync SKIPPED (already synced or in progress this process)")
+        if (app.librarySyncJob?.isActive == true) {
+            Log.i(TAG, "runSync: SKIPPED (already in progress this process)")
             return
         }
-        Log.i(TAG, "runLibrary: sync STARTED")
+        Log.i(TAG, "runSync: STARTED")
 
         app.librarySyncJob = lifecycleScope.launch {
             try {
                 createSync().invoke()
-                app.librarySynced = true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // A failed sync (e.g. both roots denied) must not leave the grid stuck empty
-                // with no explanation, but it also must not crash the launcher activity. The flag
-                // stays false (see the KDoc above), so the next entry retries instead of giving up.
+                // A failed sync (e.g. both roots denied) must not leave the grid stuck empty with
+                // no explanation, but it also must not crash the launcher activity. There is no
+                // flag to leave in a "failed" state: the next entry (or backgrounding and
+                // returning) just tries again.
                 Toast.makeText(this@LibraryActivity, "Couldn't scan your library: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
 
     /**
-     * Builds the suspend function [runLibrary] runs to perform one sync. `protected open`, not
-     * inlined into [runLibrary], purely as a test seam: [LibraryActivityRecreationTest]'s Robolectric
+     * Builds the suspend function [runSync] runs to perform one sync. `protected open`, not
+     * inlined into [runSync], purely as a test seam: [LibraryActivityRecreationTest]'s Robolectric
      * coverage substitutes one that suspends until cancelled (via
      * [kotlinx.coroutines.awaitCancellation]) to deterministically exercise the
      * cancel-mid-sync path without needing a real multi-second EPUB scan to race against.

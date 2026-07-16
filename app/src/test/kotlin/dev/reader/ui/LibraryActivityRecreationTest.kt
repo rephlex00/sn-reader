@@ -5,6 +5,7 @@ import com.google.common.truth.Truth.assertThat
 import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
 import dev.reader.data.IndexResult
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -17,12 +18,12 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 
 /**
- * Robolectric coverage for the P2 Task 5 review's fix-wave-2 blocker: the guard that used to be a
- * single `librarySynced` flag set *before* launching the sync had two holes once the flag moved
- * to process scope while the work it guards (`LibraryIndexer.sync()` on `lifecycleScope`) stayed
- * Activity-scoped — see [LibraryActivity.runLibrary]'s KDoc for the full narrative. Nothing before
- * this file exercised the Activity lifecycle at all: [LibraryActivityTest] only covers this
- * class's pure top-level functions.
+ * Robolectric coverage for the P2 Task 5 review's fix-wave-3 decision: the owner ruled out
+ * once-per-process indexing entirely. [LibraryActivity] now re-syncs on *every* [LibraryActivity.onStart]
+ * — cold start, rotation, or simply returning to the screen — guarded only against a second sync
+ * launching while one is already in flight ([ReaderApplication.librarySyncJob]). There is no longer
+ * an "already synced" flag to reset between tests; see [ReaderApplication]'s KDoc for why it was
+ * deleted rather than kept alongside the job guard.
  *
  * Two seams on [LibraryActivity] make an Activity-recreation test possible without a device or a
  * granted Android 11 all-files-access permission (which Robolectric cannot fake at the
@@ -44,19 +45,18 @@ class LibraryActivityRecreationTest {
     fun tearDown() {
         // ReaderApplication is a fresh instance per Robolectric test in principle, but its
         // `by lazy` database file lives in a directory Robolectric reuses across tests in the
-        // same JVM fork; resetting the guards defensively costs nothing and avoids one test's
+        // same JVM fork; resetting the guard defensively costs nothing and avoids one test's
         // guard state leaking into another's if that ever changes.
-        app.librarySynced = false
         app.librarySyncJob = null
     }
 
     @Test
-    fun `the skipped-sync branch still populates the grid`() {
+    fun `a recreation still observes the DB (the blank-grid regression)`() {
         // Stand in for "a sync already completed earlier in this process" (the common rotation
-        // case): a row is already in the DB and the guard is already set, before this Activity
-        // instance (standing in for the recreated one) is even built.
+        // case): a row is already in the DB before this Activity instance (standing in for the
+        // recreated one) is even built. onCreate must start observing regardless of any sync
+        // guard state.
         runBlocking { app.database.bookDao().upsertAll(listOf(testBook())) }
-        app.librarySynced = true
 
         val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
         controller.create().start().resume()
@@ -67,9 +67,7 @@ class LibraryActivityRecreationTest {
     }
 
     @Test
-    fun `a sync cancelled by Activity destruction does not mark the process synced`() {
-        app.librarySynced = false
-
+    fun `a sync cancelled by Activity destruction does not strand any state`() {
         val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
         // Never returns on its own — only cancellation (Activity destruction, below) ends it.
         // This lets the test force the "destroyed mid-sync" window deterministically, instead of
@@ -81,31 +79,68 @@ class LibraryActivityRecreationTest {
         assertThat(app.librarySyncJob?.isActive).isTrue()
 
         // Destroying the Activity cancels its lifecycleScope, which cancels the suspended sync —
-        // the rotation/Back-mid-sync scenario the blocker describes.
+        // the rotation/Back-mid-sync scenario the blocker describes. With no "already synced"
+        // flag left to strand, the only thing worth asserting is that the job itself reads as no
+        // longer active — there's nothing else that could be left half-set.
         controller.pause().stop().destroy()
         shadowOf(Looper.getMainLooper()).idle()
 
-        assertThat(app.librarySynced).isFalse()
         assertThat(app.librarySyncJob?.isActive).isFalse()
     }
 
     @Test
-    fun `onResume racing onCreate does not start a second concurrent sync`() {
-        app.librarySynced = false
+    fun `re-entry after a completed sync triggers another sync (the whole point of this change)`() {
         var syncCalls = 0
-
         val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
         controller.get().sync = {
             syncCalls++
             IndexResult(added = 0, updated = 0, removed = 0, newlyUnreadable = 0)
         }
 
-        // onCreate() and onResume() both call runLibrary() back-to-back in the standard Activity
-        // lifecycle, before the first launch has any chance to reach its first suspension point.
-        // Robolectric's controller.create().start().resume() chain reproduces that exact order.
         controller.create().start().resume()
-        idleUntil { syncCalls > 0 }
+        idleUntil { syncCalls == 1 }
+        assertThat(syncCalls).isEqualTo(1)
 
+        // Simulate leaving the library (e.g. opening a book, or backgrounding the app) and coming
+        // back, without destroying this Activity instance — the exact "side-loaded a book, left,
+        // came back" scenario the owner's decision targets. No onCreate the second time, only the
+        // stop/start pair.
+        controller.pause().stop()
+        controller.start().resume()
+        idleUntil { syncCalls == 2 }
+
+        assertThat(syncCalls).isEqualTo(2)
+    }
+
+    @Test
+    fun `two overlapping entries do not launch two concurrent syncs`() {
+        // Held open until the test explicitly releases it, so the first sync can be forced to
+        // stay in flight while a second onStart fires — the "quick background/foreground bounce"
+        // scenario, deterministically, instead of racing a real multi-second scan.
+        val releaseFirstSync = CompletableDeferred<Unit>()
+        var syncCalls = 0
+
+        val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
+        controller.get().sync = {
+            syncCalls++
+            releaseFirstSync.await()
+            IndexResult(added = 0, updated = 0, removed = 0, newlyUnreadable = 0)
+        }
+
+        // onCreate() and onStart() both run back-to-back in the standard Activity lifecycle.
+        controller.create().start()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertThat(syncCalls).isEqualTo(1)
+        assertThat(app.librarySyncJob?.isActive).isTrue()
+
+        // A second onStart while the first sync is still suspended on releaseFirstSync must not
+        // launch a second, concurrent sync racing the first one against the same DAO.
+        controller.start()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertThat(syncCalls).isEqualTo(1)
+
+        releaseFirstSync.complete(Unit)
+        idleUntil { app.librarySyncJob?.isActive != true }
         assertThat(syncCalls).isEqualTo(1)
     }
 

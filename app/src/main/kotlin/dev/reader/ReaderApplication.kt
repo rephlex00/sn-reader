@@ -17,34 +17,19 @@ import kotlinx.coroutines.Job
  * instance here means it is built exactly once per process and lives exactly as long as the
  * process does — the correct lifetime for a handle that Task 6 and Task 8 also need.
  *
- * **The sync guard(s).** [librarySynced] and [librarySyncJob] together guard
- * `LibraryIndexer.sync()` to at most one *successful* run, and at most one *in-flight* run, per
- * process. They used to be a single plain field on `LibraryActivity` ("started"), set true right
- * before launching the sync, whose KDoc claimed it guarded `runLibrary` to "once per process"
- * while it was actually an *instance* field that resets on every Activity recreation — including
- * a rotation, which is not a fresh entry to the library screen per the plan's "indexing runs once
- * on library entry" constraint. Rotation destroys and recreates the Activity but not the
- * Application, so a flag that actually means "once per process" has to live here.
- *
- * Splitting the single flag into two fields (rather than restoring the original one-field design
- * at Application scope) closes two holes that a single "set before launching" flag reintroduces
- * the moment the work it guards is Activity-scoped instead of Application-scoped — see
- * [dev.reader.ui.LibraryActivity.runLibrary]'s KDoc for the full reasoning:
- *
- * 1. A rotation or Back press *during* the first-run sync cancels [dev.reader.data.LibraryIndexer.sync]
- *    (it runs on `lifecycleScope`, which dies with the Activity) partway through. If the flag were
- *    still set beforehand, the recreated Activity (same process) would see it as "already synced"
- *    and never retry — every book the aborted sync never reached would be permanently missing
- *    from the grid until the process dies. [librarySynced] is instead set only when `sync()`
- *    actually *returns*, so a cancelled or failed run is retried on the next entry — cheap, since
- *    the diff is incremental (unchanged files open nothing).
- * 2. Because the flag is no longer set up front, `onResume` re-checking the guard immediately
- *    after `onCreate` returns (the two fire back-to-back in the normal Activity lifecycle, before
- *    the just-launched sync's `withContext(Dispatchers.IO)` has had any chance to complete) would
- *    otherwise see the flag still false and launch a *second* concurrent sync racing the first
- *    one against the same DB. [librarySyncJob] tracks the in-flight [Job] itself so that race is
- *    closed too: a guard check only proceeds when neither "already succeeded" nor "already
- *    running" holds.
+ * **The sync guard.** [librarySyncJob] prevents two concurrent [dev.reader.data.LibraryIndexer.sync]
+ * calls from racing the same DAO — see [dev.reader.ui.LibraryActivity.onStart]'s KDoc for why
+ * [dev.reader.ui.LibraryActivity] re-syncs on *every* entry rather than once per process. There used
+ * to be a second field here, `librarySynced`, tracking whether a sync had ever completed
+ * successfully in this process; it is gone. It was the owner-ruled-out design: a book side-loaded
+ * while the process was alive (which on this e-ink device can mean days) never appeared until the
+ * process died, because nothing re-ran the diff on a mere return to the library screen. That field
+ * had also caused two separate stranded-library bugs in review (see git history on this file) —
+ * both were a variant of "the flag says done, but the work it was set for got cancelled or never
+ * covered this path." Deleting it removes the state that made those bugs possible: there is no
+ * longer anything that can claim "already synced" out from under a sync that didn't actually run to
+ * completion. [librarySyncJob] alone remains, because it guards a genuinely different property
+ * (no two syncs in flight at once, ever) that re-syncing on every entry does not retire.
  */
 class ReaderApplication : Application() {
 
@@ -53,15 +38,20 @@ class ReaderApplication : Application() {
     }
 
     /**
-     * True only once a sync has *completed successfully* in this process — never set merely
-     * because one was started. See the class doc for why "started" was the wrong signal.
-     */
-    var librarySynced: Boolean = false
-
-    /**
      * The currently in-flight (or most recently launched) sync [Job], if any. `null` before the
-     * first sync of this process ever launches. Checked via `?.isActive` — a completed,
-     * cancelled, or failed job reads `false` and does not block a retry.
+     * first sync of this process ever launches. Checked via `?.isActive` — a completed, cancelled,
+     * or failed job reads `false` and does not block the next entry's sync.
+     *
+     * Lives here, not on [dev.reader.ui.LibraryActivity], for the same reason as [database]: a
+     * rotation destroys and recreates the Activity but not the Application, and the guard has to
+     * survive that recreation to close a real race. The sync itself runs on the Activity's
+     * `lifecycleScope`, so a rotation cancels it — but cancellation is requested synchronously
+     * (`Job.cancel()`) while the coroutine only *notices* at its next suspension point, on a
+     * background dispatcher, asynchronously. In that narrow window the old job can still read
+     * `isActive == true` even though it's already been told to stop. An Activity-scoped guard would
+     * be blind to that job entirely (a fresh instance means a fresh, `null` guard) and could launch
+     * a second sync racing the still-unwinding first one against the same DAO. Application scope
+     * sees the same [Job] reference across the recreation and correctly waits it out.
      */
     var librarySyncJob: Job? = null
 }
