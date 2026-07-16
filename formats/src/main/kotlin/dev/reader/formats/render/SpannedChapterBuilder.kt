@@ -1,14 +1,23 @@
 package dev.reader.formats.render
 
+import android.graphics.Color
 import android.graphics.Typeface
+import android.text.Layout
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.style.AlignmentSpan
+import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.RelativeSizeSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.TypefaceSpan
+import android.text.style.UnderlineSpan
 import dev.reader.engine.Block
+import dev.reader.engine.BlockStyle
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.StyledText
+import dev.reader.engine.TextAlign
+import kotlin.math.roundToInt
 import android.text.style.StyleSpan as AndroidStyleSpan
 
 /** A chapter as a single styled string, plus the offsets where a hard page break falls. */
@@ -55,24 +64,38 @@ class SpannedChapterBuilder {
 
     private fun appendBlock(sb: SpannableStringBuilder, block: Block, config: RenderConfig) {
         when (block) {
-            is Block.Paragraph -> appendStyled(sb, block.text)
+            is Block.Paragraph -> {
+                val start = sb.length
+                appendStyled(sb, block.text, config)
+                applyBlockStyle(sb, start, sb.length, block.style, config)
+            }
 
             is Block.Heading -> {
                 val start = sb.length
-                appendStyled(sb, block.text)
-                sb.setSpan(
-                    RelativeSizeSpan(HEADING_SCALE.getValue(block.level)),
-                    start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
+                appendStyled(sb, block.text, config)
+                // A Heading may now also carry the publisher's own size on its run. Applying
+                // both the semantic HEADING_SCALE and that RelativeSizeSpan would double-enlarge,
+                // so when the publisher specified a size (and styling is on) that size wins and
+                // the semantic scale is skipped — the scale is only the fallback for when the
+                // publisher said nothing about size. The heading stays bold either way.
+                val publisherSizedHeading = config.publisherStyling &&
+                    block.text.spans.any { it.style.sizeRatio != null }
+                if (!publisherSizedHeading) {
+                    sb.setSpan(
+                        RelativeSizeSpan(HEADING_SCALE.getValue(block.level)),
+                        start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                }
                 sb.setSpan(
                     AndroidStyleSpan(Typeface.BOLD),
                     start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
+                applyBlockStyle(sb, start, sb.length, block.style, config)
             }
 
             is Block.Quote -> {
                 val start = sb.length
-                appendStyled(sb, block.text)
+                appendStyled(sb, block.text, config)
                 sb.setSpan(
                     LeadingMarginSpan.Standard(config.textSizePx.toInt()),
                     start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
@@ -81,11 +104,14 @@ class SpannedChapterBuilder {
                     AndroidStyleSpan(Typeface.ITALIC),
                     start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
+                applyBlockStyle(sb, start, sb.length, block.style, config)
             }
 
             is Block.ListItem -> {
+                val start = sb.length
                 sb.append(block.ordinal?.let { "$it. " } ?: "• ")
-                appendStyled(sb, block.text)
+                appendStyled(sb, block.text, config)
+                applyBlockStyle(sb, start, sb.length, block.style, config)
             }
 
             // Inline images arrive with the reading UI; a placeholder would be worse than
@@ -100,23 +126,81 @@ class SpannedChapterBuilder {
         }
     }
 
-    private fun appendStyled(sb: SpannableStringBuilder, styled: StyledText) {
+    private fun appendStyled(sb: SpannableStringBuilder, styled: StyledText, config: RenderConfig) {
         val base = sb.length
         sb.append(styled.text)
         for (span in styled.spans) {
-            // The parser emits one span per semantic emphasis, each with exactly one of
-            // bold/italic/monospace set true, so at most one arm applies. The remaining
-            // publisher fields on InlineStyle are ignored here for now; a later task wires
-            // them to spans behind the publisher-styling toggle.
-            val what = when {
-                span.style.bold == true -> AndroidStyleSpan(Typeface.BOLD)
-                span.style.italic == true -> AndroidStyleSpan(Typeface.ITALIC)
-                span.style.monospace == true -> TypefaceSpan("monospace")
-                else -> null
-            }
-            if (what != null) {
-                sb.setSpan(what, base + span.start, base + span.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val style = span.style
+            val from = base + span.start
+            val to = base + span.end
+            fun set(what: Any) = sb.setSpan(what, from, to, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+            // Emphasis is honored regardless of the toggle — it is the reader's baseline,
+            // not publisher decoration. A run may now carry several fields at once (a Task 3
+            // multi-property element emits one single-field span per property over the same
+            // range), so each field is applied independently rather than as one exclusive arm.
+            if (style.bold == true) set(AndroidStyleSpan(Typeface.BOLD))
+            if (style.italic == true) set(AndroidStyleSpan(Typeface.ITALIC))
+            if (style.monospace == true) set(TypefaceSpan("monospace"))
+
+            // The remaining publisher decoration only applies when styling is on; when off
+            // these fields are ignored entirely, leaving today's emphasis-only rendering.
+            if (config.publisherStyling) {
+                // Relative so the reader's base text size still governs — never absolute.
+                style.sizeRatio?.let { set(RelativeSizeSpan(it)) }
+                if (style.underline == true) set(UnderlineSpan())
+                if (style.strikethrough == true) set(StrikethroughSpan())
+                style.letterSpacingEm?.let { set(LetterSpacingSpan(it)) }
+                style.grayLevel?.let {
+                    val g = (it * 255f).roundToInt().coerceIn(0, 255)
+                    set(ForegroundColorSpan(Color.rgb(g, g, g)))
+                }
             }
         }
+    }
+
+    /**
+     * Applies the publisher's block-level style over a block's text range [start, end).
+     * A no-op when publisher styling is off (the reader's whole-chapter alignment,
+     * line-spacing and margins govern instead). Never overrides the reader's text SIZE.
+     *
+     * Alignment: LEFT/RIGHT/CENTER map to an [AlignmentSpan]; JUSTIFY has no per-span
+     * equivalent, so a publisher `text-align: justify` (and the `align == null` fallback
+     * to the reader's default) is left to the whole-chapter justification set on the
+     * StaticLayout in AndroidTextMeasurer. Consequence: whether a paragraph is justified
+     * remains a whole-chapter setting; LEFT/RIGHT/CENTER overrides are honored per-paragraph.
+     *
+     * Line-height: a non-null multiplier sets this block's line height relative to the
+     * font's natural height; it composes with (does not replace) the reader's whole-chapter
+     * line-spacing multiplier, so a null value simply falls back to that reader setting.
+     *
+     * Margins ([BlockStyle.marginTopEm]/[marginBottomEm]) are deliberately NOT applied here:
+     * inter-block spacing would mean a style-driven separator, and the page-break offset
+     * logic in [build] is pinned to the fixed "\n\n" separator length — that invariant was
+     * hardware-tuned and is not worth risking for margin spacing. Deferred; see the plan.
+     */
+    private fun applyBlockStyle(
+        sb: SpannableStringBuilder,
+        start: Int,
+        end: Int,
+        style: BlockStyle,
+        config: RenderConfig,
+    ) {
+        if (!config.publisherStyling || end <= start) return
+        fun set(what: Any) = sb.setSpan(what, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+        style.align?.let { align ->
+            when (align) {
+                TextAlign.LEFT -> Layout.Alignment.ALIGN_NORMAL
+                TextAlign.RIGHT -> Layout.Alignment.ALIGN_OPPOSITE
+                TextAlign.CENTER -> Layout.Alignment.ALIGN_CENTER
+                TextAlign.JUSTIFY -> null // whole-chapter setting; see KDoc
+            }?.let { set(AlignmentSpan.Standard(it)) }
+        }
+        style.textIndentEm?.let { indent ->
+            set(LeadingMarginSpan.Standard((indent * config.textSizePx).roundToInt(), 0))
+        }
+        style.lineHeightMultiplier?.let { set(MultiplierLineHeightSpan(it)) }
+        // marginTopEm / marginBottomEm: deferred — see KDoc.
     }
 }
