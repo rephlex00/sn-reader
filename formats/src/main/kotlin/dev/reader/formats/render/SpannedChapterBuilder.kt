@@ -73,18 +73,22 @@ class SpannedChapterBuilder {
             is Block.Heading -> {
                 val start = sb.length
                 appendStyled(sb, block.text, config)
-                // A Heading may now also carry the publisher's own size on its run. Applying
-                // both the semantic HEADING_SCALE and that RelativeSizeSpan would double-enlarge,
-                // so when the publisher specified a size (and styling is on) that size wins and
-                // the semantic scale is skipped — the scale is only the fallback for when the
-                // publisher said nothing about size. The heading stays bold either way.
-                val publisherSizedHeading = config.publisherStyling &&
-                    block.text.spans.any { it.style.sizeRatio != null }
-                if (!publisherSizedHeading) {
-                    sb.setSpan(
-                        RelativeSizeSpan(HEADING_SCALE.getValue(block.level)),
-                        start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                    )
+                // A Heading may now also carry the publisher's own size on individual runs.
+                // Applying both the semantic HEADING_SCALE and a run's RelativeSizeSpan would
+                // double-enlarge that run, so the semantic scale is applied only to the sub-ranges
+                // the publisher did NOT size — the scale is the fallback for text the publisher
+                // said nothing about. A run the publisher sized keeps exactly its size; the rest
+                // of the heading still reads as a heading. The whole heading stays bold either way.
+                val scale = HEADING_SCALE.getValue(block.level)
+                val sizedRuns = if (config.publisherStyling) {
+                    block.text.spans.filter { it.style.sizeRatio != null }
+                        .map { start + it.start to start + it.end }
+                } else {
+                    emptyList()
+                }
+                for ((from, to) in unsizedRanges(start, sb.length, sizedRuns)) {
+                    // A fresh span per range: one RelativeSizeSpan instance can only occupy one range.
+                    sb.setSpan(RelativeSizeSpan(scale), from, to, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 sb.setSpan(
                     AndroidStyleSpan(Typeface.BOLD),
@@ -124,6 +128,28 @@ class SpannedChapterBuilder {
 
             Block.PageBreak -> Unit
         }
+    }
+
+    /**
+     * The maximal sub-ranges of `[from, to)` NOT covered by any of the [covered] ranges — the gaps
+     * between publisher-sized heading runs, where the semantic heading scale still applies. [covered]
+     * ranges are clamped to the heading and merged; the returned gaps are in order and non-empty.
+     * With no covered ranges this is just `[from, to)` (the ordinary whole-heading scale).
+     */
+    private fun unsizedRanges(from: Int, to: Int, covered: List<Pair<Int, Int>>): List<Pair<Int, Int>> {
+        if (covered.isEmpty()) return if (to > from) listOf(from to to) else emptyList()
+        val merged = covered
+            .map { (s, e) -> maxOf(s, from) to minOf(e, to) }
+            .filter { (s, e) -> e > s }
+            .sortedBy { it.first }
+        val gaps = mutableListOf<Pair<Int, Int>>()
+        var cursor = from
+        for ((s, e) in merged) {
+            if (s > cursor) gaps += cursor to s
+            cursor = maxOf(cursor, e)
+        }
+        if (cursor < to) gaps += cursor to to
+        return gaps
     }
 
     private fun appendStyled(sb: SpannableStringBuilder, styled: StyledText, config: RenderConfig) {

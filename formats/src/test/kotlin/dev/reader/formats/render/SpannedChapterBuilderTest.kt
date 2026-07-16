@@ -416,6 +416,41 @@ class SpannedChapterBuilderTest {
     }
 
     @Test
+    fun `a heading sizes only its publisher-sized run, scaling the rest`() {
+        // "Chapter One" where only "One" carries a publisher size: "One" keeps 1.29, and the rest
+        // ("Chapter ") still gets the semantic heading scale rather than dropping to body size.
+        val text = builder.build(
+            listOf(Block.Heading(1, StyledText("Chapter One", listOf(StyleSpan(8, 11, InlineStyle(sizeRatio = 1.29f)))))),
+            config,
+        ).text
+        val sizes = text.getSpans(0, text.length, RelativeSizeSpan::class.java)
+        assertThat(sizes).hasLength(2)
+        // The publisher-sized run "One" [8,11) at 1.29.
+        val onOne = text.getSpans(8, 11, RelativeSizeSpan::class.java).map { it.sizeChange }
+        assertThat(onOne).containsExactly(1.29f)
+        // "Chapter " [0,8) at the level-1 semantic scale.
+        val onChapter = text.getSpans(0, 8, RelativeSizeSpan::class.java).map { it.sizeChange }
+        assertThat(onChapter).containsExactly(1.6f)
+    }
+
+    @Test
+    fun `break offsets are identical whether publisher styling is on or off`() {
+        // The toggle only gates setSpan calls, never text appends, so a chapter's page-break
+        // offsets must not move with it — the reader can flip styling mid-book without shifting
+        // where pages break. Pins the invariant §5 depends on, with styling actually ON.
+        val blocks = listOf(
+            Block.Paragraph(StyledText("First")),
+            Block.PageBreak,
+            Block.Heading(1, StyledText("Two", listOf(StyleSpan(0, 3, InlineStyle(sizeRatio = 2f))))),
+            Block.Paragraph(StyledText("Body", listOf(StyleSpan(0, 4, InlineStyle(underline = true))))),
+        )
+        val on = builder.build(blocks, config).breakOffsets
+        val off = builder.build(blocks, config.copy(publisherStyling = false)).breakOffsets
+        assertThat(on).isEqualTo(off)
+        assertThat(on).isNotEmpty()
+    }
+
+    @Test
     fun `a heading with a publisher size still uses the semantic scale when styling is off`() {
         val text = builder.build(
             listOf(Block.Heading(1, StyledText("Title", listOf(StyleSpan(0, 5, InlineStyle(sizeRatio = 1.29f)))))),
