@@ -59,6 +59,24 @@
                 android:textColor="@android:color/black"
                 android:textSize="18sp" />
 
+            <!-- Opens the table-of-contents panel. Like Back, the only clickable thing in its own
+                 footprint, so it consumes its own tap while page-area taps fall through to dismiss. -->
+            <TextView
+                android:id="@+id/contents_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="12dp"
+                android:text="Contents"
+                android:textColor="@android:color/black"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
             <!-- Opens the typography sheet below. Like Back, it is the only clickable thing on its
                  row, so it consumes its own tap while page-area taps fall through to dismiss. -->
             <TextView
@@ -293,5 +311,62 @@
         </LinearLayout>
 
     </ScrollView>
+
+    <!-- The table-of-contents panel: a full-height monochrome list of the book's already-parsed
+         chapters (doc.toc), opened by the Contents button and toggled by visibility (one e-ink
+         redraw, no animation). It is clickable=true so a tap on its own chrome is consumed rather
+         than falling through to dismiss the overlay. Tapping an entry jumps the reader to that
+         chapter/anchor via the same restore machinery the open path uses (see
+         ReaderActivity.jumpToToc). Starts GONE. Drawn last, so it covers the bars while open; Back
+         peels it off first (TOC -> overlay -> book). An empty/malformed TOC shows the "No contents"
+         state (toc_empty) with the list hidden. -->
+    <LinearLayout
+        android:id="@+id/toc_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/white"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="16dp"
+            android:text="Contents"
+            android:textColor="@android:color/black"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="@android:color/black" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/toc_list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="vertical" />
+
+        <!-- Shown (with toc_list hidden) when the book has no usable TOC — never an empty clickable
+             void. Unreachable for a well-formed EPUB, since the parser synthesizes a flat spine TOC
+             when neither nav nor NCX is present, but the reader must still degrade gracefully. -->
+        <TextView
+            android:id="@+id/toc_empty"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="No contents"
+            android:textColor="@android:color/black"
+            android:textSize="16sp"
+            android:visibility="gone" />
+
+    </LinearLayout>
 
 </FrameLayout>
