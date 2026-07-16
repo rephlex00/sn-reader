@@ -122,6 +122,55 @@ class BookGridAdapterBindTest {
         adapter.blockDecode!!.countDown()
     }
 
+    @Test
+    fun `a mode toggle superseded by a newer submission still forces the view-type rebind`() {
+        // AsyncListDiffer drops a submission's commit callback when a newer submission supersedes
+        // it mid-diff. The toggle's full rebind used to ride on exactly that callback, so a Room
+        // emission landing right after a toggle swallowed the rebind and left holders painted in
+        // the old presentation. The pending-invalidation flag must make the WINNING submission
+        // perform it instead. Both render calls below land before any main-looper idle, so the
+        // second deterministically supersedes the first inside the differ.
+        val adapter = TestableAdapter(scope)
+        adapter.render(listOf(bookRow("/a.epub", coverPath = null)), ViewMode.TILES)
+        idleUntil { adapter.currentList.size == 1 }
+
+        var fullRebinds = 0
+        adapter.registerAdapterDataObserver(object : androidx.recyclerview.widget.RecyclerView.AdapterDataObserver() {
+            override fun onChanged() {
+                fullRebinds++
+            }
+        })
+
+        adapter.render(listOf(bookRow("/a.epub", coverPath = null)), ViewMode.LIST) // the toggle
+        adapter.render( // the superseding emission, same mode
+            listOf(bookRow("/a.epub", coverPath = null), bookRow("/b.epub", coverPath = null)),
+            ViewMode.LIST,
+        )
+        idleUntil { adapter.currentList.size == 2 }
+
+        assertThat(fullRebinds).isAtLeast(1)
+        assertThat(adapter.getItemViewType(0)).isEqualTo(BookGridAdapter.VIEW_TYPE_BOOK_ROW)
+    }
+
+    @Test
+    fun `an unreadable book's list row shows the reason end to end`() {
+        // statusText is unit-tested, but this pins the actual bound TextView: the row a user sees
+        // must carry the reason, not just the pure helper's return value.
+        val adapter = TestableAdapter(scope)
+        val broken = book("/broken.epub", coverPath = null)
+            .copy(unreadable = true, unreadableReason = "torn zip")
+        adapter.render(listOf(LibraryRow.Book(broken)), ViewMode.LIST)
+        idleUntil { adapter.currentList.size == 1 }
+
+        val holder = adapter.onCreateViewHolder(
+            FrameLayout(RuntimeEnvironment.getApplication()),
+            BookGridAdapter.VIEW_TYPE_BOOK_ROW,
+        ) as BookGridAdapter.BookRowViewHolder
+        adapter.onBindViewHolder(holder, 0)
+
+        assertThat(holder.status.text.toString()).isEqualTo("Unreadable: torn zip")
+    }
+
     /** [BookGridAdapter] whose decode is latched, so tests control exactly when it finishes. */
     private class TestableAdapter(scope: CoroutineScope) : BookGridAdapter(scope, onBookClick = {}, onFolderClick = {}) {
         val decodeEntered = CountDownLatch(1)

@@ -142,25 +142,41 @@ open class BookGridAdapter(
     }
 
     /**
+     * True when a [viewMode] change has happened but the full rebind it requires has not been
+     * dispatched yet. Cleared by [commitPendingModeInvalidation], which every [render] submission
+     * passes as its commit callback. The flag — rather than hanging `notifyDataSetChanged` directly
+     * off the mode-changing submission — is what makes the toggle race-proof: [AsyncListDiffer]
+     * drops a submission's commit callback when a NEWER submission supersedes it mid-diff, so a
+     * Room emission landing right after a toggle would silently swallow the rebind and leave
+     * holders painted in the old presentation. With the flag, whichever submission wins the
+     * generation race performs the invalidation.
+     */
+    private var modeInvalidationPending = false
+
+    /**
      * Submit the rows to show and the mode to show them in, in one call. When only the rows change
-     * (a new Room emission, a folder descent, a flatten/sort change) this is a plain `submitList`
-     * and DiffUtil does the minimal rebind. When the **mode** changes the row list is typically
-     * identical, so DiffUtil would compute no change and leave every holder painted in the old
-     * presentation — a view-type switch needs each holder recreated, so this forces a full rebind
-     * once the list has committed. [RecyclerView.setItemAnimator] is null (see [LibraryActivity]),
-     * so that full rebind is a single clean redraw, not an animated cross-fade — a toggle stays
-     * e-ink-safe.
+     * (a new Room emission, a folder descent, a flatten/sort change) DiffUtil does the minimal
+     * rebind. When the **mode** changes the row list is typically identical, so DiffUtil would
+     * compute no change and leave every holder painted in the old presentation — a view-type
+     * switch needs each holder recreated, so a full rebind is forced once the winning submission
+     * commits (see [modeInvalidationPending] for why it must be the *winning* one, not this one).
+     * [RecyclerView.setItemAnimator] is null (see [LibraryActivity]), so that full rebind is a
+     * single clean redraw, not an animated cross-fade — a toggle stays e-ink-safe.
      */
     fun render(rows: List<LibraryRow>, mode: ViewMode) {
-        if (mode == viewMode) {
-            submitList(rows)
-            return
+        if (mode != viewMode) {
+            viewMode = mode
+            modeInvalidationPending = true
         }
-        viewMode = mode
-        // Commit the (usually identical) list first, then invalidate everything so RecyclerView
-        // re-queries getItemViewType and recreates holders in the new presentation. Plain
-        // submitList alone would no-op on identical content and never swap the view types.
-        submitList(rows) { notifyDataSetChanged() }
+        submitList(rows) { commitPendingModeInvalidation() }
+    }
+
+    private fun commitPendingModeInvalidation() {
+        if (!modeInvalidationPending) return
+        modeInvalidationPending = false
+        // Invalidate everything so RecyclerView re-queries getItemViewType and recreates holders
+        // in the new presentation. Runs after the commit, so it rebinds the committed rows.
+        notifyDataSetChanged()
     }
 
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
