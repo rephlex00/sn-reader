@@ -97,6 +97,54 @@ class EpubDocumentTest {
     }
 
     @Test
+    fun `paginate returns a chapter without touching the cache`() {
+        openStandard().use {
+            // A pure compute: it must NOT cache. Proven by a subsequent chapter() still being a
+            // cold miss — if paginate had populated the cache, chapter() would return that instance.
+            val computed = it.paginate(0, config)
+            val cached = it.chapter(0, config)
+            assertThat(cached).isNotSameInstanceAs(computed)
+            // ...and it produces the same result a chapter() miss would (same page structure).
+            assertThat(computed.pages).isEqualTo(cached.pages)
+        }
+    }
+
+    @Test
+    fun `publish caches a paginate result only when the config still matches`() {
+        openStandard().use {
+            // Seed cacheConfig by touching chapter 0, then publish a precomputed chapter 1.
+            it.chapter(0, config)
+            val precomputed = it.paginate(1, config)
+            assertThat(it.publish(1, config, precomputed)).isTrue()
+            // Now chapter(1) is a hit returning exactly the published instance — no recompute.
+            assertThat(it.chapter(1, config)).isSameInstanceAs(precomputed)
+        }
+    }
+
+    @Test
+    fun `publish discards a result whose config is stale`() {
+        openStandard().use {
+            it.chapter(0, config) // cacheConfig = config
+            val staleConfig = config.copy(textSizePx = 64f)
+            val precomputed = it.paginate(1, staleConfig)
+            // The reader changed typography since the prefetch began: cacheConfig != staleConfig.
+            assertThat(it.publish(1, staleConfig, precomputed)).isFalse()
+            // chapter(1) under the CURRENT config recomputes, never returning the stale instance.
+            assertThat(it.chapter(1, config)).isNotSameInstanceAs(precomputed)
+        }
+    }
+
+    @Test
+    fun `publish is a no-op when the chapter is already cached`() {
+        openStandard().use {
+            val real = it.chapter(0, config)
+            val precomputed = it.paginate(0, config)
+            assertThat(it.publish(0, config, precomputed)).isFalse()
+            assertThat(it.chapter(0, config)).isSameInstanceAs(real)
+        }
+    }
+
+    @Test
     fun `rejects a spine index out of range`() {
         openStandard().use {
             val tooHigh = runCatching { it.chapter(99, config) }.exceptionOrNull()

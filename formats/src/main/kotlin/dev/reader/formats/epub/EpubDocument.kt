@@ -72,7 +72,9 @@ class EpubDocument private constructor(
      * nothing after the first call.
      *
      * NOT thread-safe: [cacheConfig] and [cache] are unsynchronized. Callers must confine
-     * all calls to a single thread.
+     * all calls to a single thread. Background prefetch must call the pure [paginate] off the
+     * main thread and publish through [publish] on a main-thread hop — never [chapter] — because
+     * the cache is a `LinkedHashMap(accessOrder = true)` where even a read mutates link order.
      */
     fun chapter(spineIndex: Int, config: RenderConfig): PaginatedChapter {
         require(spineIndex in pkg.spine.indices) {
@@ -82,16 +84,43 @@ class EpubDocument private constructor(
             cache.clear()
             cacheConfig = config
         }
-        return cache.getOrPut(spineIndex) {
-            val blocks = readBlocks(spineIndex, config)
-            val measured = measurer.measure(blocks, config)
-            val pages = if (blocks.isEmpty()) {
-                emptyList()
-            } else {
-                paginator.paginate(measured, config.contentHeightPx)
-            }
-            PaginatedChapter(measured, pages)
+        return cache.getOrPut(spineIndex) { paginate(spineIndex, config) }
+    }
+
+    /**
+     * Measures and paginates chapter [spineIndex] under [config] WITHOUT touching the cache — a
+     * pure function of its inputs (and the immutable archive). This is the compute half of
+     * [chapter], split out so a background prefetch can run it off the main thread (StaticLayout
+     * construction is off-main-thread-safe) and then hand the result to [publish] on a main-thread
+     * hop. It reads no cache state and writes none, so it is safe to call concurrently with a
+     * main-thread page turn.
+     */
+    fun paginate(spineIndex: Int, config: RenderConfig): PaginatedChapter {
+        require(spineIndex in pkg.spine.indices) {
+            "spineIndex $spineIndex out of range 0..${pkg.spine.lastIndex}"
         }
+        val blocks = readBlocks(spineIndex, config)
+        val measured = measurer.measure(blocks, config)
+        val pages = if (blocks.isEmpty()) {
+            emptyList()
+        } else {
+            paginator.paginate(measured, config.contentHeightPx)
+        }
+        return PaginatedChapter(measured, pages)
+    }
+
+    /**
+     * Publishes a [paginate] result into the cache, but ONLY if [config] still matches the cache's
+     * current config — i.e. the reader has not changed a typography setting since the background
+     * prefetch began (which would have made this result stale). Returns true if published. Main
+     * thread only, like [chapter], since it touches [cache]/[cacheConfig]. A no-op if the entry is
+     * already cached (a real read raced ahead) or the config moved on.
+     */
+    fun publish(spineIndex: Int, config: RenderConfig, chapter: PaginatedChapter): Boolean {
+        if (cacheConfig != config) return false
+        if (cache.containsKey(spineIndex)) return false
+        cache[spineIndex] = chapter
+        return true
     }
 
     private fun readBlocks(spineIndex: Int, config: RenderConfig): List<Block> {
