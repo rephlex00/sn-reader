@@ -2,7 +2,9 @@ package dev.reader.formats.render
 
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.Block
+import dev.reader.engine.InlineStyle
 import dev.reader.engine.RenderConfig
+import dev.reader.engine.StyleSpan
 import dev.reader.engine.StyledText
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -82,6 +84,25 @@ class AndroidTextMeasurerTest {
         val large = measurer.measure(text, config.copy(textSizePx = 64f))
 
         assertThat(large.lineCount).isGreaterThan(small.lineCount)
+    }
+
+    @Test
+    fun `a publisher size ratio enlarges the run only when styling is on`() {
+        // A run scaled to 3x spans more lines when honored; when the toggle is off the
+        // RelativeSizeSpan is never created, so the same content stays compact. This proves
+        // the publisher span flows all the way through StaticLayout measurement.
+        val blocks = listOf(
+            Block.Paragraph(
+                StyledText(
+                    "word ".repeat(120).trim(),
+                    listOf(StyleSpan(0, 200, InlineStyle(sizeRatio = 3f))),
+                ),
+            ),
+        )
+        val on = measurer.measure(blocks, config.copy(publisherStyling = true))
+        val off = measurer.measure(blocks, config.copy(publisherStyling = false))
+
+        assertThat(on.lineCount).isGreaterThan(off.lineCount)
     }
 
     @Test
