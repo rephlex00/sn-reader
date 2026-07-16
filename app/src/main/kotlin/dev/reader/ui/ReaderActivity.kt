@@ -196,13 +196,10 @@ open class ReaderActivity : AppCompatActivity() {
             return
         }
 
-        val renderConfig = RenderConfig(
-            fontFamily = "serif",
-            textSizePx = 34f,
-            lineSpacingMultiplier = 1.4f,
-            marginPx = 48,
-            justified = true,
-            hyphenated = true,
+        // The typography now comes from persisted settings (ReaderPrefs) rather than literals;
+        // only the viewport is per-open, measured from the view just above. Defaults equal the
+        // old literals, so an untouched install renders identically.
+        val renderConfig = ReaderPrefs(this).renderConfig(
             viewportWidthPx = width,
             viewportHeightPx = height,
         )
