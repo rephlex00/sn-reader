@@ -41,7 +41,7 @@ class SpannedChapterBuilderTest {
     @Test
     fun `maps a bold run onto an android style span`() {
         val chapter = builder.build(
-            listOf(para("A bold word.", listOf(StyleSpan(2, 6, InlineStyle.BOLD)))),
+            listOf(para("A bold word.", listOf(StyleSpan(2, 6, InlineStyle(bold = true))))),
             config,
         )
         val spans = chapter.text.getSpans(0, chapter.text.length, AndroidStyleSpan::class.java)
@@ -55,7 +55,7 @@ class SpannedChapterBuilderTest {
     @Test
     fun `offsets spans of later blocks by the preceding text`() {
         val chapter = builder.build(
-            listOf(para("One."), para("A bold word.", listOf(StyleSpan(2, 6, InlineStyle.BOLD)))),
+            listOf(para("One."), para("A bold word.", listOf(StyleSpan(2, 6, InlineStyle(bold = true))))),
             config,
         )
         val span = chapter.text.getSpans(0, chapter.text.length, AndroidStyleSpan::class.java).single()
@@ -141,7 +141,7 @@ class SpannedChapterBuilderTest {
     @Test
     fun `list ordinal prefix shifts the item's spans`() {
         val chapter = builder.build(
-            listOf(Block.ListItem(StyledText("bold", listOf(StyleSpan(0, 4, InlineStyle.BOLD))), 1)),
+            listOf(Block.ListItem(StyledText("bold", listOf(StyleSpan(0, 4, InlineStyle(bold = true)))), 1)),
             config,
         )
         val span = chapter.text.getSpans(0, chapter.text.length, AndroidStyleSpan::class.java).single()

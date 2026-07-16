@@ -7,7 +7,6 @@ import android.text.style.LeadingMarginSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.TypefaceSpan
 import dev.reader.engine.Block
-import dev.reader.engine.InlineStyle
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.StyledText
 import android.text.style.StyleSpan as AndroidStyleSpan
@@ -105,12 +104,19 @@ class SpannedChapterBuilder {
         val base = sb.length
         sb.append(styled.text)
         for (span in styled.spans) {
-            val what = when (span.style) {
-                InlineStyle.BOLD -> AndroidStyleSpan(Typeface.BOLD)
-                InlineStyle.ITALIC -> AndroidStyleSpan(Typeface.ITALIC)
-                InlineStyle.MONOSPACE -> TypefaceSpan("monospace")
+            // The parser emits one span per semantic emphasis, each with exactly one of
+            // bold/italic/monospace set true, so at most one arm applies. The remaining
+            // publisher fields on InlineStyle are ignored here for now; a later task wires
+            // them to spans behind the publisher-styling toggle.
+            val what = when {
+                span.style.bold == true -> AndroidStyleSpan(Typeface.BOLD)
+                span.style.italic == true -> AndroidStyleSpan(Typeface.ITALIC)
+                span.style.monospace == true -> TypefaceSpan("monospace")
+                else -> null
             }
-            sb.setSpan(what, base + span.start, base + span.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (what != null) {
+                sb.setSpan(what, base + span.start, base + span.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
     }
 }

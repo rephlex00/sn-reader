@@ -431,9 +431,9 @@ class XhtmlBlockParser {
     }
 
     private fun inlineStyleOf(tag: String): InlineStyle? = when (tag) {
-        "b", "strong" -> InlineStyle.BOLD
-        "i", "em", "cite", "dfn" -> InlineStyle.ITALIC
-        "code", "kbd", "samp", "tt" -> InlineStyle.MONOSPACE
+        "b", "strong" -> InlineStyle(bold = true)
+        "i", "em", "cite", "dfn" -> InlineStyle(italic = true)
+        "code", "kbd", "samp", "tt" -> InlineStyle(monospace = true)
         else -> null
     }
 
@@ -457,8 +457,8 @@ class XhtmlBlockParser {
 
     private fun cssEmphasisStyles(declarations: Map<String, String>): Set<InlineStyle> {
         val out = mutableSetOf<InlineStyle>()
-        if (declarations["font-style"] in ITALIC_KEYWORDS) out += InlineStyle.ITALIC
-        if (isBoldValue(declarations["font-weight"])) out += InlineStyle.BOLD
+        if (declarations["font-style"] in ITALIC_KEYWORDS) out += InlineStyle(italic = true)
+        if (isBoldValue(declarations["font-weight"])) out += InlineStyle(bold = true)
         return out
     }
 

@@ -42,8 +42,8 @@ class XhtmlBlockParserTest {
 
         assertThat(text.text).isEqualTo("A bold and italic word.")
         assertThat(text.spans).containsExactly(
-            StyleSpan(2, 6, InlineStyle.BOLD),
-            StyleSpan(11, 17, InlineStyle.ITALIC),
+            StyleSpan(2, 6, InlineStyle(bold = true)),
+            StyleSpan(11, 17, InlineStyle(italic = true)),
         )
     }
 
@@ -54,8 +54,8 @@ class XhtmlBlockParserTest {
 
         assertThat(text.text).isEqualTo("bold both")
         assertThat(text.spans).containsExactly(
-            StyleSpan(5, 9, InlineStyle.ITALIC),
-            StyleSpan(0, 9, InlineStyle.BOLD),
+            StyleSpan(5, 9, InlineStyle(italic = true)),
+            StyleSpan(0, 9, InlineStyle(bold = true)),
         )
     }
 
@@ -66,7 +66,7 @@ class XhtmlBlockParserTest {
 
         assertThat(text.text).isEqualTo("A spaced word here.")
         // "A spaced " is 9 chars, so the bold run must start at 9.
-        assertThat(text.spans).containsExactly(StyleSpan(9, 13, InlineStyle.BOLD))
+        assertThat(text.spans).containsExactly(StyleSpan(9, 13, InlineStyle(bold = true)))
     }
 
     @Test
@@ -158,7 +158,7 @@ class XhtmlBlockParserTest {
         val text = (blocks.single() as Block.Paragraph).text
 
         assertThat(text.text).isEqualTo("text")
-        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle.BOLD))
+        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle(bold = true)))
     }
 
     @Test
@@ -167,7 +167,7 @@ class XhtmlBlockParserTest {
         val text = (blocks.single() as Block.Paragraph).text
 
         assertThat(text.text).isEqualTo("The end.")
-        assertThat(text.spans).containsExactly(StyleSpan(0, 8, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(0, 8, InlineStyle(italic = true)))
     }
 
     @Test
@@ -176,7 +176,7 @@ class XhtmlBlockParserTest {
         val text = (blocks.single() as Block.Paragraph).text
 
         assertThat(text.text).isEqualTo("xy")
-        assertThat(text.spans).containsExactly(StyleSpan(1, 2, InlineStyle.BOLD))
+        assertThat(text.spans).containsExactly(StyleSpan(1, 2, InlineStyle(bold = true)))
     }
 
     // --- Finding 2: inline style spans must survive an <img> flush mid-run ---
@@ -188,13 +188,13 @@ class XhtmlBlockParserTest {
         assertThat(blocks).hasSize(3)
         val first = (blocks[0] as Block.Paragraph).text
         assertThat(first.text).isEqualTo("Hello wo")
-        assertThat(first.spans).containsExactly(StyleSpan(6, 8, InlineStyle.BOLD))
+        assertThat(first.spans).containsExactly(StyleSpan(6, 8, InlineStyle(bold = true)))
 
         assertThat(blocks[1]).isInstanceOf(Block.Image::class.java)
 
         val second = (blocks[2] as Block.Paragraph).text
         assertThat(second.text).isEqualTo("rld!")
-        assertThat(second.spans).containsExactly(StyleSpan(0, 3, InlineStyle.BOLD))
+        assertThat(second.spans).containsExactly(StyleSpan(0, 3, InlineStyle(bold = true)))
     }
 
     @Test
@@ -204,7 +204,7 @@ class XhtmlBlockParserTest {
         assertThat(blocks).hasSize(3)
         val after = (blocks[2] as Block.Paragraph).text
         assertThat(after.text).isEqualTo("this is a long bold run")
-        assertThat(after.spans).containsExactly(StyleSpan(0, 23, InlineStyle.BOLD))
+        assertThat(after.spans).containsExactly(StyleSpan(0, 23, InlineStyle(bold = true)))
     }
 
     @Test
@@ -267,7 +267,7 @@ class XhtmlBlockParserTest {
         assertThat(text.text).isEqualTo("Quoted text.")
         // This span is the exact property that regressed in `visitContainerChildren`
         // (identical markup, `<div>` instead of `<blockquote>`) before fix wave 3.
-        assertThat(text.spans).containsExactly(StyleSpan(7, 11, InlineStyle.BOLD))
+        assertThat(text.spans).containsExactly(StyleSpan(7, 11, InlineStyle(bold = true)))
     }
 
     // --- Wave 2, finding 1: blockquote must walk ALL children in document order, not just p/div ---
@@ -396,8 +396,8 @@ class XhtmlBlockParserTest {
         val before = (blocks[0] as Block.Paragraph).text
         assertThat(before.text).isEqualTo("ab")
         assertThat(before.spans).containsExactly(
-            StyleSpan(0, 2, InlineStyle.BOLD),
-            StyleSpan(1, 2, InlineStyle.ITALIC),
+            StyleSpan(0, 2, InlineStyle(bold = true)),
+            StyleSpan(1, 2, InlineStyle(italic = true)),
         )
 
         assertThat(blocks[1]).isInstanceOf(Block.Image::class.java)
@@ -405,8 +405,8 @@ class XhtmlBlockParserTest {
         val after = (blocks[2] as Block.Paragraph).text
         assertThat(after.text).isEqualTo("cd")
         assertThat(after.spans).containsExactly(
-            StyleSpan(0, 1, InlineStyle.ITALIC),
-            StyleSpan(0, 2, InlineStyle.BOLD),
+            StyleSpan(0, 1, InlineStyle(italic = true)),
+            StyleSpan(0, 2, InlineStyle(bold = true)),
         )
     }
 
@@ -418,7 +418,7 @@ class XhtmlBlockParserTest {
         val text = (blocks.single() as Block.Paragraph).text
 
         assertThat(text.text).isEqualTo("Hi bold")
-        assertThat(text.spans).containsExactly(StyleSpan(3, 7, InlineStyle.BOLD))
+        assertThat(text.spans).containsExactly(StyleSpan(3, 7, InlineStyle(bold = true)))
     }
 
     // --- Wave 2, minor 6: zero-length style at a flush must not throw and must not appear ---
@@ -432,7 +432,7 @@ class XhtmlBlockParserTest {
 
         val after = (blocks[1] as Block.Paragraph).text
         assertThat(after.text).isEqualTo("x")
-        assertThat(after.spans).containsExactly(StyleSpan(0, 1, InlineStyle.BOLD))
+        assertThat(after.spans).containsExactly(StyleSpan(0, 1, InlineStyle(bold = true)))
     }
 
     // --- Fix wave 3: a container with MIXED inline content must accumulate one run, not
@@ -447,7 +447,7 @@ class XhtmlBlockParserTest {
         assertThat(blocks).hasSize(1)
         val text = (blocks.single() as Block.Paragraph).text
         assertThat(text.text).isEqualTo("Quoted text.")
-        assertThat(text.spans).containsExactly(StyleSpan(7, 11, InlineStyle.BOLD))
+        assertThat(text.spans).containsExactly(StyleSpan(7, 11, InlineStyle(bold = true)))
     }
 
     @Test
@@ -457,7 +457,7 @@ class XhtmlBlockParserTest {
         assertThat(blocks).hasSize(1)
         val text = (blocks.single() as Block.Paragraph).text
         assertThat(text.text).isEqualTo("Hello world!")
-        assertThat(text.spans).containsExactly(StyleSpan(6, 11, InlineStyle.BOLD))
+        assertThat(text.spans).containsExactly(StyleSpan(6, 11, InlineStyle(bold = true)))
     }
 
     // --- Fix wave 3, minor 1: unifying the container/blockquote walks makes routing <ul>/<ol>
@@ -482,7 +482,7 @@ class XhtmlBlockParserTest {
         val blocks = parse("""<p>A <span class="italic">word</span>.</p>""", css)
         val text = (blocks.single() as Block.Paragraph).text
         assertThat(text.text).isEqualTo("A word.")
-        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle(italic = true)))
     }
 
     @Test
@@ -490,7 +490,7 @@ class XhtmlBlockParserTest {
         val css = CssRules.parse(".b { font-weight: 700 }")
         val blocks = parse("""<p>A <span class="b">word</span>.</p>""", css)
         val text = (blocks.single() as Block.Paragraph).text
-        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.BOLD))
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle(bold = true)))
     }
 
     @Test
@@ -506,14 +506,14 @@ class XhtmlBlockParserTest {
         val css = CssRules.parse(".o { font-style: oblique }")
         val blocks = parse("""<p>A <span class="o">word</span>.</p>""", css)
         val text = (blocks.single() as Block.Paragraph).text
-        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle(italic = true)))
     }
 
     @Test
     fun `inline style attribute produces emphasis`() {
         val blocks = parse("""<p>A <span style="font-style:italic">word</span>.</p>""")
         val text = (blocks.single() as Block.Paragraph).text
-        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle(italic = true)))
     }
 
     @Test
@@ -523,8 +523,8 @@ class XhtmlBlockParserTest {
         val text = (blocks.single() as Block.Paragraph).text
         assertThat(text.text).isEqualTo("x")
         assertThat(text.spans).containsExactly(
-            StyleSpan(0, 1, InlineStyle.BOLD),
-            StyleSpan(0, 1, InlineStyle.ITALIC),
+            StyleSpan(0, 1, InlineStyle(bold = true)),
+            StyleSpan(0, 1, InlineStyle(italic = true)),
         )
     }
 
@@ -594,7 +594,7 @@ class XhtmlBlockParserTest {
         val css = CssRules.parse(".italic { font-style: italic }")
         val blocks = parse("""<p>A <span class="italic">word</span>.</p>""", css, inferHeadings = false)
         val text = (blocks.single() as Block.Paragraph).text
-        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(2, 6, InlineStyle(italic = true)))
     }
 
     @Test
@@ -617,7 +617,7 @@ class XhtmlBlockParserTest {
         val blocks = parse("""<p class="t">A <span class="italic">word</span></p>""", css)
         val h = blocks.single() as Block.Heading
         assertThat(h.text.text).isEqualTo("A word")
-        assertThat(h.text.spans).containsExactly(StyleSpan(2, 6, InlineStyle.ITALIC))
+        assertThat(h.text.spans).containsExactly(StyleSpan(2, 6, InlineStyle(italic = true)))
     }
 
     @Test
@@ -661,7 +661,7 @@ class XhtmlBlockParserTest {
         assertThat(blocks).hasSize(1)
         val text = (blocks.single() as Block.Paragraph).text
         assertThat(text.text).isEqualTo("A line of verse.")
-        assertThat(text.spans).containsExactly(StyleSpan(0, 16, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(0, 16, InlineStyle(italic = true)))
     }
 
     @Test
@@ -684,7 +684,7 @@ class XhtmlBlockParserTest {
         val text = (blocks.single() as Block.Paragraph).text
 
         assertThat(text.text).isEqualTo("x")
-        assertThat(text.spans).containsExactly(StyleSpan(0, 1, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(0, 1, InlineStyle(italic = true)))
     }
 
     // --- Fix wave 1, finding 2: heading inference must look through a sole text-bearing
@@ -783,7 +783,7 @@ class XhtmlBlockParserTest {
         assertThat(blocks).hasSize(1)
         val text = (blocks.single() as Block.Paragraph).text
         assertThat(text.text).isEqualTo("lead middle tail")
-        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle(italic = true)))
     }
 
     @Test
@@ -815,7 +815,7 @@ class XhtmlBlockParserTest {
         assertThat(blocks).hasSize(1)
         val text = (blocks.single() as Block.Paragraph).text
         assertThat(text.text).isEqualTo("lead middle tail")
-        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle.ITALIC))
+        assertThat(text.spans).containsExactly(StyleSpan(0, 4, InlineStyle(italic = true)))
     }
 
     @Test
