@@ -8,11 +8,12 @@ package dev.reader.engine
  * means the publisher specified it; whether that value is honored is the *builder's*
  * decision, not this model's (it is gated on the publisher-styling toggle at render time).
  *
- * The parser resolves publisher CSS into these fields. As of this task only [bold],
- * [italic] and [monospace] are ever populated — they mirror the three semantic emphases
- * the previous enum carried. The remaining fields ([sizeRatio], [underline],
- * [strikethrough], [letterSpacingEm], [grayLevel]) exist in the shape but stay null
- * everywhere; the parser begins populating them in a later task.
+ * The parser resolves the publisher's honored CSS into every field: [bold]/[italic] from
+ * font-weight/style, [monospace] from a monospace font-family, [sizeRatio] from font-size
+ * (as a ratio, see below), [underline]/[strikethrough] from text-decoration,
+ * [letterSpacingEm] from letter-spacing, and [grayLevel] from color. A field the publisher
+ * left unspecified stays null. Whether a resolved value is actually rendered is decided at
+ * render time by the publisher-styling toggle, not here.
  *
  * @property sizeRatio font size **relative** to the reader's base size, never an absolute
  *   point size — a publisher size is resolved to a ratio against the document baseline so
@@ -35,9 +36,13 @@ data class InlineStyle(
  * Paragraph-level resolved style.
  *
  * Every field is optional and defaults to null, with the same meaning as [InlineStyle]:
- * **null means the publisher specified nothing and the reader's default applies.** As of
- * this task the parser never populates any field — the shape exists so downstream tasks
- * can carry resolved block styling without another model change.
+ * **null means the publisher specified nothing and the reader's default applies.** The
+ * parser resolves [align] from text-align, [textIndentEm] from text-indent, [marginTopEm]/
+ * [marginBottomEm] from margins, and [lineHeightMultiplier] from line-height. Whether a
+ * resolved value is rendered is a render-time decision: text-align and text-indent are
+ * applied under the publisher-styling toggle, while margins and line-height are resolved
+ * but deliberately not applied (see [dev.reader.formats.render] — margins are deferred and
+ * line spacing is always the reader's).
  */
 data class BlockStyle(
     val align: TextAlign? = null,
