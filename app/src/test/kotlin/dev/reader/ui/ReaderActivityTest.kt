@@ -4,7 +4,9 @@ import android.content.Intent
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import com.google.common.truth.Truth.assertThat
+import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
 import dev.reader.engine.RenderConfig
@@ -224,6 +226,125 @@ class ReaderActivityTest {
             .isEqualTo("Reader needs all-files access to open books.")
     }
 
+    // -- Plan 4 Task 2: the reading overlay (the way out) --------------------------------------
+
+    @Test
+    fun `scrubberText reads chapter-relative, one-based`() {
+        assertThat(scrubberText(0, 5)).isEqualTo("page 1 of 5 · 4 left in chapter")
+        assertThat(scrubberText(4, 5)).isEqualTo("page 5 of 5 · 0 left in chapter")
+    }
+
+    @Test
+    fun `a center tap shows the overlay and a second center tap hides it`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.VISIBLE)
+
+        // The real second physical tap lands on the overlay, but onTap is the specified toggle and
+        // is what the harness can drive; invoking it again must hide.
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `a page-area tap while the overlay is shown dismisses it without turning the page`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        val before = scrubberTextOf(activity)
+
+        // A PREVIOUS/NEXT/center tap that reaches pageView while the overlay is up only dismisses.
+        pageViewOf(activity).onTap!!.invoke(TapZone.PREVIOUS)
+
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+        assertThat(scrubberTextOf(activity)).isEqualTo(before) // page did not change
+    }
+
+    @Test
+    fun `a NEXT tap while the overlay is shown does not advance the page`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        val before = scrubberTextOf(activity)
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.NEXT)
+
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+        assertThat(scrubberTextOf(activity)).isEqualTo(before)
+        assertThat(before).startsWith("page 1 of ") // still on the first page
+    }
+
+    @Test
+    fun `system Back closes the overlay when shown and finishes when hidden`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.VISIBLE)
+
+        // Overlay shown: Back only closes it, does not finish.
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+        assertThat(activity.isFinishing).isFalse()
+
+        // Overlay hidden: Back leaves the book.
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertThat(activity.isFinishing).isTrue()
+    }
+
+    @Test
+    fun `the scrubber shows the current page and updates after a turn`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+
+        // Y comes from the Activity's own pagination (its production RenderConfig can paginate
+        // differently from testRenderConfig), read straight off the live readout.
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        val opened = scrubberTextOf(activity)
+        assertThat(opened).matches("""page 1 of \d+ · \d+ left in chapter""")
+        val y = Regex("""of (\d+)""").find(opened)!!.groupValues[1].toInt()
+        assertThat(opened).isEqualTo(scrubberText(0, y))
+
+        // Hide, then turn a page (turns only happen while the overlay is hidden). The readout must
+        // reflect the new page the next time the overlay opens.
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        pageViewOf(activity).onTap!!.invoke(TapZone.NEXT)
+        assertThat(scrubberTextOf(activity)).isEqualTo(scrubberText(1, y))
+    }
+
+    @Test
+    fun `the overlay Back control finishes to the library`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        // The first page must be shown (scrubber populated) before onTap is wired.
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        // Turn a page so there is a real position on disk, then leave via the Back control.
+        pageViewOf(activity).onTap!!.invoke(TapZone.NEXT)
+        idleUntil { rowFor(app, book.path)!!.charOffset != 0 }
+
+        activity.findViewById<View>(R.id.back).performClick()
+
+        assertThat(activity.isFinishing).isTrue()
+        // The turned-to position is persisted (exit flushes; every turn already persisted its own).
+        assertThat(rowFor(app, book.path)!!.charOffset).isGreaterThan(0)
+    }
+
+    @Test
+    fun `the overlay title comes from the book metadata`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        // multiPageEpub's OPF declares <dc:title>Long</dc:title>.
+        assertThat(activity.findViewById<TextView>(R.id.book_title).text.toString()).isEqualTo("Long")
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** [ReaderActivity] subclass whose test seams are set per-test via mutable fields. */
@@ -266,6 +387,18 @@ class ReaderActivityTest {
 
     private fun readerFor(intent: Intent): ActivityController<TestableReaderActivity> =
         Robolectric.buildActivity(TestableReaderActivity::class.java, intent)
+
+    /**
+     * A reader opened on a real multi-page book and driven until its first page is shown (the
+     * scrubber readout populated), so overlay tests can drive taps against a live document.
+     */
+    private fun openedMultiPage(): ActivityController<TestableReaderActivity> {
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+        return controller
+    }
 
     private fun intentWithExtra(path: String): Intent =
         Intent(RuntimeEnvironment.getApplication(), TestableReaderActivity::class.java)
@@ -351,9 +484,20 @@ class ReaderActivityTest {
         }
     }
 
-    /** The [PageView] the Activity set as its content view — the tap sink production drives too. */
-    private fun pageViewOf(activity: ReaderActivity): PageView =
-        (activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0) as PageView)
+    /**
+     * The [PageView], the tap sink production drives too. It is now the first child of the content
+     * [android.widget.FrameLayout] container that also holds the overlay on top of it (Plan 4 Task 2).
+     */
+    private fun pageViewOf(activity: ReaderActivity): PageView {
+        val container = activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0) as ViewGroup
+        return container.getChildAt(0) as PageView
+    }
+
+    /** The reading overlay root — visibility is the observable overlay state. */
+    private fun overlayOf(activity: ReaderActivity): View = activity.findViewById(R.id.reader_overlay)
+
+    private fun scrubberTextOf(activity: ReaderActivity): String =
+        activity.findViewById<TextView>(R.id.scrubber).text.toString()
 
     /** Reads back the row for [path] on a background thread (Room forbids main-thread queries). */
     private fun rowFor(app: ReaderApplication, path: String): BookEntity? =

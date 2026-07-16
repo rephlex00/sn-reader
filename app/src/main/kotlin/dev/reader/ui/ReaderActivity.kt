@@ -2,11 +2,16 @@ package dev.reader.ui
 
 import android.os.Bundle
 import android.os.Environment
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
+import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.engine.Locator
 import dev.reader.engine.PageNavigator
@@ -27,6 +32,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+/**
+ * The overlay's read-only page readout, chapter-relative: `page X of Y · N left in chapter`, where
+ * X is 1-based ([pageIndex] + 1), Y is [pageCount], and N is the pages remaining after this one.
+ * A pure function of its two ints — the testable seam behind the scrubber, keeping the string out
+ * of the View. [pageIndex] is 0-based and expected in `0 until pageCount`.
+ */
+internal fun scrubberText(pageIndex: Int, pageCount: Int): String {
+    val page = pageIndex + 1
+    val left = pageCount - page
+    return "page $page of $pageCount · $left left in chapter"
+}
 
 /**
  * Opens one EPUB and turns its pages.
@@ -51,6 +68,16 @@ import java.io.File
 open class ReaderActivity : AppCompatActivity() {
 
     private lateinit var pageView: PageView
+
+    /**
+     * The reading chrome, drawn above [pageView] in the content [FrameLayout] and toggled by the
+     * center tap. It holds no timer, observer or animation: showing and hiding is a single
+     * `visibility` flip (one e-ink redraw), so an open OR closed overlay costs nothing at rest.
+     */
+    private lateinit var overlay: View
+    private lateinit var titleView: TextView
+    private lateinit var scrubberView: TextView
+
     private var document: EpubDocument? = null
     private var navigator: PageNavigator? = null
     private var state = ReadingState(0, 0)
@@ -86,13 +113,59 @@ open class ReaderActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pageView = PageView(this)
-        setContentView(pageView)
+
+        // Wrap the page in a container so the overlay can draw ABOVE it. The overlay is added after
+        // pageView, so it sits on top; it is not clickable itself, so page-area taps fall through to
+        // pageView (which dismisses the overlay) while its Back control consumes its own tap.
+        val container = FrameLayout(this)
+        container.addView(pageView, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        overlay = layoutInflater.inflate(R.layout.overlay_reader, container, false)
+        container.addView(overlay)
+        titleView = overlay.findViewById(R.id.book_title)
+        scrubberView = overlay.findViewById(R.id.scrubber)
+        overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
+        setContentView(container)
+
+        // System Back is the reader's other way out (the Nomad's hardware/gesture Back does not
+        // finish this Activity on its own). Additive — there is no onBackPressed override. Overlay
+        // shown: Back only closes it. Overlay hidden: Back leaves the book, flushing position first.
+        onBackPressedDispatcher.addCallback(this) {
+            if (isOverlayVisible()) {
+                hideOverlay()
+            } else {
+                exitToLibrary()
+            }
+        }
 
         if (!isAllFilesAccessGranted()) {
             requestAllFilesAccess()
             return
         }
         pageView.doOnLayout { openFirstBook() }
+    }
+
+    /** Whether the reading chrome is currently on screen. */
+    private fun isOverlayVisible(): Boolean = overlay.visibility == View.VISIBLE
+
+    /** Reveals the reading chrome — one redraw, no animation. */
+    private fun showOverlay() {
+        overlay.visibility = View.VISIBLE
+    }
+
+    /** Dismisses the reading chrome — one redraw, no animation. */
+    private fun hideOverlay() {
+        overlay.visibility = View.GONE
+    }
+
+    /**
+     * Leaves the book for the library. Flushes the current position first (every page turn already
+     * persists its own, so this normally drains nothing — it is the backstop for the open-time
+     * write), then finishes. Wired to both the overlay Back control and system Back with the
+     * overlay hidden.
+     */
+    private fun exitToLibrary() {
+        flushPosition()
+        finish()
     }
 
     override fun onResume() {
@@ -245,6 +318,11 @@ open class ReaderActivity : AppCompatActivity() {
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
 
+                // The overlay title. Prefer the book's own metadata title; fall back to the file
+                // name (never crash on a missing/blank title — a book may carry neither).
+                titleView.text = doc.metadata.title.takeIf { it.isNotBlank() }
+                    ?: File(file.path).nameWithoutExtension
+
                 // The stored position for this book, if it is in the library. getByPath is the only
                 // read on IO; resolveStart and every chapter() below stay on the main thread, as
                 // chapter()'s unsynchronized cache requires. A book not in the library (the
@@ -352,6 +430,15 @@ open class ReaderActivity : AppCompatActivity() {
      * below is main-thread-confined, as `EpubDocument.chapter()`'s unsynchronized cache requires.
      */
     private fun onTap(zone: TapZone) {
+        // While the overlay is up, any tap that reaches pageView is on the page area (the overlay's
+        // Back control sits above pageView and consumes its own tap), so it dismisses the overlay
+        // and turns NO page — not even a PREVIOUS/NEXT zone tap. Paired with the TOGGLE_OVERLAY show
+        // below, the center tap is a true toggle: hidden -> show here, shown -> hide here.
+        if (isOverlayVisible()) {
+            hideOverlay()
+            return
+        }
+
         val nav = navigator ?: return
         val doc = document ?: return
         val cfg = config ?: return
@@ -371,8 +458,12 @@ open class ReaderActivity : AppCompatActivity() {
             val next = when (zone) {
                 TapZone.NEXT -> advance(nav, state, pageCountFor)
                 TapZone.PREVIOUS -> retreat(nav, state, pageCountFor)
-                // The overlay arrives with the reading chrome in Plan 4.
-                TapZone.TOGGLE_OVERLAY -> null
+                // Overlay hidden (the visible case returned above): reveal it. No page turn, so
+                // this arm yields null and the showPage/flush below is skipped.
+                TapZone.TOGGLE_OVERLAY -> {
+                    showOverlay()
+                    null
+                }
             }
             // null = nowhere to go (start/end of book, or everything beyond is empty): stay put and
             // draw nothing, so a tap at the end of the book costs no invalidate — and nothing to
@@ -402,6 +493,11 @@ open class ReaderActivity : AppCompatActivity() {
 
         val pageIndex = next.pageIndex.coerceIn(0, chapter.pages.lastIndex)
         state = next.copy(pageIndex = pageIndex)
+
+        // Keep the overlay's read-only readout current with the page just shown, so it is right the
+        // next time the overlay opens. Reuses the chapter already fetched above — no extra work, and
+        // page turns only happen while the overlay is hidden anyway.
+        scrubberView.text = scrubberText(pageIndex, chapter.pages.size)
 
         // Unchecked downcast through the TextMeasurer seam: MeasuredChapter itself stays
         // Android-free, but PageView needs the real StaticLayout to draw. Safe today because
