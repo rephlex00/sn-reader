@@ -31,10 +31,17 @@ android {
 
 dependencies {
     implementation(project(":formats"))
+    // Task 5 wires the seam: :data owns LibraryIndexer/BookDao, :app supplies the
+    // EPUB-backed MetadataExtractor that composes it with :formats. :data declares Room
+    // as `implementation`, not `api`, so :app also needs room-runtime directly below to
+    // call Room.databaseBuilder(...) itself.
+    implementation(project(":data"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx) // lifecycleScope in ReaderActivity
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.recyclerview) // grid only: Views, no Compose
+    implementation(libs.androidx.room.runtime)
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sorting is in SQL (BookDao.observeAllSorted) — this menu only selects the SortOrder;
+     nothing here re-sorts a list in Kotlin. -->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/sort_title"
+        android:title="Title" />
+    <item
+        android:id="@+id/sort_author"
+        android:title="Author" />
+    <item
+        android:id="@+id/sort_recently_added"
+        android:title="Recently added" />
+    <item
+        android:id="@+id/sort_recently_opened"
+        android:title="Recently opened" />
+</menu>

@@ -1,11 +1,7 @@
 package dev.reader.ui
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.provider.Settings
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.doOnLayout
@@ -30,7 +26,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Opens the first EPUB found under the Supernote's /Document folder and turns its pages.
+ * Opens one EPUB and turns its pages.
+ *
+ * Normally launched from [LibraryActivity] with [EXTRA_BOOK_PATH] set to the tapped book's path.
+ * Still works standalone (e.g. `adb shell am start -n dev.reader/.ui.ReaderActivity`, as Plan 2
+ * Task 1's device measurement used) — with no extra, it falls back to [findFirstEpub], exactly
+ * its pre-library behavior.
  *
  * All calls into [EpubDocument.chapter] happen from this Activity's UI thread (either directly
  * from a lifecycleScope coroutine resumed on Dispatchers.Main, or from [PageView]'s tap
@@ -68,7 +69,7 @@ class ReaderActivity : AppCompatActivity() {
         pageView = PageView(this)
         setContentView(pageView)
 
-        if (!Environment.isExternalStorageManager()) {
+        if (!hasAllFilesAccess()) {
             requestAllFilesAccess()
             return
         }
@@ -77,7 +78,7 @@ class ReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (document == null && !opening && Environment.isExternalStorageManager()) {
+        if (document == null && !opening && hasAllFilesAccess()) {
             pageView.doOnLayout { openFirstBook() }
         }
     }
@@ -88,38 +89,8 @@ class ReaderActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    /**
-     * Supernote keeps user books in /Document; reading them in place is the whole point,
-     * so all-files access is the only workable permission on Android 11.
-     *
-     * This is the one path every first-time user takes, and the one path we could not verify
-     * on hardware: Supernote ships a heavily customized Android 11 build where stripped-down
-     * Settings screens are common, and the per-package all-files screen
-     * (ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION) is exactly the kind of narrow, deep-linked
-     * screen a customized ROM tends to drop, throwing ActivityNotFoundException. Fall back to
-     * the all-apps list screen (ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION, still API 30), and if
-     * even that isn't present, tell the user where to grant access by hand instead of crashing.
-     */
-    private fun requestAllFilesAccess() {
-        showMessage("Grant all-files access so Reader can open books in your Document folder.")
-        try {
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                    Uri.parse("package:$packageName"),
-                )
-            )
-        } catch (e: ActivityNotFoundException) {
-            try {
-                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-            } catch (e2: ActivityNotFoundException) {
-                showMessage(
-                    "Couldn't open Settings automatically. Please grant Reader " +
-                        "\"All files access\" from Settings > Apps > Special access."
-                )
-            }
-        }
-    }
+    /** The path handed in by [LibraryActivity], if any — see [EXTRA_BOOK_PATH]. */
+    private fun explicitBookFile(): File? = intent.getStringExtra(EXTRA_BOOK_PATH)?.let(::File)
 
     private fun openFirstBook() {
         if (document != null || opening) return
@@ -161,7 +132,7 @@ class ReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             var opened: EpubDocument? = null
             try {
-                val file = withContext(Dispatchers.IO) { findFirstEpub() }
+                val file = withContext(Dispatchers.IO) { explicitBookFile() ?: findFirstEpub() }
                 if (file == null) {
                     // Not a permanent failure: the user may drop a book in and come back, and
                     // onResume re-arms only while `opening` is false.
@@ -301,5 +272,10 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun showMessage(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    companion object {
+        /** String extra: an absolute book path, set by [LibraryActivity] when opening a tap. */
+        const val EXTRA_BOOK_PATH = "dev.reader.ui.EXTRA_BOOK_PATH"
     }
 }

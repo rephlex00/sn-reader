@@ -9,13 +9,25 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Reader">
 
+        <!-- The library grid is now the app's entry point (Plan 2, Task 5). -->
         <activity
-            android:name=".ui.ReaderActivity"
+            android:name=".ui.LibraryActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          ReaderActivity keeps its own entry: still directly launchable by component name (e.g.
+          `adb shell am start -n dev.reader/.ui.ReaderActivity`, as Plan 2 Task 1's device
+          measurement did, or standalone testing) even with no LAUNCHER intent-filter of its own —
+          `am start -n` addresses a component directly regardless of intent-filters. Not a second
+          LAUNCHER: two MAIN/LAUNCHER activities would show two icons on the Nomad's home screen.
+        -->
+        <activity
+            android:name=".ui.ReaderActivity"
+            android:exported="true" />
     </application>
 </manifest>
