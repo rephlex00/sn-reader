@@ -154,6 +154,35 @@ class EpubCoverExtractorTest {
         assertThat(fileBytes[25].toInt()).isEqualTo(0)
     }
 
+    // --- Fix wave A, M7: grayscale conversion ignored alpha, so a transparent pixel
+    // (ARGB 0x00000000) converted to BLACK. Transparent must composite on white. ---
+
+    @Test
+    fun `transparent cover pixels composite on white instead of black`() {
+        // 10x10 PNG, fully transparent except one opaque black pixel — small enough that
+        // extraction never scales it, so output pixels map 1:1 to input pixels.
+        val cover = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
+        cover.setPixel(5, 5, Color.BLACK)
+        val png = ByteArrayOutputStream()
+        cover.compress(Bitmap.CompressFormat.PNG, 100, png)
+
+        val epubFile = tempFolder.newFile("book.epub")
+        val source = buildEpub(epubFile) {
+            entry("images/cover.png", png.toByteArray())
+        }
+        val metadata = BookMetadata(title = "Transparent Cover Book", coverHref = "images/cover.png")
+        val destination = tempFolder.newFile("cover-out.png")
+
+        val outcome = extractor.extract(source, metadata, destination)
+
+        assertThat(outcome).isEqualTo(CoverOutcome.EXTRACTED)
+        val bitmap = BitmapFactory.decodeFile(destination.path)
+        // The fully transparent pixel encodes as white (255), not black (0)...
+        assertThat(Color.red(bitmap.getPixel(0, 0))).isEqualTo(255)
+        // ...while a genuinely opaque black pixel still encodes as black.
+        assertThat(Color.red(bitmap.getPixel(5, 5))).isEqualTo(0)
+    }
+
     @Test
     fun `a generated cover is also grayscale`() {
         val epubFile = tempFolder.newFile("book.epub")

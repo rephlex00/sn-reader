@@ -201,6 +201,12 @@ private fun scaleToFit(bitmap: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap {
  * Reduces [source] to one 8-bit ITU-R BT.601 luma byte per pixel, row-major, no padding —
  * not just discarding color while staying in ARGB_8888, which would keep paying the
  * 4-byte-per-pixel cost this whole conversion exists to avoid.
+ *
+ * Alpha is composited on WHITE before the luma is kept: the grayscale PNG written out has
+ * no alpha channel, so simply dropping alpha would turn a transparent pixel (ARGB
+ * 0x00000000 — transparent *black*, the value PNG covers with alpha routinely carry)
+ * into solid black. On paper-white e-ink, transparent regions must read as page
+ * background, not ink.
  */
 private fun toGrayscaleBytes(source: Bitmap): ByteArray {
     val width = source.width
@@ -211,10 +217,13 @@ private fun toGrayscaleBytes(source: Bitmap): ByteArray {
     val gray = ByteArray(width * height)
     for (i in pixels.indices) {
         val p = pixels[i]
+        val a = (p ushr 24) and 0xFF
         val r = (p shr 16) and 0xFF
         val g = (p shr 8) and 0xFF
         val b = p and 0xFF
-        gray[i] = ((r * 77 + g * 151 + b * 28) shr 8).toByte()
+        val luma = (r * 77 + g * 151 + b * 28) shr 8
+        // Composite on white: full alpha keeps luma exactly, zero alpha lands on 255.
+        gray[i] = ((luma * a + 255 * (255 - a)) / 255).toByte()
     }
     return gray
 }
