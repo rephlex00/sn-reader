@@ -149,9 +149,9 @@ class PaginatorTest {
         val newPages = paginator.paginate(chapter, pageHeightPx = 60) // 3 lines/page => 4 pages
         val oldPages = paginator.paginate(chapter, pageHeightPx = 100) // 5 lines/page => 3 pages
 
-        // The reader was on old page 1 (lines 5..9, startOffset 5*40 = 200). Offset 200 lands in the
-        // new pagination's page whose range contains it — new page 3 (lines 9.. no: 200/120 ...),
-        // verified structurally below rather than hand-counted.
+        // For every old page, its top-of-page char offset must land in the new page whose offset
+        // range contains it — the containment property, verified structurally below rather than
+        // hand-counting which new page each old anchor falls into.
         for (oldIndex in oldPages.indices) {
             val newIndex = reflowedPageIndex(oldPages, oldIndex, newPages)
             val landed = newPages[newIndex]

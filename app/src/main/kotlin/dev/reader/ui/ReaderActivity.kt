@@ -255,9 +255,12 @@ open class ReaderActivity : AppCompatActivity() {
 
             mutate(ReaderPrefs(this))
             val newConfig = ReaderPrefs(this).renderConfig(width, height)
-            config = newConfig
 
+            // chapter() takes newConfig as a parameter, so the re-paginate does not need the field
+            // set yet. Reassign config/state only AFTER this (throwing) call succeeds, so a failure
+            // leaves the field agreeing with the page still on screen — the invariant the KDoc states.
             val newPages = doc.chapter(state.spineIndex, newConfig).pages
+            config = newConfig
             val newPageIndex = reflowedPageIndex(oldPages, state.pageIndex, newPages)
             state = ReadingState(state.spineIndex, newPageIndex)
             showPage(state)
