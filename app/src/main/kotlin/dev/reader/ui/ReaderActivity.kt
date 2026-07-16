@@ -850,8 +850,13 @@ open class ReaderActivity : AppCompatActivity() {
      *    read) is skipped rather than needlessly recomputed.
      *  - The idle promise: exactly one coroutine per settle, it runs once and completes. It does not
      *    loop or re-arm; nothing schedules the next prefetch but the user's next turn. A superseded
-     *    in-flight prefetch is cancelled when the next one is scheduled, and all of them are cancelled
-     *    when the book closes (onDestroy cancels [lifecycleScope]).
+     *    in-flight prefetch is cancelled when the next one is scheduled.
+     *  - Teardown: [paginate] is non-suspending CPU/IO work with no cancellation points, so cancelling
+     *    the job (on supersede or onDestroy) does NOT interrupt a paginate already running — and
+     *    onDestroy closes the archive's [ZipFile] on the main thread. A background read can therefore
+     *    find the archive closed under it mid-paginate and throw a raw exception. That is caught and
+     *    dropped below (the result is worthless once the book is closing); it never reaches [publish],
+     *    never corrupts the cache, and never crashes teardown. The nicety simply evaporates.
      *  - Cost: the pagination runs at the lowest JVM thread priority for the span of the call, then
      *    restores the pooled thread's priority, so it yields to anything the user is actively doing.
      */
@@ -867,15 +872,24 @@ open class ReaderActivity : AppCompatActivity() {
         // cancelled paginate is simply discarded (it never reached publish).
         prefetchJob?.cancel()
         prefetchJob = lifecycleScope.launch {
-            val result = withContext(Dispatchers.Default) {
-                val thread = Thread.currentThread()
-                val priorPriority = thread.priority
-                thread.priority = Thread.MIN_PRIORITY // background work yields to the foreground
-                try {
-                    doc.paginate(target, cfg) // off the main thread — race-free by construction
-                } finally {
-                    thread.priority = priorPriority // restore the pooled thread for its next use
+            val result = try {
+                withContext(Dispatchers.Default) {
+                    val thread = Thread.currentThread()
+                    val priorPriority = thread.priority
+                    thread.priority = Thread.MIN_PRIORITY // background work yields to the foreground
+                    try {
+                        doc.paginate(target, cfg) // off the main thread — race-free by construction
+                    } finally {
+                        thread.priority = priorPriority // restore the pooled thread for its next use
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e // a genuine cancel must propagate so the coroutine unwinds
+            } catch (e: Throwable) {
+                // Almost always the archive being closed under us in onDestroy (a raw ZipFile
+                // "closed" ISE that readTextChecked does not translate). A prefetch is a nicety;
+                // drop it rather than let a teardown-time read crash the app.
+                return@launch
             }
             // Back on the main thread (lifecycleScope is Main): publish drops the result if a
             // typography change since the launch moved the cache's config on.
