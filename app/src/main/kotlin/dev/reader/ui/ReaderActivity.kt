@@ -318,8 +318,11 @@ open class ReaderActivity : AppCompatActivity() {
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
 
-                // The overlay title. Prefer the book's own metadata title; fall back to the file
-                // name (never crash on a missing/blank title — a book may carry neither).
+                // The overlay title: the book's own metadata title. The parser already substitutes
+                // "Untitled" for a missing <dc:title>, and the library grid shows that same value —
+                // so we deliberately do NOT override it with the filename here (that would make the
+                // reader disagree with the library). The filename is only a defensive fallback for
+                // the currently-unreachable case of a blank title slipping through.
                 titleView.text = doc.metadata.title.takeIf { it.isNotBlank() }
                     ?: File(file.path).nameWithoutExtension
 
