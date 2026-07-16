@@ -1,12 +1,19 @@
 package dev.reader.formats.render
 
+import android.content.res.Resources
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.text.Layout
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.AlignmentSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.ImageSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StrikethroughSpan
@@ -17,6 +24,7 @@ import dev.reader.engine.BlockStyle
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.StyledText
 import dev.reader.engine.TextAlign
+import dev.reader.formats.epub.sampleSizeFor
 import kotlin.math.roundToInt
 import android.text.style.StyleSpan as AndroidStyleSpan
 
@@ -25,6 +33,13 @@ data class ChapterText(val text: Spanned, val breakOffsets: Set<Int>)
 
 private const val BLOCK_SEPARATOR = "\n\n"
 private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 5 to 1.1f, 6 to 1.05f)
+
+/**
+ * The single character an [ImageSpan] is drawn over — the standard idiom is one placeholder
+ * carrying the span, so the image occupies exactly one character like any other span run and
+ * the page-break offset logic keeps working unchanged. U+FFFC OBJECT REPLACEMENT CHARACTER.
+ */
+private const val IMAGE_PLACEHOLDER = "￼"
 
 /**
  * Flattens [Block]s into one Spanned per chapter. One string per chapter (rather than
@@ -48,12 +63,15 @@ class SpannedChapterBuilder {
             appendBlock(sb, block, config)
             // The break offset is recorded only once a block actually contributes text,
             // and pins to that block's own first character — after the separator, and
-            // past any text-free block (a Block.Image appends nothing) sitting between
-            // the break and the text. Recording eagerly on the next block regardless
-            // would land the break on the blank separator line, opening the new page
-            // with an empty line (or, for a trailing break, a blank final page). A
-            // pending break that never meets another text-bearing block contributes
-            // no break at all.
+            // past any text-free block sitting between the break and the text. A block is
+            // text-free when it appends nothing: a PageBreak always, and an image whose
+            // bytes are null or don't decode. A decodable image DOES contribute text (its
+            // one placeholder character), so a break before it pins to that character —
+            // the image is text-bearing like any paragraph. Recording eagerly on the next
+            // block regardless would land the break on the blank separator line, opening
+            // the new page with an empty line (or, for a trailing break, a blank final
+            // page). A pending break that never meets another text-bearing block
+            // contributes no break at all.
             if (pendingBreak && sb.length > start) {
                 breaks += start
                 pendingBreak = false
@@ -118,16 +136,77 @@ class SpannedChapterBuilder {
                 applyBlockStyle(sb, start, sb.length, block.style, config)
             }
 
-            // Inline images arrive with the reading UI; a placeholder would be worse than
-            // nothing. Known, deliberate asymmetry until the image-rendering plan: an
-            // image-ONLY chapter (cover-image first chapters, commonly) yields one blank
-            // page, while a missing chapter yields zero pages. The reader's first-open
-            // behavior on real books was tuned on hardware around exactly that blank
-            // page — do not "fix" the page count blind; it changes with image rendering.
-            is Block.Image -> Unit
+            // An image whose bytes resolved and decode contributes one placeholder character
+            // carrying an ImageSpan; one whose bytes are null (unresolvable href) or don't
+            // decode appends nothing, exactly as every image did before this plan. So an
+            // image-ONLY chapter (a cover-image-first chapter, commonly) now paginates to ONE
+            // page — the image — rather than the zero it used to; a chapter whose sole image
+            // is broken still yields zero pages. The open path's fresh-open empty-skip
+            // (ReaderActivity.advance / firstNonEmptyFrom) therefore no longer walks past a
+            // cover chapter — a fresh open lands on the cover image, then the reader turns to
+            // the text. A stored-position restore is unaffected: the offset still resolves.
+            is Block.Image -> appendImage(sb, block, config)
 
             Block.PageBreak -> Unit
         }
+    }
+
+    /**
+     * Decodes [block]'s resolved bytes into a downsampled, grayscale [ImageSpan] drawn over a
+     * single [IMAGE_PLACEHOLDER] character. Degrades to appending nothing — never throws — when
+     * the bytes are null (an unresolvable href) or don't decode as an image, matching the
+     * pre-image-rendering behavior for those cases.
+     *
+     * Never decodes a full-resolution image into memory: [BitmapFactory.Options.inJustDecodeBounds]
+     * reads the header first, [sampleSizeFor] picks a power-of-two downsample factor, and only
+     * then is the image decoded for real — the same protection the cover extractor uses (a 16 MB
+     * JPEG decodes to hundreds of MB otherwise). The decoded bitmap is bounded to the content box
+     * ([RenderConfig.contentWidthPx] x [contentHeightPx], aspect preserved, only ever shrunk) and
+     * rendered gray via a saturation-0 colour filter on the drawable — the e-ink panel has no
+     * colour, and a filter avoids allocating a second bitmap just to drop the colour.
+     */
+    private fun appendImage(sb: SpannableStringBuilder, block: Block.Image, config: RenderConfig) {
+        val bytes = block.bytes ?: return
+        val drawable = decodeGrayscaleDrawable(bytes, config.contentWidthPx, config.contentHeightPx) ?: return
+        val start = sb.length
+        sb.append(IMAGE_PLACEHOLDER)
+        sb.setSpan(ImageSpan(drawable, ImageSpan.ALIGN_BASELINE), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
+    private fun decodeGrayscaleDrawable(bytes: ByteArray, maxWidthPx: Int, maxHeightPx: Int): BitmapDrawable? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null // not decodable as an image — BitmapFactory reports this via -1, not a throw
+        }
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxWidthPx, maxHeightPx)
+        }
+        val sampled = try {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        } catch (e: OutOfMemoryError) {
+            // Scoped to the one allocation still sized by untrusted input (the source's real
+            // dimensions, before sampling shrinks them). Should be unreachable given the sampling
+            // above, but a hostile image must degrade to no image, not crash the chapter build.
+            null
+        } ?: return null
+
+        // inSampleSize floors to a power of two >= the request, so the sampled bitmap can still
+        // overshoot the content box; the drawable's bounds (not a second scaled bitmap) shrink it
+        // to fit, preserving aspect ratio and never enlarging an image already smaller than the box.
+        val (targetWidth, targetHeight) = fitWithin(sampled.width, sampled.height, maxWidthPx, maxHeightPx)
+        return BitmapDrawable(Resources.getSystem(), sampled).apply {
+            setBounds(0, 0, targetWidth, targetHeight)
+            // Saturation 0 renders the image gray; the panel is grayscale.
+            colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
+        }
+    }
+
+    /** Fits `width` x `height` within `maxWidth` x `maxHeight`, aspect preserved, shrinking only. */
+    private fun fitWithin(width: Int, height: Int, maxWidth: Int, maxHeight: Int): Pair<Int, Int> {
+        val scale = minOf(maxWidth.toFloat() / width, maxHeight.toFloat() / height, 1f)
+        return (width * scale).toInt().coerceAtLeast(1) to (height * scale).toInt().coerceAtLeast(1)
     }
 
     /**

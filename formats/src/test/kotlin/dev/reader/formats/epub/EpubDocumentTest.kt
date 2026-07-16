@@ -157,6 +157,68 @@ class EpubDocumentTest {
         }
     }
 
+    // --- Inline images (Task 5): readBlocks resolves each Block.Image.href to bytes, and the
+    // builder decodes them to an ImageSpan. A present, decodable image now paginates its
+    // chapter to >= 1 page (it used to drop to zero); a missing/undecodable one degrades. ---
+
+    /** A real, decodable PNG of the given size — solid red. */
+    private fun pngBytes(width: Int, height: Int): ByteArray {
+        val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(bitmap).drawColor(android.graphics.Color.RED)
+        val out = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+        return out.toByteArray()
+    }
+
+    private fun imageOnlyChapterEpub(file: java.io.File, imageEntry: Pair<String, ByteArray>?) = buildEpub(file) {
+        entry("META-INF/container.xml", CONTAINER_XML)
+        entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Cover First</dc:title></metadata>
+  <manifest>
+    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="cover"/><itemref idref="ch1"/></spine>
+</package>""")
+        entry("OEBPS/cover.xhtml", """<html><body><img src="img/cover.png"/></body></html>""")
+        entry("OEBPS/ch1.xhtml", "<html><body><p>First chapter.</p></body></html>")
+        imageEntry?.let { (name, bytes) -> entry(name, bytes) }
+    }
+
+    @Test
+    fun `an inline image resolves to bytes and paginates its chapter to a page`() {
+        val file = temp.newFile("cover-first.epub")
+        imageOnlyChapterEpub(file, "OEBPS/img/cover.png" to pngBytes(600, 900)).close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            // The cover-image-first chapter used to paginate to ZERO pages (image dropped).
+            // With the image resolved and rendered it is now one page — the image.
+            val cover = doc.chapter(0, config)
+            assertThat(cover.pages).isNotEmpty()
+            val text = (cover.measured as AndroidMeasuredChapter).layout.text as Spanned
+            assertThat(text.getSpans(0, text.length, android.text.style.ImageSpan::class.java)).hasLength(1)
+        }
+    }
+
+    @Test
+    fun `an image whose entry is missing degrades to no image and does not throw`() {
+        val file = temp.newFile("broken-image.epub")
+        // The <img> points at OEBPS/img/cover.png, but no such entry is written.
+        imageOnlyChapterEpub(file, imageEntry = null).close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            // Unresolvable href -> null bytes -> the image renders nothing (no ImageSpan), no
+            // throw. This is the pre-image-rendering behavior for that chapter: the image
+            // contributes no text, so the image-only chapter lays out as blank exactly as
+            // before. The text chapter still reads.
+            val cover = doc.chapter(0, config)
+            val text = (cover.measured as AndroidMeasuredChapter).layout.text as Spanned
+            assertThat(text.getSpans(0, text.length, android.text.style.ImageSpan::class.java)).isEmpty()
+            assertThat(doc.chapter(1, config).pages).isNotEmpty()
+        }
+    }
+
     @Test
     fun `a missing chapter file yields an empty chapter rather than throwing`() {
         val file = temp.newFile("broken.epub")
