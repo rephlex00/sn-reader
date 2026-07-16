@@ -63,17 +63,23 @@ private const val BITMAP_CACHE_BYTES = 8 * 1024 * 1024
 /**
  * The library grid. Views only, `RecyclerView` + `GridLayoutManager` (set up by
  * [LibraryActivity]) — no Compose, no image library. Covers decode from [BookEntity.coverPath] on
- * a background dispatcher and are cached in a small [LruCache], bound by path so a slow decode
- * that finishes after its holder has been recycled for a different book can never paint into the
- * wrong cell (the classic RecyclerView async-bind bug): [onBindViewHolder] stamps
- * [ViewHolder.boundCoverPath] before launching the decode, and the coroutine checks it again
- * before calling [ImageView.setImageBitmap].
+ * a background dispatcher and are cached in a small [LruCache], with two layers against the
+ * classic RecyclerView async-bind bug (a slow decode finishing after its holder has been reused
+ * painting into the wrong cell): the in-flight [ViewHolder.job] is cancelled on every
+ * recycle/rebind, and — should a decode ever slip past that — the coroutine re-checks
+ * [ViewHolder.boundCacheKey] before calling [ImageView.setImageBitmap]. The stamp is the full
+ * [coverCacheKey] (path AND mtime), not the bare path: a cover regenerated in place at the same
+ * path is different bytes, and comparing paths would wave the stale decode through.
  *
  * [scope] is expected to be an Activity's `lifecycleScope`: decode jobs are children of it, so
  * they are cancelled automatically if the Activity is destroyed mid-decode, on top of the
  * per-holder cancellation this adapter already does on recycle/rebind.
+ *
+ * `open`, not `final`: [BookGridAdapterBindTest]'s Robolectric coverage substitutes [decodeCover]
+ * via a test subclass — the one point where this class touches real image bytes — to make decode
+ * timing deterministic. No other member is `open`.
  */
-class BookGridAdapter(
+open class BookGridAdapter(
     private val scope: CoroutineScope,
     private val onClick: (BookEntity) -> Unit,
 ) : ListAdapter<BookEntity, BookGridAdapter.ViewHolder>(DIFF_CALLBACK) {
@@ -111,13 +117,14 @@ class BookGridAdapter(
 
     private fun bindCover(holder: ViewHolder, book: BookEntity) {
         val path = book.coverPath
-        holder.boundCoverPath = path
         if (path == null) {
+            holder.boundCacheKey = null
             holder.cover.setImageDrawable(null)
             return
         }
 
         val cacheKey = coverCacheKey(path, book.modifiedAtMs)
+        holder.boundCacheKey = cacheKey
         val cached = bitmapCache.get(cacheKey)
         if (cached != null) {
             holder.cover.setImageBitmap(cached)
@@ -131,9 +138,12 @@ class BookGridAdapter(
             val bitmap = decodeCover(path)
             withContext(Dispatchers.Main.immediate) {
                 if (bitmap != null) bitmapCache.put(cacheKey, bitmap)
-                // The holder may have been rebound to a different book while this decode was
-                // in flight; only paint if it is still bound to the path this decode was for.
-                if (holder.boundCoverPath == path) {
+                // The holder may have been rebound while this decode was in flight; only paint
+                // if it is still bound to the exact (path, mtime) this decode was for. The
+                // cancellation in onBindViewHolder/onViewRecycled normally stops a stale decode
+                // before it gets here — this is the second layer, and it must compare the full
+                // cache key: a same-path rebind with a new mtime is DIFFERENT bytes.
+                if (holder.boundCacheKey == cacheKey) {
                     holder.cover.setImageBitmap(bitmap)
                 }
             }
@@ -145,7 +155,12 @@ class BookGridAdapter(
         holder.job = null
     }
 
-    private fun decodeCover(path: String): Bitmap? = try {
+    /**
+     * Decodes one cover file. `protected open` purely as a test seam: [BookGridAdapterBindTest]
+     * substitutes an implementation that blocks until released, so rebind-cancels-decode and
+     * stale-decode-never-paints are testable deterministically. Always called on [Dispatchers.IO].
+     */
+    protected open fun decodeCover(path: String): Bitmap? = try {
         // RGB_565, not the decoder's ARGB_8888 default: this panel is grayscale, so the alpha
         // channel and extra color precision ARGB_8888 carries are pure waste — RGB_565 halves
         // per-cover memory for free. See BITMAP_CACHE_BYTES for the arithmetic.
@@ -163,10 +178,14 @@ class BookGridAdapter(
         val author: TextView = view.findViewById(R.id.author)
         val status: TextView = view.findViewById(R.id.status)
 
-        /** The cover path this holder's [ImageView] currently reflects (or is waiting to). */
-        var boundCoverPath: String? = null
+        /**
+         * The [coverCacheKey] this holder's [ImageView] currently reflects (or is waiting to) —
+         * the full (path, mtime) key, not the bare path, so an in-flight decode of stale bytes
+         * can never paint after a same-path rebind with a new mtime. Null for a coverless book.
+         */
+        var boundCacheKey: String? = null
 
-        /** The in-flight decode for [boundCoverPath], if any — cancelled on recycle/rebind. */
+        /** The in-flight decode for [boundCacheKey], if any — cancelled on recycle/rebind. */
         var job: Job? = null
     }
 
