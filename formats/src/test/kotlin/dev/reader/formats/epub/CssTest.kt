@@ -408,6 +408,23 @@ class CssTest {
     }
 
     @Test
+    fun `larger and smaller step from the parent's size, not the baseline`() {
+        // Real CSS makes these parent-relative single steps: "larger" under a 2em body is ~2.4,
+        // not a reset to 1.2. The xx-small..xx-large keywords, by contrast, ARE baseline resets.
+        val css = CssRules.parse("body { font-size: 2em } span { font-size: larger }")
+        val larger = css.resolve(listOf(ElementCtx("body"), ElementCtx("span"))).fontSizeRatio
+        assertThat(larger!!).isWithin(1e-4f).of(2.4f)
+
+        val css2 = CssRules.parse("body { font-size: 2em } span { font-size: smaller }")
+        val smaller = css2.resolve(listOf(ElementCtx("body"), ElementCtx("span"))).fontSizeRatio
+        assertThat(smaller!!).isWithin(1e-4f).of(1.66f)
+
+        // No parent size: a bare "larger" steps from the baseline.
+        val css3 = CssRules.parse("span { font-size: larger }")
+        assertThat(css3.resolve(listOf(ElementCtx("span"))).fontSizeRatio!!).isWithin(1e-4f).of(1.2f)
+    }
+
+    @Test
     fun `an absolute font size leaves the composed ratio null but keeps the raw value`() {
         val css = CssRules.parse("body { font-size: 12pt }")
         val computed = css.resolve(listOf(ElementCtx("body")))

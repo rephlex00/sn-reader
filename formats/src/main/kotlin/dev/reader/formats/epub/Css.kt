@@ -203,8 +203,15 @@ class CssRules private constructor(
             val f = m.groupValues[1].toFloatOrNull() ?: return null
             return parentRatio?.let { it * (f / 100f) }
         }
-        // rem and size keywords are relative to the ROOT/baseline → reset composition.
+        // rem and the xx-small..xx-large keywords are relative to the ROOT/baseline → reset
+        // composition. "larger"/"smaller" are the exception: real CSS makes them single steps
+        // relative to the PARENT's computed size, so they multiply like em does (a "larger"
+        // under a 2em body is ~2.4, not 1.2). With no parent ratio they step from the baseline.
         remRegex.matchEntire(v)?.let { m -> return m.groupValues[1].toFloatOrNull() }
+        when (v) {
+            "larger" -> return (parentRatio ?: 1f) * 1.2f
+            "smaller" -> return (parentRatio ?: 1f) * 0.83f
+        }
         keywordSizeRatios[v]?.let { return it }
         // px / pt / anything else: absolute or unknown → composition can't continue.
         return null
@@ -599,7 +606,10 @@ class CssRules private constructor(
         private val percentRegex = Regex("^(-?\\d*\\.?\\d+)%$")
 
         // Conventional CSS absolute-size-keyword ratios (CSS3 §Absolute Size Keywords),
-        // relative to "medium" = 1. "larger"/"smaller" are the single-step relative ratios.
+        // relative to "medium" = 1. "larger"/"smaller" appear here only so shorthand/size-token
+        // DETECTION recognizes them; composeFontSize intercepts both BEFORE this map is consulted
+        // and multiplies the parent ratio instead, because real CSS makes them parent-relative
+        // steps, not baseline resets. Their values below are the no-parent fallback step sizes.
         private val keywordSizeRatios = mapOf(
             "xx-small" to 0.6f,
             "x-small" to 0.75f,
