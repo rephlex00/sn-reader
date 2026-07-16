@@ -111,7 +111,17 @@ class CssRules private constructor(
      * O(depth × candidate-rules): each element in the chain is matched once against
      * the rules its own hooks could reach, and inheritance is a single downward pass.
      */
-    fun resolve(chain: List<ElementCtx>): ComputedStyle {
+    /**
+     * [baselinePx] is the chapter's absolute font-size baseline (mined by the caller from
+     * `body`/`html`), in the same px units the caller uses. When supplied, an absolute
+     * `px`/`pt` font-size anywhere in the chain composes into the ratio as `value / baseline`
+     * — so a relative descendant size below an absolute ancestor (`body{11pt} p{1.4em}`)
+     * still yields a ratio (1.4) rather than breaking composition to null. When null (the
+     * default, and every one-element `declarationsFor` caller), an absolute size breaks
+     * composition exactly as before — there is no baseline to judge it against, and the
+     * plan forbids guessing one.
+     */
+    fun resolve(chain: List<ElementCtx>, baselinePx: Float? = null): ComputedStyle {
         if (chain.isEmpty()) return ComputedStyle(emptyMap(), null)
 
         // Inheritable properties carried from the parent, updated at each level.
@@ -130,7 +140,7 @@ class CssRules private constructor(
             // onto the parent's ratio; an unset size inherits the parent's ratio.
             own["font-size"]?.let { fs ->
                 anyFontSize = true
-                ratio = composeFontSize(ratio, fs)
+                ratio = composeFontSize(ratio, fs, baselinePx)
             }
 
             // The level's computed inheritable props = inherited-from-parent, then
@@ -192,7 +202,7 @@ class CssRules private constructor(
         return result
     }
 
-    private fun composeFontSize(parentRatio: Float?, rawValue: String): Float? {
+    private fun composeFontSize(parentRatio: Float?, rawValue: String, baselinePx: Float?): Float? {
         val v = rawValue.trim()
         // em / % are relative to the PARENT's size → multiply.
         emRegex.matchEntire(v)?.let { m ->
@@ -213,7 +223,21 @@ class CssRules private constructor(
             "smaller" -> return (parentRatio ?: 1f) * 0.83f
         }
         keywordSizeRatios[v]?.let { return it }
-        // px / pt / anything else: absolute or unknown → composition can't continue.
+        // px / pt: absolute. Composable to a ratio only when a baseline is known — then the
+        // ratio is value/baseline and composition continues from that anchor, so relative
+        // descendants below it still resolve. Without a baseline, composition breaks (null),
+        // never a guess. Anything else (unknown unit) also breaks.
+        if (baselinePx != null && baselinePx > 0f) {
+            absolutePx(v)?.let { return it / baselinePx }
+        }
+        return null
+    }
+
+    /** An absolute `px`/`pt` length in px (1pt = 4/3 px), matching XhtmlBlockParser's own
+     *  conversion so a baseline mined there and a size composed here share one unit. */
+    private fun absolutePx(value: String): Float? {
+        cssPxRegex.matchEntire(value)?.let { return it.groupValues[1].toFloatOrNull() }
+        cssPtRegex.matchEntire(value)?.let { m -> return m.groupValues[1].toFloatOrNull()?.times(4f / 3f) }
         return null
     }
 
@@ -603,6 +627,8 @@ class CssRules private constructor(
 
         private val emRegex = Regex("^(-?\\d*\\.?\\d+)em$")
         private val remRegex = Regex("^(-?\\d*\\.?\\d+)rem$")
+        private val cssPxRegex = Regex("^(-?\\d*\\.?\\d+)px$")
+        private val cssPtRegex = Regex("^(-?\\d*\\.?\\d+)pt$")
         private val percentRegex = Regex("^(-?\\d*\\.?\\d+)%$")
 
         // Conventional CSS absolute-size-keyword ratios (CSS3 §Absolute Size Keywords),

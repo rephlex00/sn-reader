@@ -235,7 +235,7 @@ class XhtmlBlockParser {
         inferHeadings: Boolean,
     ) {
         val builder = InlineBuilder()
-        val computed = css.resolve(chain)
+        val computed = css.resolve(chain, baselinePx)
         val flush = flushClosure(builder, out, blockStyleFrom(computed), factory)
         inlineStylesFrom(chain.last().tag, computed).forEach { builder.pushStyle(it) }
         walkRun(el, chapterPath, builder, flush, out, chain, factory, flatten, css, inferHeadings)
@@ -406,7 +406,7 @@ class XhtmlBlockParser {
         factory: (StyledText, BlockStyle) -> Block,
     ) {
         val builder = InlineBuilder()
-        val computed = css.resolve(chain)
+        val computed = css.resolve(chain, baselinePx)
         val flush = flushClosure(builder, out, blockStyleFrom(computed), factory)
         inlineStylesFrom(chain.last().tag, computed).forEach { builder.pushStyle(it) }
         el.childNodes().forEach { walkInline(it, chapterPath, builder, flush, out, chain, css) }
@@ -542,7 +542,7 @@ class XhtmlBlockParser {
      * flows through the same one-span-per-semantic stack as a bare `<b>` does.
      */
     private fun resolveInlineStyles(chain: List<ElementCtx>, css: CssRules): List<InlineStyle> =
-        inlineStylesFrom(chain.last().tag, css.resolve(chain))
+        inlineStylesFrom(chain.last().tag, css.resolve(chain, baselinePx))
 
     /**
      * Maps the honored inline slice of [computed] (plus [tag] semantics) into a list of

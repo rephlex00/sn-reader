@@ -1072,6 +1072,16 @@ class XhtmlBlockParserTest {
     }
 
     @Test
+    fun `a relative size below an absolute-pt body still composes to a ratio`() {
+        // The common authoring pattern: an absolute body baseline with em-scaled descendants.
+        // Composition must not break at the absolute body and drop the 1.4x — body 11pt is the
+        // baseline (ratio 1.0), so the span resolves to 1.4. Sibling text keeps it a Paragraph.
+        val css = CssRules.parse("body { font-size: 11pt } .big { font-size: 1.4em }")
+        val spans = paragraphSpans("""<p>a <span class="big">b</span></p>""", css)
+        assertThat(spans.single().style.sizeRatio!!).isWithin(1e-4f).of(1.4f)
+    }
+
+    @Test
     fun `font-size in px with no baseline yields no size span`() {
         val css = CssRules.parse(".big { font-size: 24px }")
         val spans = paragraphSpans("""<p><span class="big">b</span></p>""", css)
