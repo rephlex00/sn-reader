@@ -141,6 +141,24 @@ class BlocksTest {
         assertThat(image.href).isEqualTo("images/cover.jpg")
     }
 
+    @Test
+    fun `image equality and hashCode ignore the resolved bytes`() {
+        // The bytes are a resolved attachment, not part of the image's identity — the href
+        // names the image. A ByteArray in a data class would compare by array identity and
+        // break this; the override compares by href only. Two Images with the same href but
+        // different (or absent) bytes must be equal and hash alike, so existing Block-equality
+        // tests that construct Images by href stay green once readBlocks attaches bytes.
+        val a = Block.Image("images/x.png", bytes = byteArrayOf(1, 2, 3))
+        val b = Block.Image("images/x.png", bytes = byteArrayOf(4, 5, 6))
+        val c = Block.Image("images/x.png")
+
+        assertThat(a).isEqualTo(b)
+        assertThat(a).isEqualTo(c)
+        assertThat(a.hashCode()).isEqualTo(b.hashCode())
+        assertThat(a.hashCode()).isEqualTo(c.hashCode())
+        assertThat(Block.Image("images/y.png")).isNotEqualTo(a)
+    }
+
     // -- Locator --
 
     @Test

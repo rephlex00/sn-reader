@@ -1,19 +1,29 @@
 package dev.reader.ui
 
+import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Environment
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.engine.Locator
 import dev.reader.engine.PageNavigator
 import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
+import dev.reader.engine.TocEntry
 import dev.reader.engine.advance
 import dev.reader.engine.pageIndexFor
+import dev.reader.engine.reflowedPageIndex
 import dev.reader.engine.retreat
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
@@ -24,9 +34,77 @@ import dev.reader.formats.render.SpannedChapterBuilder
 import dev.reader.formats.render.TypefaceProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+/**
+ * The overlay's read-only page readout, chapter-relative: `page X of Y · N left in chapter`, where
+ * X is 1-based ([pageIndex] + 1), Y is [pageCount], and N is the pages remaining after this one.
+ * A pure function of its two ints — the testable seam behind the scrubber, keeping the string out
+ * of the View. [pageIndex] is 0-based and expected in `0 until pageCount`.
+ */
+internal fun scrubberText(pageIndex: Int, pageCount: Int): String {
+    val page = pageIndex + 1
+    val left = pageCount - page
+    return "page $page of $pageCount · $left left in chapter"
+}
+
+/**
+ * One row of the Contents panel — the display projection of a [TocEntry] for [TocAdapter]. [depth]
+ * drives the indent; [isCurrent] (whether this entry's chapter is the one being read) drives the
+ * bold marker; [spineIndex]/[charOffset] are what a tap jumps to. Kept as a flat data class, out of
+ * the View, so the list-building rules below are unit-testable without a RecyclerView.
+ */
+internal data class TocRow(
+    val title: String,
+    val spineIndex: Int,
+    val charOffset: Int,
+    val depth: Int,
+    val isCurrent: Boolean,
+)
+
+/**
+ * Projects the parsed [toc] into [TocRow]s in list (spine) order, marking every entry whose chapter
+ * is [currentSpineIndex] as the current one. A pure function of its two arguments — the testable
+ * seam behind the Contents list — so order, depth passthrough and current-chapter marking are
+ * verifiable without an Activity. An empty [toc] yields an empty list (the "No contents" case).
+ */
+internal fun tocRows(toc: List<TocEntry>, currentSpineIndex: Int): List<TocRow> =
+    toc.map { entry ->
+        TocRow(
+            title = entry.title,
+            spineIndex = entry.spineIndex,
+            charOffset = entry.charOffset,
+            depth = entry.depth,
+            isCurrent = entry.spineIndex == currentSpineIndex,
+        )
+    }
+
+/**
+ * Resolves the [ReadingState] a Contents tap lands on — the same shape as the open path's
+ * `ReadingSession.resolveStart`, factored out pure so the anchored-offset and degrade-on-empty
+ * rules are testable without a real document.
+ *
+ * A well-formed entry ([pageCountFor] > 0) lands on the page whose range contains [charOffset] via
+ * [offsetToPageIndex] (which the caller backs with [pageIndexFor]), so an anchored entry lands on
+ * its offset, NOT blindly on page 0. An entry pointing at a missing/empty chapter (zero pages)
+ * degrades: it skips forward to the nearest readable chapter via [firstNonEmptyFrom] (the open
+ * path's `advance` empty-skip), returning `null` only if nothing readable remains.
+ */
+internal fun tocTarget(
+    spineIndex: Int,
+    charOffset: Int,
+    pageCountFor: (Int) -> Int,
+    offsetToPageIndex: (Int, Int) -> Int,
+    firstNonEmptyFrom: (Int) -> ReadingState?,
+): ReadingState? =
+    if (pageCountFor(spineIndex) == 0) {
+        firstNonEmptyFrom(spineIndex)
+    } else {
+        ReadingState(spineIndex, offsetToPageIndex(spineIndex, charOffset))
+    }
 
 /**
  * Opens one EPUB and turns its pages.
@@ -51,10 +129,52 @@ import java.io.File
 open class ReaderActivity : AppCompatActivity() {
 
     private lateinit var pageView: PageView
+
+    /**
+     * The reading chrome, drawn above [pageView] in the content [FrameLayout] and toggled by the
+     * center tap. It holds no timer, observer or animation: showing and hiding is a single
+     * `visibility` flip (one e-ink redraw), so an open OR closed overlay costs nothing at rest.
+     */
+    private lateinit var overlay: View
+    private lateinit var titleView: TextView
+    private lateinit var scrubberView: TextView
+
+    /**
+     * The Aa typography sheet — a visibility-toggled panel inside [overlay], opened by the Aa button.
+     * Holds no timer or animation: showing/hiding is one `visibility` flip. Each of its controls
+     * writes a [ReaderPrefs] field then live-re-paginates the current chapter via
+     * [applySettingsChange], keeping the reader on the same text across the reflow.
+     */
+    private lateinit var settingsSheet: View
+
+    /**
+     * The Contents panel — a visibility-toggled, full-height list inside [overlay], opened by the
+     * Contents button. Like [settingsSheet] it holds no timer or animation: showing/hiding is one
+     * `visibility` flip. Its list is [tocList] (backed by [tocAdapter]); [tocEmpty] takes its place
+     * when the book has no usable TOC. Tapping an entry jumps via [jumpToToc].
+     */
+    private lateinit var tocPanel: View
+    private lateinit var tocList: RecyclerView
+    private lateinit var tocEmpty: View
+    private lateinit var tocAdapter: TocAdapter
+
     private var document: EpubDocument? = null
     private var navigator: PageNavigator? = null
     private var state = ReadingState(0, 0)
     private var config: RenderConfig? = null
+
+    /**
+     * The one in-flight adjacent-chapter prefetch, if any (see [schedulePrefetch]). Held only so a
+     * newer settle can cancel a now-superseded prefetch before launching the next — there is never
+     * more than one, and it is one-shot: it paginates a single neighbour off the main thread and
+     * completes. It costs nothing at rest (the idle promise): no timer, no polling, no re-arm — the
+     * next prefetch is launched only by the user's next page turn. Lives on [lifecycleScope], so
+     * leaving the book (onDestroy) cancels a prefetch still in flight.
+     */
+    private var prefetchJob: Job? = null
+
+    /** Page turns since the last full-panel refresh; drives the [REFRESH_CADENCE] ghost-clear. */
+    private var turnsSinceRefresh = 0
 
     /** The pure position-memory logic: the restore rules and the in-memory page-turn debounce. */
     private val session = ReadingSession()
@@ -86,13 +206,277 @@ open class ReaderActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pageView = PageView(this)
-        setContentView(pageView)
+
+        // Wrap the page in a container so the overlay can draw ABOVE it. The overlay is added after
+        // pageView, so it sits on top; it is not clickable itself, so page-area taps fall through to
+        // pageView (which dismisses the overlay) while its Back control consumes its own tap.
+        val container = FrameLayout(this)
+        container.addView(pageView, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        overlay = layoutInflater.inflate(R.layout.overlay_reader, container, false)
+        container.addView(overlay)
+        titleView = overlay.findViewById(R.id.book_title)
+        scrubberView = overlay.findViewById(R.id.scrubber)
+        settingsSheet = overlay.findViewById(R.id.settings_sheet)
+        tocPanel = overlay.findViewById(R.id.toc_panel)
+        tocList = overlay.findViewById(R.id.toc_list)
+        tocEmpty = overlay.findViewById(R.id.toc_empty)
+        tocAdapter = TocAdapter(::jumpToToc)
+        tocList.layoutManager = LinearLayoutManager(this)
+        tocList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
+        tocList.adapter = tocAdapter
+        overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
+        overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleToc() }
+        overlay.findViewById<View>(R.id.settings_button).setOnClickListener { toggleSettings() }
+        wireSettingsControls()
+        setContentView(container)
+
+        // System Back is the reader's other way out (the Nomad's hardware/gesture Back does not
+        // finish this Activity on its own). Additive — there is no onBackPressed override. Overlay
+        // shown: Back only closes it. Overlay hidden: Back leaves the book, flushing position first.
+        onBackPressedDispatcher.addCallback(this) {
+            when {
+                // The TOC panel and the Aa sheet are layers inside the overlay: Back peels whichever
+                // is open off first, then the overlay, then the book — one thing per press. Only one
+                // panel is ever open at a time (opening either closes the other), so the order among
+                // them is a formality; TOC is checked first as the topmost-drawn layer.
+                tocPanel.visibility == View.VISIBLE -> tocPanel.visibility = View.GONE
+                settingsSheet.visibility == View.VISIBLE -> settingsSheet.visibility = View.GONE
+                isOverlayVisible() -> hideOverlay()
+                else -> exitToLibrary()
+            }
+        }
 
         if (!isAllFilesAccessGranted()) {
             requestAllFilesAccess()
             return
         }
         pageView.doOnLayout { openFirstBook() }
+    }
+
+    /** Whether the reading chrome is currently on screen. */
+    private fun isOverlayVisible(): Boolean = overlay.visibility == View.VISIBLE
+
+    /** Reveals the reading chrome — one redraw, no animation. */
+    private fun showOverlay() {
+        overlay.visibility = View.VISIBLE
+    }
+
+    /** Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet and the
+     * Contents panel, so the overlay always reopens to its bare bar rather than a stale open panel. */
+    private fun hideOverlay() {
+        settingsSheet.visibility = View.GONE
+        tocPanel.visibility = View.GONE
+        overlay.visibility = View.GONE
+    }
+
+    /** Opens or closes the Aa sheet — a visibility flip (one redraw). Opening first syncs its
+     * controls to the current [ReaderPrefs] so it always shows the live values. */
+    private fun toggleSettings() {
+        if (settingsSheet.visibility == View.VISIBLE) {
+            settingsSheet.visibility = View.GONE
+        } else {
+            tocPanel.visibility = View.GONE // one panel open at a time
+            refreshSheet()
+            settingsSheet.visibility = View.VISIBLE
+        }
+    }
+
+    /** Opens or closes the Contents panel — a visibility flip (one redraw). Opening first rebuilds
+     * the list from the current [EpubDocument.toc] and current chapter, and closes the Aa sheet so
+     * only one panel is ever open. */
+    private fun toggleToc() {
+        if (tocPanel.visibility == View.VISIBLE) {
+            tocPanel.visibility = View.GONE
+        } else {
+            settingsSheet.visibility = View.GONE // one panel open at a time
+            refreshToc()
+            tocPanel.visibility = View.VISIBLE
+        }
+    }
+
+    /** Rebuilds the Contents list from the already-parsed [EpubDocument.toc] and the current chapter
+     * (for the bold marker). An empty/malformed TOC shows the "No contents" state with the list
+     * hidden — never an empty clickable void. Pure View work; no re-parse (reads `doc.toc`). */
+    private fun refreshToc() {
+        val rows = tocRows(document?.toc.orEmpty(), state.spineIndex)
+        tocAdapter.submit(rows)
+        val empty = rows.isEmpty()
+        tocEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+        tocList.visibility = if (empty) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * Jumps the reader to a tapped Contents [row], through the SAME restore machinery the open path
+     * and the Aa sheet use: resolve the target page via [tocTarget] (an anchored entry lands on the
+     * page containing its char offset, NOT blindly page 0; an entry at a missing/empty chapter skips
+     * forward to the nearest readable one), then [showPage] + [flushPosition] as a normal navigation,
+     * and close the chrome down to the page.
+     *
+     * The lazy [EpubDocument.chapter] read can throw [EpubException] here for the first time, so this
+     * is wrapped exactly as [onTap]/[applySettingsChange] are: a failure shows a message and leaves
+     * the reader on the page it was already showing ([state] is only reassigned inside [showPage],
+     * after its own `chapter()` call has succeeded).
+     */
+    private fun jumpToToc(row: TocRow) {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val nav = navigator ?: return
+        val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
+        try {
+            val target = tocTarget(
+                spineIndex = row.spineIndex,
+                charOffset = row.charOffset,
+                pageCountFor = pageCountFor,
+                offsetToPageIndex = { spineIndex, charOffset ->
+                    pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
+                },
+                firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
+            )
+            if (target == null) {
+                // The tapped chapter and everything after it paginate to zero pages: nothing to show.
+                showMessage("This book has no readable text.")
+                return
+            }
+            hideOverlay()
+            showPage(target)
+            flushPosition()
+        } catch (e: EpubException) {
+            showMessage("Couldn't open that section: ${e.message}")
+        } catch (e: Exception) {
+            showMessage("Couldn't open that section: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    /** Wires every Aa-sheet control to its pref write + live re-paginate. Called once from onCreate;
+     * the listeners hold no state and fire only on a deliberate tap, so they cost nothing at rest. */
+    private fun wireSettingsControls() {
+        overlay.findViewById<View>(R.id.font_serif).setOnClickListener { applySettingsChange { p -> p.fontFamily = "serif" } }
+        overlay.findViewById<View>(R.id.font_sans).setOnClickListener { applySettingsChange { p -> p.fontFamily = "sans-serif" } }
+        overlay.findViewById<View>(R.id.font_mono).setOnClickListener { applySettingsChange { p -> p.fontFamily = "monospace" } }
+
+        overlay.findViewById<View>(R.id.size_minus).setOnClickListener { stepTextSize(-TEXT_SIZE_STEP_PX) }
+        overlay.findViewById<View>(R.id.size_plus).setOnClickListener { stepTextSize(TEXT_SIZE_STEP_PX) }
+
+        overlay.findViewById<View>(R.id.spacing_12).setOnClickListener { applySettingsChange { p -> p.lineSpacingMultiplier = 1.2f } }
+        overlay.findViewById<View>(R.id.spacing_14).setOnClickListener { applySettingsChange { p -> p.lineSpacingMultiplier = 1.4f } }
+        overlay.findViewById<View>(R.id.spacing_16).setOnClickListener { applySettingsChange { p -> p.lineSpacingMultiplier = 1.6f } }
+
+        overlay.findViewById<View>(R.id.margin_narrow).setOnClickListener { applyMargin(MARGIN_NARROW_PX) }
+        overlay.findViewById<View>(R.id.margin_medium).setOnClickListener { applyMargin(MARGIN_MEDIUM_PX) }
+        overlay.findViewById<View>(R.id.margin_wide).setOnClickListener { applyMargin(MARGIN_WIDE_PX) }
+
+        overlay.findViewById<View>(R.id.toggle_justify).setOnClickListener { applySettingsChange { p -> p.justified = !p.justified } }
+        overlay.findViewById<View>(R.id.toggle_hyphen).setOnClickListener { applySettingsChange { p -> p.hyphenated = !p.hyphenated } }
+        overlay.findViewById<View>(R.id.toggle_publisher).setOnClickListener { applySettingsChange { p -> p.publisherStyling = !p.publisherStyling } }
+        overlay.findViewById<View>(R.id.toggle_headings).setOnClickListener { applySettingsChange { p -> p.inferHeadings = !p.inferHeadings } }
+    }
+
+    /** Bumps the persisted text size by [deltaPx], clamped to the sane range, then re-paginates. A
+     * tap already at the bound only refreshes the readout (no reflow to do). */
+    private fun stepTextSize(deltaPx: Float) {
+        val current = ReaderPrefs(this).textSizePx
+        val next = (current + deltaPx).coerceIn(TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX)
+        if (next == current) {
+            refreshSheet()
+        } else {
+            applySettingsChange { p -> p.textSizePx = next }
+        }
+    }
+
+    /** Applies a margin preset, clamped so the chosen margin can never leave a non-positive content
+     * width or height on the current viewport — the value [RenderConfig] would throw on. */
+    private fun applyMargin(presetPx: Int) {
+        val clamped = presetPx.coerceIn(0, maxMarginForViewport(pageView.width, pageView.height))
+        applySettingsChange { p -> p.marginPx = clamped }
+    }
+
+    /**
+     * The live re-paginate — the Aa sheet's correctness core, run on every control change.
+     *
+     * Captures the char offset at the top of the CURRENT page under the OLD config, writes the pref,
+     * rebuilds the config from the SAME measured viewport the open path used and installs it as the
+     * source of truth for later page turns, re-paginates the current chapter, and resolves the
+     * captured offset to the page in the NEW pagination whose range contains it (via
+     * [reflowedPageIndex]). The reader lands on the same text, not the same page index — a larger
+     * font that pushes that text from page 3 to page 5 lands on page 5.
+     *
+     * A lazily-read chapter can throw [EpubException] on re-pagination, so this is wrapped exactly as
+     * [onTap] is: a failure shows a message and leaves the reader on the page it was already showing
+     * ([config]/[state] are only reassigned after the throwing `chapter()` calls have succeeded).
+     */
+    private fun applySettingsChange(mutate: (ReaderPrefs) -> Unit) {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val width = pageView.width
+        val height = pageView.height
+        if (width <= 0 || height <= 0) return
+        try {
+            // Capture the CURRENT chapter's pagination under the OLD config before changing anything;
+            // reflowedPageIndex reads the top-of-page char offset off it as the anchor to preserve.
+            val oldPages = doc.chapter(state.spineIndex, cfg).pages
+
+            mutate(ReaderPrefs(this))
+            val newConfig = ReaderPrefs(this).renderConfig(width, height)
+
+            // chapter() takes newConfig as a parameter, so the re-paginate does not need the field
+            // set yet. Reassign config/state only AFTER this (throwing) call succeeds, so a failure
+            // leaves the field agreeing with the page still on screen — the invariant the KDoc states.
+            val newPages = doc.chapter(state.spineIndex, newConfig).pages
+            config = newConfig
+            val newPageIndex = reflowedPageIndex(oldPages, state.pageIndex, newPages)
+            state = ReadingState(state.spineIndex, newPageIndex)
+            showPage(state)
+            flushPosition()
+            refreshSheet()
+        } catch (e: EpubException) {
+            showMessage("Couldn't apply that setting: ${e.message}")
+        } catch (e: Exception) {
+            showMessage("Couldn't apply that setting: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    /** Syncs the sheet's controls to the current [ReaderPrefs]: the selected option in each group is
+     * bolded, the size readout shows the current px, and each toggle shows On/Off. Pure View work. */
+    private fun refreshSheet() {
+        val prefs = ReaderPrefs(this)
+
+        setOptionSelected(R.id.font_serif, prefs.fontFamily == "serif")
+        setOptionSelected(R.id.font_sans, prefs.fontFamily == "sans-serif")
+        setOptionSelected(R.id.font_mono, prefs.fontFamily == "monospace")
+
+        overlay.findViewById<TextView>(R.id.size_value).text = "${prefs.textSizePx.toInt()}px"
+
+        setOptionSelected(R.id.spacing_12, prefs.lineSpacingMultiplier == 1.2f)
+        setOptionSelected(R.id.spacing_14, prefs.lineSpacingMultiplier == 1.4f)
+        setOptionSelected(R.id.spacing_16, prefs.lineSpacingMultiplier == 1.6f)
+
+        setOptionSelected(R.id.margin_narrow, prefs.marginPx == MARGIN_NARROW_PX)
+        setOptionSelected(R.id.margin_medium, prefs.marginPx == MARGIN_MEDIUM_PX)
+        setOptionSelected(R.id.margin_wide, prefs.marginPx == MARGIN_WIDE_PX)
+
+        setToggleLabel(R.id.toggle_justify, "Justify", prefs.justified)
+        setToggleLabel(R.id.toggle_hyphen, "Hyphenation", prefs.hyphenated)
+        setToggleLabel(R.id.toggle_publisher, "Publisher styling", prefs.publisherStyling)
+        setToggleLabel(R.id.toggle_headings, "Heading detection", prefs.inferHeadings)
+    }
+
+    private fun setOptionSelected(id: Int, selected: Boolean) {
+        overlay.findViewById<TextView>(id).setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+    }
+
+    private fun setToggleLabel(id: Int, label: String, on: Boolean) {
+        overlay.findViewById<TextView>(id).text = "$label: ${if (on) "On" else "Off"}"
+    }
+
+    /**
+     * Leaves the book for the library. Flushes the current position first (every page turn already
+     * persists its own, so this normally drains nothing — it is the backstop for the open-time
+     * write), then finishes. Wired to both the overlay Back control and system Back with the
+     * overlay hidden.
+     */
+    private fun exitToLibrary() {
+        flushPosition()
+        finish()
     }
 
     override fun onResume() {
@@ -196,13 +580,10 @@ open class ReaderActivity : AppCompatActivity() {
             return
         }
 
-        val renderConfig = RenderConfig(
-            fontFamily = "serif",
-            textSizePx = 34f,
-            lineSpacingMultiplier = 1.4f,
-            marginPx = 48,
-            justified = true,
-            hyphenated = true,
+        // The typography now comes from persisted settings (ReaderPrefs) rather than literals;
+        // only the viewport is per-open, measured from the view just above. Defaults equal the
+        // old literals, so an untouched install renders identically.
+        val renderConfig = ReaderPrefs(this).renderConfig(
             viewportWidthPx = width,
             viewportHeightPx = height,
         )
@@ -248,6 +629,14 @@ open class ReaderActivity : AppCompatActivity() {
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
 
+                // The overlay title: the book's own metadata title. The parser already substitutes
+                // "Untitled" for a missing <dc:title>, and the library grid shows that same value —
+                // so we deliberately do NOT override it with the filename here (that would make the
+                // reader disagree with the library). The filename is only a defensive fallback for
+                // the currently-unreachable case of a blank title slipping through.
+                titleView.text = doc.metadata.title.takeIf { it.isNotBlank() }
+                    ?: File(file.path).nameWithoutExtension
+
                 // The stored position for this book, if it is in the library. getByPath is the only
                 // read on IO; resolveStart and every chapter() below stay on the main thread, as
                 // chapter()'s unsynchronized cache requires. A book not in the library (the
@@ -260,9 +649,14 @@ open class ReaderActivity : AppCompatActivity() {
                 // resolveStart owns the clamp / empty-chapter fallback / offset->page rules (unit-
                 // tested in ReadingSessionTest). The lambdas are the only impure parts:
                 //  - firstNonEmptyFrom generalizes the old cover-skip: advance() from the stored (or
-                //    0th) chapter, skipping empty chapters exactly as a page turn would. Real EPUBs
-                //    almost always open on a cover-image page that paginates to zero pages, so a
-                //    fresh read still lands on the first chapter with text.
+                //    0th) chapter, skipping empty chapters exactly as a page turn would. It only
+                //    fires for a chapter that paginates to ZERO pages — a cover the parser renders
+                //    no block for (an SVG/<image> cover, common), or content that lost its text.
+                //    Since inline images render, an <img>-based cover chapter now paginates to one
+                //    page (the image itself) instead of the blank page it used to show, so it is
+                //    NOT skipped: a fresh read deliberately lands on the cover image, and the reader
+                //    turns to the text. A stored position still restores exactly (its offset
+                //    resolves regardless); only the never-opened landing shows the cover first.
                 //  - offsetToPageIndex maps the stored char offset back to a page; pageIndexFor
                 //    already survives a re-pagination after a font-size/margin change (:engine test).
                 val pageCountFor: (Int) -> Int = { doc.chapter(it, renderConfig).pages.size }
@@ -283,6 +677,9 @@ open class ReaderActivity : AppCompatActivity() {
                     // broken app — so name the problem, and say that the book may still be
                     // readable from the next chapter on (advance() skips empty chapters).
                     showMessage("This book has no readable text.")
+                    // showPage never ran, so the scrubber was never set; give the overlay (if the
+                    // reader opens it on this broken book) a coherent readout instead of a blank.
+                    scrubberView.text = "No readable text"
                 } else {
                     showPage(start)
                     // Write the resolved start back immediately: stamps lastOpenedAtMs (so the
@@ -355,6 +752,15 @@ open class ReaderActivity : AppCompatActivity() {
      * below is main-thread-confined, as `EpubDocument.chapter()`'s unsynchronized cache requires.
      */
     private fun onTap(zone: TapZone) {
+        // While the overlay is up, any tap that reaches pageView is on the page area (the overlay's
+        // Back control sits above pageView and consumes its own tap), so it dismisses the overlay
+        // and turns NO page — not even a PREVIOUS/NEXT zone tap. Paired with the TOGGLE_OVERLAY show
+        // below, the center tap is a true toggle: hidden -> show here, shown -> hide here.
+        if (isOverlayVisible()) {
+            hideOverlay()
+            return
+        }
+
         val nav = navigator ?: return
         val doc = document ?: return
         val cfg = config ?: return
@@ -374,8 +780,12 @@ open class ReaderActivity : AppCompatActivity() {
             val next = when (zone) {
                 TapZone.NEXT -> advance(nav, state, pageCountFor)
                 TapZone.PREVIOUS -> retreat(nav, state, pageCountFor)
-                // The overlay arrives with the reading chrome in Plan 4.
-                TapZone.TOGGLE_OVERLAY -> null
+                // Overlay hidden (the visible case returned above): reveal it. No page turn, so
+                // this arm yields null and the showPage/flush below is skipped.
+                TapZone.TOGGLE_OVERLAY -> {
+                    showOverlay()
+                    null
+                }
             }
             // null = nowhere to go (start/end of book, or everything beyond is empty): stay put and
             // draw nothing, so a tap at the end of the book costs no invalidate — and nothing to
@@ -386,6 +796,15 @@ open class ReaderActivity : AppCompatActivity() {
                 // turned to even across a battery pull. showPage recorded it; this writes it, off
                 // the main thread and serialized (see flushPosition / positionWriteScope).
                 flushPosition()
+                // Refresh cadence: every REFRESH_CADENCE actual page turns, force a full-panel
+                // redraw to clear accumulated e-ink ghosting. Counter-driven, not time-driven, so
+                // it holds no steady state. Only genuine turns count — an overlay toggle (which
+                // yields null above and never reaches here), a settings re-paginate, or a TOC jump
+                // do not, matching "every N turns" rather than "every N redraws".
+                if (++turnsSinceRefresh >= REFRESH_CADENCE) {
+                    pageView.fullRefresh()
+                    turnsSinceRefresh = 0
+                }
             }
         } catch (e: EpubException) {
             showMessage("Couldn't turn the page: ${e.message}")
@@ -406,6 +825,11 @@ open class ReaderActivity : AppCompatActivity() {
         val pageIndex = next.pageIndex.coerceIn(0, chapter.pages.lastIndex)
         state = next.copy(pageIndex = pageIndex)
 
+        // Keep the overlay's read-only readout current with the page just shown, so it is right the
+        // next time the overlay opens. Reuses the chapter already fetched above — no extra work, and
+        // page turns only happen while the overlay is hidden anyway.
+        scrubberView.text = scrubberText(pageIndex, chapter.pages.size)
+
         // Unchecked downcast through the TextMeasurer seam: MeasuredChapter itself stays
         // Android-free, but PageView needs the real StaticLayout to draw. Safe today because
         // this Activity is the only caller of EpubDocument.open, always with
@@ -419,14 +843,120 @@ open class ReaderActivity : AppCompatActivity() {
         // path) follows with flushPosition to write it. Keeping the write out of showPage means the
         // main-thread draw path never touches the DB — the UPDATE happens on the write scope.
         session.recordPageTurn(Locator(state.spineIndex, chapter.pages[pageIndex].startOffset))
+
+        // Now that the page has settled, prefetch the adjacent chapter the next boundary turn would
+        // land on (if any), so that turn does not pay the 230–360ms pagination on the main thread.
+        // One shot; see schedulePrefetch. Reuses chapter.pages.size — no extra work.
+        schedulePrefetch(chapter.pages.size)
+    }
+
+    /**
+     * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s
+     * [chapterToPrefetch] decides which, or none — on ONE background coroutine, then publishes the
+     * result on the main thread. A pure performance nicety: it must never destabilize the reader, so
+     * every load-bearing rule below is defensive.
+     *
+     *  - Correctness: only the now-race-free [EpubDocument.paginate] runs off the main thread (Task
+     *    6b, Part A made it thread-safe by construction); the cache is touched only by [publish], and
+     *    only back on the main thread. [chapter] is never called off-main.
+     *  - Staleness: if the reader changes typography while this is in flight, [publish] discards the
+     *    result (its config no longer matches the cache's) — the boundary turn simply re-paginates.
+     *  - Waste: a neighbour already cached (the usual case for the previous chapter after a forward
+     *    read) is skipped rather than needlessly recomputed.
+     *  - The idle promise: exactly one coroutine per settle, it runs once and completes. It does not
+     *    loop or re-arm; nothing schedules the next prefetch but the user's next turn. A superseded
+     *    in-flight prefetch is cancelled when the next one is scheduled.
+     *  - Teardown: [paginate] is non-suspending CPU/IO work with no cancellation points, so cancelling
+     *    the job (on supersede or onDestroy) does NOT interrupt a paginate already running — and
+     *    onDestroy closes the archive's [ZipFile] on the main thread. A background read can therefore
+     *    find the archive closed under it mid-paginate and throw a raw exception. That is caught and
+     *    dropped below (the result is worthless once the book is closing); it never reaches [publish],
+     *    never corrupts the cache, and never crashes teardown. The nicety simply evaporates.
+     *  - Cost: the pagination runs at the lowest JVM thread priority for the span of the call, then
+     *    restores the pooled thread's priority, so it yields to anything the user is actively doing.
+     */
+    private fun schedulePrefetch(chapterPageCount: Int) {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val target = chapterToPrefetch(state, chapterPageCount, doc.spineSize) ?: return
+        // Already resident (e.g. the chapter just turned away from): the prefetch would recompute it
+        // only for publish to no-op. Skip the wasted pagination.
+        if (doc.isPaginated(target, cfg)) return
+
+        // Supersede any earlier prefetch still running: only the newest neighbour matters, and a
+        // cancelled paginate is simply discarded (it never reached publish).
+        prefetchJob?.cancel()
+        prefetchJob = lifecycleScope.launch {
+            val result = try {
+                withContext(Dispatchers.Default) {
+                    val thread = Thread.currentThread()
+                    val priorPriority = thread.priority
+                    thread.priority = Thread.MIN_PRIORITY // background work yields to the foreground
+                    try {
+                        doc.paginate(target, cfg) // off the main thread — race-free by construction
+                    } finally {
+                        thread.priority = priorPriority // restore the pooled thread for its next use
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e // a genuine cancel must propagate so the coroutine unwinds
+            } catch (e: Throwable) {
+                // Almost always the archive being closed under us in onDestroy (a raw ZipFile
+                // "closed" ISE that readTextChecked does not translate). A prefetch is a nicety;
+                // drop it rather than let a teardown-time read crash the app.
+                return@launch
+            }
+            // Back on the main thread (lifecycleScope is Main): publish drops the result if a
+            // typography change since the launch moved the cache's config on.
+            doc.publish(target, cfg, result)
+        }
+    }
+
+    // -- Test seams -----------------------------------------------------------------------------
+    // The prefetch is a background nicety with no user-visible surface of its own, so these two
+    // read-only hooks let ReaderActivityTest observe it (did the neighbour get cached? did the
+    // coroutine terminate without re-arming?) without widening the production API. Neither is
+    // called in production.
+
+    /** The current prefetch coroutine, if any — a test reads its liveness to prove it terminates. */
+    internal val prefetchJobForTest: Job? get() = prefetchJob
+
+    /** Whether chapter [spineIndex] is cached under the live config — a test's prefetch-landed probe. */
+    internal fun isChapterCachedForTest(spineIndex: Int): Boolean {
+        val doc = document ?: return false
+        val cfg = config ?: return false
+        return doc.isPaginated(spineIndex, cfg)
     }
 
     private fun showMessage(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
+    /**
+     * The largest margin the current viewport can take while still leaving positive content width AND
+     * height. `RenderConfig.init` throws when `viewport - margin*2 <= 0` on either axis, so a margin
+     * preset is clamped to this before it is written. `margin*2 < min(w, h)` ⇒ `margin <= (min - 1) /
+     * 2`. On the ~1404×1872 panel this is ~701, so every real preset (≤80) passes untouched; the
+     * clamp only bites on a pathologically small viewport that no device presents.
+     */
+    private fun maxMarginForViewport(width: Int, height: Int): Int =
+        ((minOf(width, height) - 1) / 2).coerceAtLeast(0)
+
     companion object {
         /** String extra: an absolute book path, set by [LibraryActivity] when opening a tap. */
         const val EXTRA_BOOK_PATH = "dev.reader.ui.EXTRA_BOOK_PATH"
+
+        /** Full-panel refresh cadence (spec default): a ghost-clearing redraw every N page turns. */
+        private const val REFRESH_CADENCE = 8
+
+        // The Aa sheet's bounded value sets. Text size is a stepper over [MIN, MAX] by STEP; the
+        // others are presets. All chosen so the resulting RenderConfig stays valid on the device
+        // viewport (margins additionally clamped per-viewport by maxMarginForViewport).
+        private const val TEXT_SIZE_MIN_PX = 24f
+        private const val TEXT_SIZE_MAX_PX = 56f
+        private const val TEXT_SIZE_STEP_PX = 2f
+        private const val MARGIN_NARROW_PX = 24
+        private const val MARGIN_MEDIUM_PX = 48
+        private const val MARGIN_WIDE_PX = 80
     }
 }

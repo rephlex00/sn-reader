@@ -1,10 +1,14 @@
 package dev.reader.formats.render
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Typeface
 import android.text.Layout
 import android.text.Spanned
 import android.text.style.AlignmentSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.ImageSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.LineHeightSpan
 import android.text.style.RelativeSizeSpan
@@ -18,12 +22,15 @@ import dev.reader.engine.RenderConfig
 import dev.reader.engine.StyleSpan
 import dev.reader.engine.StyledText
 import dev.reader.engine.TextAlign
+import java.io.ByteArrayOutputStream
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 import android.text.style.StyleSpan as AndroidStyleSpan
 
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SpannedChapterBuilderTest {
 
     private val builder = SpannedChapterBuilder()
@@ -460,5 +467,92 @@ class SpannedChapterBuilderTest {
         val size = text.getSpans(0, text.length, RelativeSizeSpan::class.java).single()
         // The semantic level-1 scale (1.6), not the ignored publisher 1.29.
         assertThat(size.sizeChange).isEqualTo(1.6f)
+    }
+
+    // --- Inline images (Task 5): decodable bytes -> a downsampled grayscale ImageSpan;
+    // null/undecodable bytes -> render nothing (today's degrade), never throw. ---
+
+    /** A real, decodable PNG of the given size — solid red, so a grayscale filter is checkable. */
+    private fun imageBytes(width: Int, height: Int): ByteArray {
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).drawColor(Color.RED)
+        val out = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        return out.toByteArray()
+    }
+
+    @Test
+    fun `a decodable image produces one grayscale ImageSpan bounded by the content width`() {
+        // Wider than the content box (1404 - 2*40 = 1324) so it must be downsampled/scaled down.
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(2000, 1000))),
+            config,
+        )
+        val spans = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)
+        assertThat(spans).hasLength(1)
+
+        val bounds = spans.single().drawable.bounds
+        assertThat(bounds.width()).isAtMost(config.contentWidthPx)
+        assertThat(bounds.height()).isAtMost(config.contentHeightPx)
+        // Aspect ratio preserved (2:1), and actually shrunk from the 2000px original.
+        assertThat(bounds.width()).isLessThan(2000)
+        assertThat(bounds.width().toFloat() / bounds.height()).isWithin(0.05f).of(2f)
+        // Grayscale: the drawable carries a colour filter (saturation 0), the panel has no colour.
+        assertThat(spans.single().drawable.colorFilter).isNotNull()
+    }
+
+    @Test
+    fun `a decodable image carries exactly one placeholder character`() {
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(100, 100))),
+            config,
+        )
+        // One placeholder char carries the span; the image is otherwise text-free.
+        assertThat(chapter.text.length).isEqualTo(1)
+        val span = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java).single()
+        assertThat(chapter.text.getSpanStart(span)).isEqualTo(0)
+        assertThat(chapter.text.getSpanEnd(span)).isEqualTo(1)
+    }
+
+    @Test
+    fun `null image bytes render nothing and append no text`() {
+        val chapter = builder.build(listOf(Block.Image("img/fig.png", bytes = null)), config)
+        assertThat(chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)).isEmpty()
+        assertThat(chapter.text.toString()).isEmpty()
+    }
+
+    @Test
+    fun `undecodable image bytes render nothing and do not throw`() {
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = byteArrayOf(1, 2, 3, 4, 5))),
+            config,
+        )
+        assertThat(chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)).isEmpty()
+        assertThat(chapter.text.toString()).isEmpty()
+    }
+
+    @Test
+    fun `text around a decodable image keeps correct offsets`() {
+        val chapter = builder.build(
+            listOf(para("One."), Block.Image("img/fig.png", bytes = imageBytes(100, 100)), para("Two.")),
+            config,
+        )
+        // "One." + "\n\n" + placeholder + "\n\n" + "Two." — the image occupies one character.
+        assertThat(chapter.text.toString()).isEqualTo("One.\n\n￼\n\nTwo.")
+        val span = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java).single()
+        assertThat(chapter.text.getSpanStart(span)).isEqualTo(6)
+        assertThat(chapter.text.getSpanEnd(span)).isEqualTo(7)
+    }
+
+    @Test
+    fun `a page break before a decodable image pins the break to the image`() {
+        // A rendered image is now text-bearing, so a preceding page break pins to its
+        // placeholder char — unlike a null-bytes image, which still appends nothing.
+        val chapter = builder.build(
+            listOf(para("One."), Block.PageBreak, Block.Image("img/fig.png", bytes = imageBytes(80, 80))),
+            config,
+        )
+        // "One." (4) + "\n\n" (2) = 6, where the image's placeholder begins.
+        assertThat(chapter.breakOffsets).containsExactly(6)
     }
 }

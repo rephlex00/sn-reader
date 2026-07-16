@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One table-of-contents row: a single monochrome TextView, large tap target, no ripple/animation.
+     The left padding (depth indent) and the bold weight (current chapter) are applied in TocAdapter;
+     everything else is fixed here. Black on white, e-ink-crisp. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/toc_title"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:clickable="true"
+    android:focusable="true"
+    android:minHeight="48dp"
+    android:gravity="center_vertical"
+    android:paddingHorizontal="16dp"
+    android:paddingVertical="12dp"
+    android:textColor="@android:color/black"
+    android:textSize="16sp" />

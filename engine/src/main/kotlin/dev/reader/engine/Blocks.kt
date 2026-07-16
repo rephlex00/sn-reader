@@ -86,8 +86,29 @@ sealed interface Block {
     }
     data class Quote(val text: StyledText, val style: BlockStyle = BlockStyle()) : Block
     data class ListItem(val text: StyledText, val ordinal: Int? = null, val style: BlockStyle = BlockStyle()) : Block
-    data class Image(val href: String) : Block {
+    /**
+     * An inline image. [href] is the resolved archive path (the parser resolves it against
+     * the chapter that declared it); [bytes] is the raw image entry, resolved and attached
+     * by `EpubDocument.readBlocks` at chapter-build time — `:engine` stays Android-free, so
+     * decoding lives entirely in `:formats`. It defaults to null so existing positional
+     * construction (and any block produced before the resolver runs) stays source-compatible,
+     * and a null here means "unresolvable href" — the renderer degrades to no image.
+     *
+     * [equals]/[hashCode] compare by [href] ONLY, deliberately excluding [bytes]. A
+     * `ByteArray` in a `data class` would make the generated equals/hashCode compare by array
+     * *identity* rather than content, so two Images resolved from the same href would stop
+     * being equal (and hash differently) — silently breaking every Block-comparison test.
+     * The href already identifies the image; the bytes are just a resolved attachment.
+     */
+    data class Image(val href: String, val bytes: ByteArray? = null) : Block {
         init { require(href.isNotBlank()) { "href must not be blank" } }
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            return other is Image && href == other.href
+        }
+
+        override fun hashCode(): Int = href.hashCode()
     }
     data object PageBreak : Block
 }

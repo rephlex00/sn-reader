@@ -139,6 +139,47 @@ class PaginatorTest {
     }
 
     @Test
+    fun `reflowedPageIndex lands on the new page whose range contains the old page-top offset`() {
+        // The Aa sheet's headline correctness property, at the pure level: a settings change
+        // re-paginates the current chapter to a DIFFERENT page count, and the reader must stay on
+        // the text it was showing — the page whose offset range contains the char offset at the top
+        // of its current page — not the same page index. Same chapter, two page heights (a bigger
+        // font shrinks the height budget, so fewer lines fit and the page count grows).
+        val chapter = FakeMeasuredChapter.uniform(lineCount = 12) // 40 chars/line, 20px/line
+        val newPages = paginator.paginate(chapter, pageHeightPx = 60) // 3 lines/page => 4 pages
+        val oldPages = paginator.paginate(chapter, pageHeightPx = 100) // 5 lines/page => 3 pages
+
+        // For every old page, its top-of-page char offset must land in the new page whose offset
+        // range contains it — the containment property, verified structurally below rather than
+        // hand-counting which new page each old anchor falls into.
+        for (oldIndex in oldPages.indices) {
+            val newIndex = reflowedPageIndex(oldPages, oldIndex, newPages)
+            val landed = newPages[newIndex]
+            val anchor = oldPages[oldIndex].startOffset
+            assertThat(anchor).isAtLeast(landed.startOffset)
+            assertThat(anchor).isLessThan(landed.endOffset)
+        }
+    }
+
+    @Test
+    fun `reflowedPageIndex clamps to a valid page when the new chapter re-paginates to fewer pages`() {
+        val chapter = FakeMeasuredChapter.uniform(lineCount = 12)
+        val oldPages = paginator.paginate(chapter, pageHeightPx = 60) // 4 pages
+        val newPages = paginator.paginate(chapter, pageHeightPx = 100) // 3 pages
+
+        // Old last page (index 3) has no counterpart index in the 3-page new list; it must resolve
+        // to a valid new index, never index 3.
+        val newIndex = reflowedPageIndex(oldPages, oldPageIndex = 3, newPages = newPages)
+        assertThat(newIndex).isIn(newPages.indices.toList())
+    }
+
+    @Test
+    fun `reflowedPageIndex returns 0 when the chapter re-paginates to zero pages`() {
+        val oldPages = paginator.paginate(FakeMeasuredChapter.uniform(lineCount = 10), pageHeightPx = 100)
+        assertThat(reflowedPageIndex(oldPages, oldPageIndex = 1, newPages = emptyList())).isEqualTo(0)
+    }
+
+    @Test
     fun `pageIndexFor after re-pagination at a different page height still contains the offset`() {
         // The spec's headline claim is that a Locator (spineIndex + charOffset) survives a
         // typography change that re-paginates the chapter at a different page height. This
