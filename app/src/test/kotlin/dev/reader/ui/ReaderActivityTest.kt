@@ -3,10 +3,14 @@ package dev.reader.ui
 import android.content.Intent
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import com.google.common.truth.Truth.assertThat
+import dev.reader.ReaderApplication
+import dev.reader.data.BookEntity
 import dev.reader.engine.RenderConfig
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -145,6 +149,49 @@ class ReaderActivityTest {
         idleUntil { activity.openCalls == 2 }
 
         assertThat(activity.openCalls).isEqualTo(2)
+    }
+
+    // -- Task 6: the debounced, cancel-proof position flush ------------------------------------
+
+    @Test
+    fun `a page turn writes nothing until onStop, whose flush survives onDestroy`() {
+        // This is the one thing ReadingSessionTest (pure) cannot cover: that the wiring flushes the
+        // pending position to the DAO, and that it does so on the application-scoped write scope so
+        // the write survives onDestroy cancelling lifecycleScope — the "work cancelled before it
+        // ran" trap. It also pins the debounce: a page turn touches memory only, never the DB.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        // The reader is not the indexer: it UPDATEs an existing row. Pre-insert one, never opened
+        // (lastOpenedAtMs null, charOffset 0), so the open-time write is detectable via
+        // lastOpenedAtMs and the later flush via a changed charOffset.
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+
+        // Wait for the open-time write-back to land: it stamps lastOpenedAtMs (null -> non-null).
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val openRow = rowFor(app, book.path)!!
+        assertThat(openRow.charOffset).isEqualTo(0) // first page of chapter 0 starts at offset 0
+
+        // Turn the page. The Activity delivers taps to PageView.onTap on the main thread; invoking
+        // it directly is the same entry point. This advances to page 1 and records it as pending.
+        pageViewOf(controller.get()).onTap!!.invoke(TapZone.NEXT)
+
+        // The page turn must not have written anything — the whole point of coalesce-in-memory.
+        // recordPageTurn launches no coroutine, so this is deterministic, not merely "not yet".
+        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(0)
+
+        // onStop flushes; onDestroy (which cancels lifecycleScope) follows immediately. A write on
+        // lifecycleScope could be cancelled here before committing; the app-scoped write scope is
+        // what makes it survive.
+        controller.pause().stop().destroy()
+
+        idleUntil { rowFor(app, book.path)!!.charOffset != 0 }
+        val flushed = rowFor(app, book.path)!!
+        assertThat(flushed.charOffset).isGreaterThan(0) // page 1 begins past offset 0
+        assertThat(flushed.spineIndex).isEqualTo(0)
+        assertThat(flushed.lastOpenedAtMs).isNotNull()
     }
 
     // -- M3: denied permission is a message + finish, not a silent blank page ------------------
@@ -286,5 +333,77 @@ class ReaderActivityTest {
             shadowOf(Looper.getMainLooper()).idle()
             Thread.sleep(20)
         }
+    }
+
+    /** The [PageView] the Activity set as its content view — the tap sink production drives too. */
+    private fun pageViewOf(activity: ReaderActivity): PageView =
+        (activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0) as PageView)
+
+    /** Reads back the row for [path] on a background thread (Room forbids main-thread queries). */
+    private fun rowFor(app: ReaderApplication, path: String): BookEntity? =
+        runBlocking { app.database.bookDao().getByPath(path) }
+
+    /** A library row for [path], never opened, at the start of the book. */
+    private fun dbBook(path: String) = BookEntity(
+        path = path,
+        sizeBytes = 1_000L,
+        modifiedAtMs = 1_700_000_000_000L,
+        title = "A Book",
+        author = null,
+        coverPath = null,
+        spineIndex = 0,
+        charOffset = 0,
+        unreadable = false,
+        unreadableReason = null,
+        addedAtMs = 1_700_000_000_000L,
+        lastOpenedAtMs = null,
+    )
+
+    /**
+     * An EPUB whose single chapter is long enough to paginate into more than one page at the test's
+     * 800x600 viewport, so a NEXT tap lands on a page whose `startOffset` is past 0 — the signal the
+     * flush test asserts on. Same structure as [minimalEpub], just far more body text.
+     */
+    private fun multiPageEpub(file: File): File {
+        val body = buildString {
+            repeat(60) { i ->
+                append("<p>Paragraph number $i. ")
+                append("It carries enough words to fill several lines once laid out and justified ")
+                append("on the viewport, so that sixty of them together span well past a single ")
+                append("page and force the paginator to cut at least one page boundary.</p>")
+            }
+        }
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            fun entry(path: String, content: String) {
+                zip.putNextEntry(ZipEntry(path))
+                zip.write(content.toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+            }
+            entry("mimetype", "application/epub+zip")
+            entry(
+                "META-INF/container.xml",
+                """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""",
+            )
+            entry(
+                "OEBPS/content.opf",
+                """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Long</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+  </spine>
+</package>""",
+            )
+            entry("OEBPS/ch1.xhtml", "<html><body><h1>One</h1>$body</body></html>")
+        }
+        return file
     }
 }
