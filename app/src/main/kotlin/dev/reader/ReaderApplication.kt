@@ -39,19 +39,28 @@ class ReaderApplication : Application() {
 
     /**
      * The currently in-flight (or most recently launched) sync [Job], if any. `null` before the
-     * first sync of this process ever launches. Checked via `?.isActive` — a completed, cancelled,
-     * or failed job reads `false` and does not block the next entry's sync.
+     * first sync of this process ever launches.
      *
      * Lives here, not on [dev.reader.ui.LibraryActivity], for the same reason as [database]: a
      * rotation destroys and recreates the Activity but not the Application, and the guard has to
-     * survive that recreation to close a real race. The sync itself runs on the Activity's
-     * `lifecycleScope`, so a rotation cancels it — but cancellation is requested synchronously
-     * (`Job.cancel()`) while the coroutine only *notices* at its next suspension point, on a
-     * background dispatcher, asynchronously. In that narrow window the old job can still read
-     * `isActive == true` even though it's already been told to stop. An Activity-scoped guard would
-     * be blind to that job entirely (a fresh instance means a fresh, `null` guard) and could launch
-     * a second sync racing the still-unwinding first one against the same DAO. Application scope
-     * sees the same [Job] reference across the recreation and correctly waits it out.
+     * survive that recreation to close a real race. An Activity-scoped guard would be blind to
+     * the previous instance's job entirely — a fresh instance means a fresh, `null` guard.
+     *
+     * **The Job semantics that shape how it is used** (see
+     * [dev.reader.ui.LibraryActivity.runSync], the only reader and writer). The sync runs on the
+     * Activity's `lifecycleScope`, so a rotation cancels it — and `Job.cancel()` moves the Job to
+     * the *Cancelling* state synchronously, where `isActive` reads **false immediately**. The
+     * coroutine body, meanwhile, only notices cancellation at its next suspension point, and
+     * `LibraryIndexer`'s directory walk and per-file extract calls are fully blocking: on a
+     * first scan the cancelled body can keep executing on Dispatchers.IO for seconds. So a bare
+     * `isActive` check is NOT enough — the recreated Activity's `onStart` would read `false` and
+     * happily launch a second sync racing the still-unwinding first one against the same DAO
+     * (and, once position writes exist, against the same rows). That is why `runSync` does two
+     * things: it checks `isActive` to skip re-entry while a live sync is in flight (the
+     * same-instance case), and it makes every newly launched sync `join()` its predecessor
+     * before running (the rotation case) — `join()` on a finished job returns immediately, and
+     * on a cancelled-but-unwinding one it waits exactly until the body has actually unwound.
+     * Together they hold the invariant: no two sync bodies in flight, ever.
      */
     var librarySyncJob: Job? = null
 }

@@ -237,12 +237,15 @@ open class LibraryActivity : AppCompatActivity() {
      * the right moment.
      *
      * **Why [ReaderApplication.librarySyncJob] is still needed, on top of removing the flag.**
-     * `onStart` can run again for the same Activity instance without an intervening `onDestroy`
-     * (e.g. the user backgrounds and quickly re-foregrounds the app while a slow first-run scan is
-     * still going), and a rotation's `onStart` on the recreated Activity can briefly overlap the
-     * previous instance's not-yet-unwound cancellation (see [ReaderApplication.librarySyncJob]'s
-     * KDoc for that race in detail). Two concurrent [LibraryIndexer.sync] calls would race the same
-     * DAO, so the in-flight [Job] is still tracked and checked before launching another.
+     * The invariant it guards is "no two sync bodies in flight, ever", and it takes two mechanisms
+     * to hold it (see [ReaderApplication.librarySyncJob]'s KDoc for the Job semantics):
+     * - The `isActive` check below handles the same-instance case: `onStart` can run again without
+     *   an intervening `onDestroy` (the user backgrounds and quickly re-foregrounds the app while
+     *   a slow first-run scan is still going), and the still-active job reads `true` and skips.
+     * - The `previous?.join()` inside the launched coroutine handles the rotation case: the old
+     *   instance's destruction *cancelled* the old job, so it reads `isActive == false` here even
+     *   while its body is still executing a blocking walk/extract on Dispatchers.IO. The new sync
+     *   therefore waits for the old body to actually unwind before doing anything.
      *
      * **Why [CancellationException] is caught and rethrown, not left to the broad `catch`
      * below it.** [CancellationException] extends [Exception] — this project has already been
@@ -258,7 +261,16 @@ open class LibraryActivity : AppCompatActivity() {
         }
         Log.i(TAG, "runSync: STARTED")
 
+        // The predecessor may be cancelled-but-still-unwinding (see this method's KDoc): capture
+        // it before overwriting the field, and make the new coroutine wait it out below.
+        val previous = app.librarySyncJob
         app.librarySyncJob = lifecycleScope.launch {
+            // join() on a job that already completed is free; on a cancelled one whose body is
+            // still executing a blocking section on Dispatchers.IO, it suspends exactly until
+            // that body has unwound. Never a deadlock: `previous` is already cancelled or
+            // completed here (the isActive guard above returned otherwise), so it cannot be
+            // waiting on anything this coroutine owns.
+            previous?.join()
             try {
                 createSync().invoke()
             } catch (e: CancellationException) {

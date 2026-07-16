@@ -6,8 +6,13 @@ import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
 import dev.reader.data.IndexResult
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -142,6 +147,69 @@ class LibraryActivityRecreationTest {
         releaseFirstSync.complete(Unit)
         idleUntil { app.librarySyncJob?.isActive != true }
         assertThat(syncCalls).isEqualTo(1)
+    }
+
+    @Test
+    fun `a rotation mid-sync does not overlap the old sync body with a new one`() {
+        // The rotation race in full: Job.cancel() (here, the old Activity's destruction
+        // cancelling its lifecycleScope) moves the Job to Cancelling, where isActive reads FALSE
+        // immediately — while the sync body keeps executing on Dispatchers.IO until its next
+        // suspension point. LibraryIndexer's walk() and each extract() are fully blocking, so on
+        // a first scan that window is seconds long. A recreated Activity's onStart lands squarely
+        // inside it, and a bare isActive check would wave a second, concurrent sync through.
+        // The fake below blocks in a NON-suspending section to model exactly that.
+        val firstEntered = CountDownLatch(1)
+        val firstRelease = CountDownLatch(1)
+        val firstUnwound = AtomicBoolean(false)
+        val secondEntered = AtomicBoolean(false)
+        val secondSawFirstStillRunning = AtomicBoolean(false)
+
+        val first = Robolectric.buildActivity(TestableLibraryActivity::class.java)
+        first.get().sync = {
+            try {
+                withContext(Dispatchers.IO) {
+                    firstEntered.countDown()
+                    // CountDownLatch.await() is blocking and never observes coroutine
+                    // cancellation — like a blocking extractor.extract() call mid-scan.
+                    firstRelease.await()
+                }
+                IndexResult(added = 0, updated = 0, removed = 0, newlyUnreadable = 0)
+            } finally {
+                firstUnwound.set(true)
+            }
+        }
+        first.create().start().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue()
+
+        // The rotation: the old instance is destroyed, cancelling its lifecycleScope, while the
+        // sync body is still inside its blocking section. isActive drops to false immediately
+        // even though the body is still running — the exact window under test.
+        first.pause().stop().destroy()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertThat(app.librarySyncJob?.isActive).isFalse()
+        assertThat(firstUnwound.get()).isFalse()
+
+        // The recreated Activity's onStart fires runSync inside that window.
+        val second = Robolectric.buildActivity(TestableLibraryActivity::class.java)
+        second.get().sync = {
+            secondSawFirstStillRunning.set(!firstUnwound.get())
+            secondEntered.set(true)
+            IndexResult(added = 0, updated = 0, removed = 0, newlyUnreadable = 0)
+        }
+        second.create().start().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // The invariant: no two sync bodies in flight, ever. The new sync must not have entered
+        // while the old body is still unwinding.
+        assertThat(secondEntered.get()).isFalse()
+
+        firstRelease.countDown()
+        idleUntil { secondEntered.get() }
+        assertThat(secondEntered.get()).isTrue()
+        assertThat(secondSawFirstStillRunning.get()).isFalse()
+
+        second.pause().stop().destroy()
     }
 
     /** [LibraryActivity] subclass whose test seams are set per-test via mutable fields. */
