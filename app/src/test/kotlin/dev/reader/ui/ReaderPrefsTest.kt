@@ -87,6 +87,20 @@ class ReaderPrefsTest {
     }
 
     @Test
+    fun `the widest margin preset builds a valid RenderConfig on the device viewport`() {
+        // The Aa sheet's widest preset (80px) must never hand RenderConfig.init a non-positive
+        // content width or height on the real ~1404x1872 panel. This pins that the config builds
+        // (init would throw otherwise) and that both content dimensions stay positive.
+        val prefs = ReaderPrefs(context)
+        prefs.marginPx = 80
+
+        val built = prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
+        assertThat(built.marginPx).isEqualTo(80)
+        assertThat(built.contentWidthPx).isGreaterThan(0)
+        assertThat(built.contentHeightPx).isGreaterThan(0)
+    }
+
+    @Test
     fun `renderConfig carries a changed field through to the built config`() {
         val prefs = ReaderPrefs(context)
         prefs.textSizePx = 40f

@@ -5,4 +5,34 @@
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:windowBackground">@android:color/white</item>
     </style>
+
+    <!-- Aa sheet controls: monochrome, large tap targets, no ripple/animation. A selected option is
+         shown by bolding it in code (ReaderActivity.refreshSheet), so there is no background state to
+         animate — the e-ink constraint. Shared by the segmented options and the size stepper. -->
+    <style name="AaOption">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:minWidth">56dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingHorizontal">12dp</item>
+        <item name="android:paddingVertical">10dp</item>
+        <item name="android:textColor">@android:color/black</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <!-- A full-width toggle row: its label carries its own state ("Justify: On") and flips on tap. -->
+    <style name="AaToggle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingVertical">10dp</item>
+        <item name="android:textColor">@android:color/black</item>
+        <item name="android:textSize">16sp</item>
+    </style>
 </resources>

@@ -345,7 +345,97 @@ class ReaderActivityTest {
         assertThat(activity.findViewById<TextView>(R.id.book_title).text.toString()).isEqualTo("Long")
     }
 
+    // -- Plan 4 Task 3: the Aa typography sheet ------------------------------------------------
+
+    @Test
+    fun `the Aa button opens the sheet showing current values and a second tap closes it`() {
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        // The sheet lives inside the overlay; open the overlay first, then the sheet via Aa.
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        val sheet = activity.findViewById<View>(R.id.settings_sheet)
+        assertThat(sheet.visibility).isEqualTo(View.GONE)
+
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        assertThat(sheet.visibility).isEqualTo(View.VISIBLE)
+        // Reflects current (default) values: size readout and a toggle label read the live prefs.
+        assertThat(activity.findViewById<TextView>(R.id.size_value).text.toString()).isEqualTo("34px")
+        assertThat(activity.findViewById<TextView>(R.id.toggle_justify).text.toString()).isEqualTo("Justify: On")
+
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        assertThat(sheet.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `bumping the text size writes the pref, re-paginates, and keeps the reader on a valid page`() {
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.settings_button).performClick()
+
+        activity.findViewById<View>(R.id.size_plus).performClick()
+
+        // The pref moved one step (34 -> 36) and the readout followed.
+        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).textSizePx).isEqualTo(36f)
+        assertThat(activity.findViewById<TextView>(R.id.size_value).text.toString()).isEqualTo("36px")
+        // The chapter re-paginated live without crashing; the reader is still on a valid page and the
+        // sheet stayed open.
+        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+ left in chapter""")
+        assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
+    }
+
+    @Test
+    fun `flipping the publisher-styling toggle writes the pref and updates its label`() {
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        assertThat(activity.findViewById<TextView>(R.id.toggle_publisher).text.toString())
+            .isEqualTo("Publisher styling: On")
+
+        activity.findViewById<View>(R.id.toggle_publisher).performClick()
+
+        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).publisherStyling).isFalse()
+        assertThat(activity.findViewById<TextView>(R.id.toggle_publisher).text.toString())
+            .isEqualTo("Publisher styling: Off")
+    }
+
+    @Test
+    fun `system Back closes the Aa sheet first, then the overlay, then the book`() {
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
+
+        // First Back: sheet only.
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.GONE)
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.isFinishing).isFalse()
+
+        // Second Back: overlay. Third: the book.
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+        assertThat(activity.isFinishing).isFalse()
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertThat(activity.isFinishing).isTrue()
+    }
+
     // -- Harness --------------------------------------------------------------------------------
+
+    /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
+     *  the SharedPreferences file within a JVM fork. */
+    private fun clearReaderPrefs() {
+        RuntimeEnvironment.getApplication()
+            .getSharedPreferences("reader_prefs", android.content.Context.MODE_PRIVATE)
+            .edit().clear().commit()
+    }
+
 
     /** [ReaderActivity] subclass whose test seams are set per-test via mutable fields. */
     private class TestableReaderActivity : ReaderActivity() {
