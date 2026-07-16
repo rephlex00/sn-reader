@@ -58,11 +58,23 @@ interface BookDao {
     @Query("SELECT * FROM books ORDER BY title COLLATE NOCASE ASC")
     fun observeAllByTitle(): Flow<List<BookEntity>>
 
-    /** Null authors (never extracted, or the extractor found none) sort after every named author. */
-    @Query("SELECT * FROM books ORDER BY author IS NULL ASC, author COLLATE NOCASE ASC")
+    /**
+     * Null authors (never extracted, or the extractor found none) sort after every named author.
+     * Within the same author, title is the tie-break — that's how a shelf reads.
+     */
+    @Query(
+        "SELECT * FROM books ORDER BY author IS NULL ASC, author COLLATE NOCASE ASC, " +
+            "title COLLATE NOCASE ASC",
+    )
     fun observeAllByAuthor(): Flow<List<BookEntity>>
 
-    @Query("SELECT * FROM books ORDER BY addedAtMs DESC")
+    /**
+     * Tie-broken by title: a first import can stamp an entire shelf with the same
+     * `addedAtMs` (one directory walk, one `clock()` per file, millisecond resolution), which
+     * would otherwise leave the primary "recently added" view in unspecified order exactly on
+     * the run where the user first sees it.
+     */
+    @Query("SELECT * FROM books ORDER BY addedAtMs DESC, title COLLATE NOCASE ASC")
     fun observeAllByRecentlyAdded(): Flow<List<BookEntity>>
 
     /**

@@ -193,34 +193,53 @@ class BookDaoTest {
 
     @Test
     fun `observeAllSorted TITLE is case-insensitive ascending`(): Unit = runBlocking {
+        // Discriminating data: under BINARY collation, every uppercase letter sorts before every
+        // lowercase one, so "Zebra" < "Mango" < "apple" would come back binary-ordered as
+        // Mango, Zebra, apple. Only NOCASE puts them in true alphabetical order.
         dao.upsertAll(
             listOf(
-                book(path = "/b.epub", title = "the Hobbit"),
-                book(path = "/a.epub", title = "Anna Karenina"),
-                book(path = "/c.epub", title = "The Great Gatsby"),
+                book(path = "/z.epub", title = "Zebra"),
+                book(path = "/a.epub", title = "apple"),
+                book(path = "/m.epub", title = "Mango"),
             ),
         )
 
         val rows = dao.observeAllSorted(SortOrder.TITLE).first()
 
         assertThat(rows.map { it.title })
-            .containsExactly("Anna Karenina", "The Great Gatsby", "the Hobbit")
+            .containsExactly("apple", "Mango", "Zebra")
             .inOrder()
     }
 
     @Test
     fun `observeAllSorted AUTHOR is case-insensitive and sorts null authors last`(): Unit = runBlocking {
+        // Discriminating data: under BINARY collation, "Zorro" (uppercase Z) sorts before "anne"
+        // (lowercase a), the opposite of alphabetical order. Only NOCASE puts "anne" first.
         dao.upsertAll(
             listOf(
-                book(path = "/a.epub", author = "zorro"),
+                book(path = "/a.epub", author = "Zorro"),
                 book(path = "/b.epub", author = null),
-                book(path = "/c.epub", author = "Anne"),
+                book(path = "/c.epub", author = "anne"),
             ),
         )
 
         val rows = dao.observeAllSorted(SortOrder.AUTHOR).first()
 
         assertThat(rows.map { it.path }).containsExactly("/c.epub", "/a.epub", "/b.epub").inOrder()
+    }
+
+    @Test
+    fun `observeAllSorted AUTHOR breaks ties within the same author by title`(): Unit = runBlocking {
+        dao.upsertAll(
+            listOf(
+                book(path = "/a.epub", author = "Austen", title = "Persuasion"),
+                book(path = "/b.epub", author = "Austen", title = "Emma"),
+            ),
+        )
+
+        val rows = dao.observeAllSorted(SortOrder.AUTHOR).first()
+
+        assertThat(rows.map { it.path }).containsExactly("/b.epub", "/a.epub").inOrder()
     }
 
     @Test
@@ -236,6 +255,24 @@ class BookDaoTest {
         val rows = dao.observeAllSorted(SortOrder.RECENTLY_ADDED).first()
 
         assertThat(rows.map { it.path }).containsExactly("/new.epub", "/mid.epub", "/old.epub").inOrder()
+    }
+
+    @Test
+    fun `observeAllSorted RECENTLY_ADDED breaks ties on addedAtMs by title`(): Unit = runBlocking {
+        // A fast directory walk on first import can stamp an entire shelf with the same
+        // System.currentTimeMillis() value; without a tie-break the order among those rows is
+        // whatever SQLite's row order happens to be, which is user-visible on the very first run.
+        dao.upsertAll(
+            listOf(
+                book(path = "/z.epub", title = "Zebra", addedAtMs = 5000L),
+                book(path = "/a.epub", title = "apple", addedAtMs = 5000L),
+                book(path = "/m.epub", title = "Mango", addedAtMs = 5000L),
+            ),
+        )
+
+        val rows = dao.observeAllSorted(SortOrder.RECENTLY_ADDED).first()
+
+        assertThat(rows.map { it.title }).containsExactly("apple", "Mango", "Zebra").inOrder()
     }
 
     @Test
