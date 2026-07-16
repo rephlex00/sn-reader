@@ -9,7 +9,9 @@ import com.google.common.truth.Truth.assertThat
 import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
+import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
+import dev.reader.engine.TocEntry
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
 import kotlinx.coroutines.runBlocking
@@ -426,6 +428,165 @@ class ReaderActivityTest {
         assertThat(activity.isFinishing).isTrue()
     }
 
+    // -- Plan 4 Task 4: TOC navigation ---------------------------------------------------------
+
+    @Test
+    fun `tocRows maps entries in spine order, preserving depth and marking the current chapter`() {
+        val toc = listOf(
+            TocEntry(title = "One", spineIndex = 0, depth = 0),
+            TocEntry(title = "Two", spineIndex = 1, depth = 0),
+            TocEntry(title = "Two-a", spineIndex = 2, depth = 1),
+        )
+
+        val rows = tocRows(toc, currentSpineIndex = 1)
+
+        // Order and depth are passed through untouched.
+        assertThat(rows.map { it.title }).containsExactly("One", "Two", "Two-a").inOrder()
+        assertThat(rows.map { it.depth }).containsExactly(0, 0, 1).inOrder()
+        // Only the entry whose chapter is the current one is marked.
+        assertThat(rows.map { it.isCurrent }).containsExactly(false, true, false).inOrder()
+    }
+
+    @Test
+    fun `tocRows on an empty toc is empty (the No contents case)`() {
+        assertThat(tocRows(emptyList(), currentSpineIndex = 0)).isEmpty()
+    }
+
+    @Test
+    fun `tocTarget lands an anchored entry on the page containing its char offset`() {
+        // A chapter with pages: the offset->page resolution is the pageIndexFor seam. An anchored
+        // entry (charOffset 500) must land on the page whose range contains 500, NOT page 0.
+        val target = tocTarget(
+            spineIndex = 2,
+            charOffset = 500,
+            pageCountFor = { 4 }, // non-empty chapter
+            offsetToPageIndex = { spine, offset ->
+                assertThat(spine).isEqualTo(2)
+                assertThat(offset).isEqualTo(500)
+                3 // the page pageIndexFor would return for offset 500
+            },
+            firstNonEmptyFrom = { error("must not degrade a non-empty chapter") },
+        )
+
+        assertThat(target).isEqualTo(ReadingState(2, 3))
+    }
+
+    @Test
+    fun `tocTarget degrades an entry at an empty chapter to the nearest readable one`() {
+        // The tapped chapter paginates to zero pages: skip forward to the nearest readable chapter
+        // instead of showing a blank page, exactly like the open path's advance empty-skip.
+        val target = tocTarget(
+            spineIndex = 1,
+            charOffset = 0,
+            pageCountFor = { 0 }, // empty chapter
+            offsetToPageIndex = { _, _ -> error("must not resolve an offset on an empty chapter") },
+            firstNonEmptyFrom = { from ->
+                assertThat(from).isEqualTo(1)
+                ReadingState(2, 0) // chapter 2 is the next readable one
+            },
+        )
+
+        assertThat(target).isEqualTo(ReadingState(2, 0))
+    }
+
+    @Test
+    fun `tocTarget yields null when the tapped chapter and everything after it are empty`() {
+        val target = tocTarget(
+            spineIndex = 3,
+            charOffset = 0,
+            pageCountFor = { 0 },
+            offsetToPageIndex = { _, _ -> error("must not resolve") },
+            firstNonEmptyFrom = { null }, // nothing readable remains
+        )
+
+        assertThat(target).isNull()
+    }
+
+    @Test
+    fun `the Contents button opens the panel listing every chapter with the current one marked`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        val panel = activity.findViewById<View>(R.id.toc_panel)
+        assertThat(panel.visibility).isEqualTo(View.GONE)
+
+        activity.findViewById<View>(R.id.contents_button).performClick()
+
+        assertThat(panel.visibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.findViewById<View>(R.id.toc_empty).visibility).isEqualTo(View.GONE)
+        val list = activity.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.toc_list)
+        assertThat(list.visibility).isEqualTo(View.VISIBLE)
+        // tocEpub's nav declares three chapters; the reader opens on chapter 0.
+        assertThat(list.adapter!!.itemCount).isEqualTo(3)
+    }
+
+    @Test
+    fun `tapping a Contents entry navigates to that chapter and persists it`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        // Opens on chapter 0.
+        assertThat(rowFor(app, book.path)!!.spineIndex).isEqualTo(0)
+
+        // Open the overlay, the Contents panel, then click the second entry (chapter index 1).
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        clickTocRow(activity, position = 1)
+
+        // The jump navigated to chapter 1 and closed the chrome to the page.
+        idleUntil { rowFor(app, book.path)!!.spineIndex == 1 }
+        assertThat(rowFor(app, book.path)!!.spineIndex).isEqualTo(1)
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `system Back closes the Contents panel first, then the overlay, then the book`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.VISIBLE)
+
+        // First Back: the TOC panel only.
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.GONE)
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.isFinishing).isFalse()
+
+        // Second Back: the overlay. Third: the book.
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+        assertThat(activity.isFinishing).isFalse()
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertThat(activity.isFinishing).isTrue()
+    }
+
+    @Test
+    fun `opening the Contents panel closes the Aa sheet, and vice versa`() {
+        clearReaderPrefs()
+        val controller = openedWithToc()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+
+        // Aa first, then Contents: Contents replaces the sheet.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.VISIBLE)
+
+        // Contents open, then Aa: the sheet replaces the panel.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
@@ -488,6 +649,33 @@ class ReaderActivityTest {
         launchAndLayOut(controller)
         idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
         return controller
+    }
+
+    /** A reader opened on a real multi-chapter book carrying a nav TOC, driven until its first page
+     *  is shown — so the Contents-panel tests have a real `doc.toc` to list and jump through. */
+    private fun openedWithToc(): ActivityController<TestableReaderActivity> {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+        return controller
+    }
+
+    /**
+     * Lays out the Contents RecyclerView and clicks the row at [position]. Robolectric does not lay
+     * out a freshly-shown RecyclerView on its own, so the panel subtree is measured/laid out here to
+     * force holder creation before the child click.
+     */
+    private fun clickTocRow(activity: ReaderActivity, position: Int) {
+        val list = activity.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.toc_list)
+        list.measure(
+            View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+        )
+        list.layout(0, 0, 800, 600)
+        val holder = list.findViewHolderForAdapterPosition(position)
+            ?: error("no TOC row at position $position after layout")
+        holder.itemView.performClick()
     }
 
     private fun intentWithExtra(path: String): Intent =
@@ -653,6 +841,78 @@ class ReaderActivityTest {
 </package>""",
             )
             entry("OEBPS/ch1.xhtml", "<html><body><h1>One</h1>$body</body></html>")
+        }
+        return file
+    }
+
+    /**
+     * A three-chapter EPUB carrying a real EPUB 3 nav document, so [EpubDocument.toc] parses to three
+     * entries in spine order (the third nested one level, to exercise depth) rather than the flat
+     * spine synthesis. Every chapter has enough body text to paginate to at least one page, so a
+     * Contents jump lands on real text.
+     */
+    private fun tocEpub(file: File): File {
+        fun chapterBody(label: String) = buildString {
+            repeat(12) {
+                append("<p>$label paragraph $it with enough words to lay out into a line or two ")
+                append("on the test viewport so the chapter paginates to at least one page.</p>")
+            }
+        }
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            fun entry(path: String, content: String) {
+                zip.putNextEntry(ZipEntry(path))
+                zip.write(content.toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+            }
+            entry("mimetype", "application/epub+zip")
+            entry(
+                "META-INF/container.xml",
+                """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""",
+            )
+            entry(
+                "OEBPS/content.opf",
+                """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Contents Book</dc:title></metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+    <itemref idref="ch3"/>
+  </spine>
+</package>""",
+            )
+            entry(
+                "OEBPS/nav.xhtml",
+                """<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="ch1.xhtml">Chapter One</a></li>
+        <li><a href="ch2.xhtml">Chapter Two</a>
+          <ol>
+            <li><a href="ch3.xhtml">Chapter Three</a></li>
+          </ol>
+        </li>
+      </ol>
+    </nav>
+  </body>
+</html>""",
+            )
+            entry("OEBPS/ch1.xhtml", "<html><body><h1>One</h1>${chapterBody("One")}</body></html>")
+            entry("OEBPS/ch2.xhtml", "<html><body><h1>Two</h1>${chapterBody("Two")}</body></html>")
+            entry("OEBPS/ch3.xhtml", "<html><body><h1>Three</h1>${chapterBody("Three")}</body></html>")
         }
         return file
     }

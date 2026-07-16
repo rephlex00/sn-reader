@@ -12,12 +12,15 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.engine.Locator
 import dev.reader.engine.PageNavigator
 import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
+import dev.reader.engine.TocEntry
 import dev.reader.engine.advance
 import dev.reader.engine.pageIndexFor
 import dev.reader.engine.reflowedPageIndex
@@ -46,6 +49,61 @@ internal fun scrubberText(pageIndex: Int, pageCount: Int): String {
     val left = pageCount - page
     return "page $page of $pageCount · $left left in chapter"
 }
+
+/**
+ * One row of the Contents panel — the display projection of a [TocEntry] for [TocAdapter]. [depth]
+ * drives the indent; [isCurrent] (whether this entry's chapter is the one being read) drives the
+ * bold marker; [spineIndex]/[charOffset] are what a tap jumps to. Kept as a flat data class, out of
+ * the View, so the list-building rules below are unit-testable without a RecyclerView.
+ */
+internal data class TocRow(
+    val title: String,
+    val spineIndex: Int,
+    val charOffset: Int,
+    val depth: Int,
+    val isCurrent: Boolean,
+)
+
+/**
+ * Projects the parsed [toc] into [TocRow]s in list (spine) order, marking every entry whose chapter
+ * is [currentSpineIndex] as the current one. A pure function of its two arguments — the testable
+ * seam behind the Contents list — so order, depth passthrough and current-chapter marking are
+ * verifiable without an Activity. An empty [toc] yields an empty list (the "No contents" case).
+ */
+internal fun tocRows(toc: List<TocEntry>, currentSpineIndex: Int): List<TocRow> =
+    toc.map { entry ->
+        TocRow(
+            title = entry.title,
+            spineIndex = entry.spineIndex,
+            charOffset = entry.charOffset,
+            depth = entry.depth,
+            isCurrent = entry.spineIndex == currentSpineIndex,
+        )
+    }
+
+/**
+ * Resolves the [ReadingState] a Contents tap lands on — the same shape as the open path's
+ * `ReadingSession.resolveStart`, factored out pure so the anchored-offset and degrade-on-empty
+ * rules are testable without a real document.
+ *
+ * A well-formed entry ([pageCountFor] > 0) lands on the page whose range contains [charOffset] via
+ * [offsetToPageIndex] (which the caller backs with [pageIndexFor]), so an anchored entry lands on
+ * its offset, NOT blindly on page 0. An entry pointing at a missing/empty chapter (zero pages)
+ * degrades: it skips forward to the nearest readable chapter via [firstNonEmptyFrom] (the open
+ * path's `advance` empty-skip), returning `null` only if nothing readable remains.
+ */
+internal fun tocTarget(
+    spineIndex: Int,
+    charOffset: Int,
+    pageCountFor: (Int) -> Int,
+    offsetToPageIndex: (Int, Int) -> Int,
+    firstNonEmptyFrom: (Int) -> ReadingState?,
+): ReadingState? =
+    if (pageCountFor(spineIndex) == 0) {
+        firstNonEmptyFrom(spineIndex)
+    } else {
+        ReadingState(spineIndex, offsetToPageIndex(spineIndex, charOffset))
+    }
 
 /**
  * Opens one EPUB and turns its pages.
@@ -87,6 +145,17 @@ open class ReaderActivity : AppCompatActivity() {
      * [applySettingsChange], keeping the reader on the same text across the reflow.
      */
     private lateinit var settingsSheet: View
+
+    /**
+     * The Contents panel — a visibility-toggled, full-height list inside [overlay], opened by the
+     * Contents button. Like [settingsSheet] it holds no timer or animation: showing/hiding is one
+     * `visibility` flip. Its list is [tocList] (backed by [tocAdapter]); [tocEmpty] takes its place
+     * when the book has no usable TOC. Tapping an entry jumps via [jumpToToc].
+     */
+    private lateinit var tocPanel: View
+    private lateinit var tocList: RecyclerView
+    private lateinit var tocEmpty: View
+    private lateinit var tocAdapter: TocAdapter
 
     private var document: EpubDocument? = null
     private var navigator: PageNavigator? = null
@@ -134,7 +203,15 @@ open class ReaderActivity : AppCompatActivity() {
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
+        tocPanel = overlay.findViewById(R.id.toc_panel)
+        tocList = overlay.findViewById(R.id.toc_list)
+        tocEmpty = overlay.findViewById(R.id.toc_empty)
+        tocAdapter = TocAdapter(::jumpToToc)
+        tocList.layoutManager = LinearLayoutManager(this)
+        tocList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
+        tocList.adapter = tocAdapter
         overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
+        overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleToc() }
         overlay.findViewById<View>(R.id.settings_button).setOnClickListener { toggleSettings() }
         wireSettingsControls()
         setContentView(container)
@@ -144,8 +221,11 @@ open class ReaderActivity : AppCompatActivity() {
         // shown: Back only closes it. Overlay hidden: Back leaves the book, flushing position first.
         onBackPressedDispatcher.addCallback(this) {
             when {
-                // The sheet is a layer inside the overlay: Back peels it off first, then the overlay,
-                // then the book — one thing per press.
+                // The TOC panel and the Aa sheet are layers inside the overlay: Back peels whichever
+                // is open off first, then the overlay, then the book — one thing per press. Only one
+                // panel is ever open at a time (opening either closes the other), so the order among
+                // them is a formality; TOC is checked first as the topmost-drawn layer.
+                tocPanel.visibility == View.VISIBLE -> tocPanel.visibility = View.GONE
                 settingsSheet.visibility == View.VISIBLE -> settingsSheet.visibility = View.GONE
                 isOverlayVisible() -> hideOverlay()
                 else -> exitToLibrary()
@@ -167,10 +247,11 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.visibility = View.VISIBLE
     }
 
-    /** Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet, so the
-     * overlay always reopens to its bare bar rather than a stale open sheet. */
+    /** Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet and the
+     * Contents panel, so the overlay always reopens to its bare bar rather than a stale open panel. */
     private fun hideOverlay() {
         settingsSheet.visibility = View.GONE
+        tocPanel.visibility = View.GONE
         overlay.visibility = View.GONE
     }
 
@@ -180,8 +261,75 @@ open class ReaderActivity : AppCompatActivity() {
         if (settingsSheet.visibility == View.VISIBLE) {
             settingsSheet.visibility = View.GONE
         } else {
+            tocPanel.visibility = View.GONE // one panel open at a time
             refreshSheet()
             settingsSheet.visibility = View.VISIBLE
+        }
+    }
+
+    /** Opens or closes the Contents panel — a visibility flip (one redraw). Opening first rebuilds
+     * the list from the current [EpubDocument.toc] and current chapter, and closes the Aa sheet so
+     * only one panel is ever open. */
+    private fun toggleToc() {
+        if (tocPanel.visibility == View.VISIBLE) {
+            tocPanel.visibility = View.GONE
+        } else {
+            settingsSheet.visibility = View.GONE // one panel open at a time
+            refreshToc()
+            tocPanel.visibility = View.VISIBLE
+        }
+    }
+
+    /** Rebuilds the Contents list from the already-parsed [EpubDocument.toc] and the current chapter
+     * (for the bold marker). An empty/malformed TOC shows the "No contents" state with the list
+     * hidden — never an empty clickable void. Pure View work; no re-parse (reads `doc.toc`). */
+    private fun refreshToc() {
+        val rows = tocRows(document?.toc.orEmpty(), state.spineIndex)
+        tocAdapter.submit(rows)
+        val empty = rows.isEmpty()
+        tocEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+        tocList.visibility = if (empty) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * Jumps the reader to a tapped Contents [row], through the SAME restore machinery the open path
+     * and the Aa sheet use: resolve the target page via [tocTarget] (an anchored entry lands on the
+     * page containing its char offset, NOT blindly page 0; an entry at a missing/empty chapter skips
+     * forward to the nearest readable one), then [showPage] + [flushPosition] as a normal navigation,
+     * and close the chrome down to the page.
+     *
+     * The lazy [EpubDocument.chapter] read can throw [EpubException] here for the first time, so this
+     * is wrapped exactly as [onTap]/[applySettingsChange] are: a failure shows a message and leaves
+     * the reader on the page it was already showing ([state] is only reassigned inside [showPage],
+     * after its own `chapter()` call has succeeded).
+     */
+    private fun jumpToToc(row: TocRow) {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val nav = navigator ?: return
+        val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
+        try {
+            val target = tocTarget(
+                spineIndex = row.spineIndex,
+                charOffset = row.charOffset,
+                pageCountFor = pageCountFor,
+                offsetToPageIndex = { spineIndex, charOffset ->
+                    pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
+                },
+                firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
+            )
+            if (target == null) {
+                // The tapped chapter and everything after it paginate to zero pages: nothing to show.
+                showMessage("This book has no readable text.")
+                return
+            }
+            hideOverlay()
+            showPage(target)
+            flushPosition()
+        } catch (e: EpubException) {
+            showMessage("Couldn't open that section: ${e.message}")
+        } catch (e: Exception) {
+            showMessage("Couldn't open that section: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
