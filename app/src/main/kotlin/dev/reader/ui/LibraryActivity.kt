@@ -2,7 +2,6 @@ package dev.reader.ui
 
 import android.content.Intent
 import android.os.Bundle
-import android.os.Environment
 import android.util.Log
 import android.view.Gravity
 import android.view.MenuItem
@@ -72,18 +71,11 @@ fun spanCountFor(widthPx: Int, columnWidthPx: Int): Int = (widthPx / columnWidth
  */
 private const val COLUMN_WIDTH_PX = 260
 
-/** The [Bundle] key [LibraryActivity] saves [LibraryActivity.currentSort] under. */
-private const val KEY_SORT_ORDER = "dev.reader.ui.SORT_ORDER"
-
 /**
- * How [LibraryActivity] serializes the current [SortOrder] into `onSaveInstanceState`'s Bundle so
- * it survives Activity recreation (e.g. a device rotation) instead of resetting to [SortOrder.TITLE].
- */
-fun sortOrderToSavedValue(order: SortOrder): String = order.name
-
-/**
- * The inverse of [sortOrderToSavedValue]. Falls back to [SortOrder.TITLE] for `null` (nothing
- * saved yet — first launch) or an unrecognized name, rather than throwing.
+ * Parses a stored [SortOrder] name, falling back to [SortOrder.TITLE] for `null` (nothing stored
+ * yet — first launch) or an unrecognized name, rather than throwing. Shared by [LibraryPrefs],
+ * which is now the single source of truth for the active sort (it persists across process death,
+ * where the old saved-instance Bundle survived only a rotation).
  */
 fun sortOrderFromSavedValue(value: String?): SortOrder =
     SortOrder.entries.firstOrNull { it.name == value } ?: SortOrder.TITLE
@@ -122,6 +114,12 @@ open class LibraryActivity : AppCompatActivity() {
     private val db: LibraryDatabase
         get() = (application as ReaderApplication).database
 
+    /**
+     * Persisted library settings — the source of truth for the active [SortOrder] (survives cold
+     * launch, unlike the saved-instance Bundle it replaced) and the book root [createSync] walks.
+     */
+    private val prefs by lazy { LibraryPrefs(this) }
+
     /** `protected`, not `private`: [LibraryActivityRecreationTest] reads `itemCount` after recreation. */
     protected lateinit var adapter: BookGridAdapter
 
@@ -149,7 +147,11 @@ open class LibraryActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        currentSort = sortOrderFromSavedValue(savedInstanceState?.getString(KEY_SORT_ORDER))
+        // The active sort comes from prefs, not the savedInstanceState Bundle: prefs persists it
+        // across process death, so a cold launch now restores the user's chosen order instead of
+        // snapping back to TITLE. Rotation is covered too — the value was already written when the
+        // user picked it, so the recreated Activity reads the same thing.
+        currentSort = prefs.sortOrder
 
         val recyclerView = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@LibraryActivity, spanCountFor(resources.displayMetrics.widthPixels, COLUMN_WIDTH_PX))
@@ -233,15 +235,6 @@ open class LibraryActivity : AppCompatActivity() {
      */
     protected open fun isAllFilesAccessGranted(): Boolean = hasAllFilesAccess()
 
-    /**
-     * Persists [currentSort] across Activity recreation (e.g. a device rotation), which otherwise
-     * snaps the user's chosen sort order back to [SortOrder.TITLE] — user-visible on this device.
-     */
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putString(KEY_SORT_ORDER, sortOrderToSavedValue(currentSort))
-    }
-
     private fun onSortMenuItemClicked(item: MenuItem): Boolean {
         val order = sortOrderForMenuItemId(item.itemId) ?: return false
         setSortOrder(order)
@@ -251,6 +244,9 @@ open class LibraryActivity : AppCompatActivity() {
     private fun setSortOrder(order: SortOrder) {
         if (order == currentSort) return
         currentSort = order
+        // Persist immediately so the choice survives cold launch, not only this Activity instance.
+        // The write is a deferred apply() (see LibraryPrefs); no I/O lands on this callback's thread.
+        prefs.sortOrder = order
         observeSorted(order)
     }
 
@@ -350,10 +346,12 @@ open class LibraryActivity : AppCompatActivity() {
      * roots.
      */
     protected open fun createSync(): suspend () -> IndexResult = {
-        val roots = listOf(
-            File(Environment.getExternalStorageDirectory(), "Document"),
-            File(Environment.getExternalStorageDirectory(), "EXPORT"),
-        )
+        // One configurable root, read fresh each sync so a change made in Settings is picked up on
+        // the next onStart with no observer machinery. The old hardcoded second root (/EXPORT) is
+        // dropped — owner-verified to hold only note exports, never books. Re-pointing the root is
+        // safe: LibraryIndexer scopes its deletions to the current root (see its KDoc), so books
+        // outside it are hidden, not deleted.
+        val roots = listOf(File(prefs.rootPath))
         LibraryIndexer(db.bookDao(), roots, EpubMetadataExtractor(applicationContext)).sync()
     }
 

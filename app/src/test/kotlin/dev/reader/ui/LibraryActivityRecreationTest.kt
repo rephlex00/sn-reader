@@ -53,6 +53,11 @@ class LibraryActivityRecreationTest {
         // same JVM fork; resetting the guard defensively costs nothing and avoids one test's
         // guard state leaking into another's if that ever changes.
         app.librarySyncJob = null
+        // library_prefs is a file Robolectric reuses across tests in the fork the same way, and
+        // the sort order now lives there — clear it so a sort set by one test can't skew another's
+        // observed order.
+        app.getSharedPreferences("library_prefs", android.content.Context.MODE_PRIVATE)
+            .edit().clear().commit()
     }
 
     @Test
@@ -69,6 +74,34 @@ class LibraryActivityRecreationTest {
         idleUntil { controller.get().itemCount == 1 }
 
         assertThat(controller.get().itemCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `the sort order comes from prefs on a cold launch, not the reset-to-TITLE default`() {
+        // The whole point of moving sort into LibraryPrefs: it must survive process death, which
+        // the old saved-instance Bundle never did (a cold launch always reset to TITLE). Build a
+        // fresh Activity with NO saved state and a non-default sort persisted — the observed order
+        // must reflect prefs, not TITLE.
+        //
+        // Two books whose TITLE order and AUTHOR order diverge make the source unambiguous:
+        //   TITLE asc  -> Apple,  Zebra   (first = Apple)
+        //   AUTHOR asc -> Zebra (Adams), Apple (Zephyr)  (first = Zebra)
+        runBlocking {
+            app.database.bookDao().upsertAll(
+                listOf(
+                    testBook(path = "/Document/z.epub", title = "Zebra", author = "Adams"),
+                    testBook(path = "/Document/a.epub", title = "Apple", author = "Zephyr"),
+                ),
+            )
+        }
+        LibraryPrefs(app).sortOrder = dev.reader.data.SortOrder.AUTHOR
+
+        val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
+        controller.create().start().resume()
+        idleUntil { controller.get().itemCount == 2 }
+
+        // AUTHOR order, so "Zebra" (author Adams) is first — TITLE order would have put "Apple" first.
+        assertThat(controller.get().firstTitle).isEqualTo("Zebra")
     }
 
     @Test
@@ -223,6 +256,9 @@ class LibraryActivityRecreationTest {
 
         /** Exposes the protected [adapter]'s count — only a subclass can reach it at all. */
         val itemCount: Int get() = adapter.itemCount
+
+        /** The title of the first grid item, or null if empty — lets a test read the sort order. */
+        val firstTitle: String? get() = adapter.currentList.firstOrNull()?.title
     }
 
     /**
@@ -239,12 +275,16 @@ class LibraryActivityRecreationTest {
         }
     }
 
-    private fun testBook(path: String = "/Document/Books/a.epub") = BookEntity(
+    private fun testBook(
+        path: String = "/Document/Books/a.epub",
+        title: String = "A Book",
+        author: String? = "An Author",
+    ) = BookEntity(
         path = path,
         sizeBytes = 1_000L,
         modifiedAtMs = 1_700_000_000_000L,
-        title = "A Book",
-        author = "An Author",
+        title = title,
+        author = author,
         coverPath = null,
         spineIndex = 0,
         charOffset = 0,
