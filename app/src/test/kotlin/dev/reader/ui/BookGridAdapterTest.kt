@@ -19,9 +19,13 @@ class BookGridAdapterTest {
     }
 
     @Test
-    fun `an opened book past the start names its chapter, one-based`() {
+    fun `an opened book past the start names its spine section, one-based, not a chapter`() {
+        // spineIndex is a SPINE index, not a chapter ordinal: real EPUBs routinely carry
+        // cover/title/nav as spine items 0-2 (ReaderActivity skips a zero-page spine item 0 for
+        // exactly this reason), so "Chapter 5" here could actually be the book's chapter 2.
+        // "Section N" reports only what the index actually has, honestly.
         assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 4, charOffset = 0))
-            .isEqualTo("Chapter 5")
+            .isEqualTo("Section 5")
     }
 
     @Test
@@ -29,7 +33,7 @@ class BookGridAdapterTest {
         // spineIndex 0 with a nonzero charOffset means partway through the first chapter,
         // which is progress, not "just started" — only (0, 0) exactly is the true start.
         assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 0, charOffset = 50))
-            .isEqualTo("Chapter 1")
+            .isEqualTo("Section 1")
     }
 
     // -- coverCacheKey ----------------------------------------------------------------------

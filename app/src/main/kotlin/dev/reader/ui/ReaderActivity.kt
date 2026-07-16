@@ -89,8 +89,14 @@ class ReaderActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    /** The path handed in by [LibraryActivity], if any — see [EXTRA_BOOK_PATH]. */
-    private fun explicitBookFile(): File? = intent.getStringExtra(EXTRA_BOOK_PATH)?.let(::File)
+    /**
+     * The path handed in by [LibraryActivity], if any — see [EXTRA_BOOK_PATH]. Checked against
+     * [File.isFile] so a book that was deleted or moved out from under a stale extra (e.g. the
+     * grid's index is behind the filesystem, or the intent was crafted by hand) falls back to
+     * [findFirstEpub] instead of surfacing "Couldn't open this book" for a file that was never
+     * there to open.
+     */
+    private fun explicitBookFile(): File? = intent.getStringExtra(EXTRA_BOOK_PATH)?.let(::File)?.takeIf { it.isFile }
 
     private fun openFirstBook() {
         if (document != null || opening) return

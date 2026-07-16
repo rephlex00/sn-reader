@@ -38,4 +38,26 @@ class LibraryActivityTest {
     fun `an exact multiple of the column width divides evenly`() {
         assertThat(spanCountFor(widthPx = 780, columnWidthPx = 260)).isEqualTo(3)
     }
+
+    // -- sortOrderToSavedValue / sortOrderFromSavedValue -----------------------------------
+    // Rotation destroys and recreates LibraryActivity; onSaveInstanceState/onCreate round-trip
+    // currentSort through a Bundle string via these two pure functions so the chosen order
+    // survives instead of snapping back to TITLE.
+
+    @Test
+    fun `every SortOrder round-trips through save and restore`() {
+        for (order in SortOrder.entries) {
+            assertThat(sortOrderFromSavedValue(sortOrderToSavedValue(order))).isEqualTo(order)
+        }
+    }
+
+    @Test
+    fun `no saved value (first launch) restores to TITLE`() {
+        assertThat(sortOrderFromSavedValue(null)).isEqualTo(SortOrder.TITLE)
+    }
+
+    @Test
+    fun `an unrecognized saved value restores to TITLE rather than throwing`() {
+        assertThat(sortOrderFromSavedValue("NOT_A_REAL_SORT_ORDER")).isEqualTo(SortOrder.TITLE)
+    }
 }

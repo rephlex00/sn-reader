@@ -3,6 +3,7 @@ package dev.reader.ui
 import android.content.Intent
 import android.os.Bundle
 import android.os.Environment
+import android.util.Log
 import android.view.MenuItem
 import android.view.ViewGroup
 import android.widget.LinearLayout
@@ -12,15 +13,14 @@ import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.room.Room
 import dev.reader.R
+import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
 import dev.reader.data.LibraryDatabase
 import dev.reader.data.LibraryIndexer
 import dev.reader.data.SortOrder
 import dev.reader.library.EpubMetadataExtractor
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -40,8 +40,32 @@ fun sortOrderForMenuItemId(itemId: Int): SortOrder? = when (itemId) {
  */
 fun spanCountFor(widthPx: Int, columnWidthPx: Int): Int = (widthPx / columnWidthPx).coerceAtLeast(2)
 
-/** A grid cell's target width; kept in one place since [spanCountFor] and layout both use it. */
+/**
+ * A grid cell's target width in raw pixels, used only by [spanCountFor] to compute the span count
+ * from the recycler's measured width (also in raw pixels). This is **not** shared with
+ * `item_book.xml`'s layout, which sizes its cover/text views with `match_parent`/dp and never
+ * references this constant — an earlier version of this comment claimed otherwise. Because it's
+ * px rather than dp, the column count this yields will vary with screen density in a way dp-based
+ * layout wouldn't; left as-is since the value itself is a call for whoever owns the visual
+ * density, not a bug this pass is fixing.
+ */
 private const val COLUMN_WIDTH_PX = 260
+
+/** The [Bundle] key [LibraryActivity] saves [LibraryActivity.currentSort] under. */
+private const val KEY_SORT_ORDER = "dev.reader.ui.SORT_ORDER"
+
+/**
+ * How [LibraryActivity] serializes the current [SortOrder] into `onSaveInstanceState`'s Bundle so
+ * it survives Activity recreation (e.g. a device rotation) instead of resetting to [SortOrder.TITLE].
+ */
+fun sortOrderToSavedValue(order: SortOrder): String = order.name
+
+/**
+ * The inverse of [sortOrderToSavedValue]. Falls back to [SortOrder.TITLE] for `null` (nothing
+ * saved yet — first launch) or an unrecognized name, rather than throwing.
+ */
+fun sortOrderFromSavedValue(value: String?): SortOrder =
+    SortOrder.entries.firstOrNull { it.name == value } ?: SortOrder.TITLE
 
 /**
  * The library grid — the app's entry point (see the manifest: this is now the LAUNCHER activity,
@@ -61,24 +85,29 @@ private const val COLUMN_WIDTH_PX = 260
  */
 class LibraryActivity : AppCompatActivity() {
 
-    private lateinit var db: LibraryDatabase
+    /**
+     * [LibraryDatabase] and the once-per-process sync guard both live on [ReaderApplication] now,
+     * not here — see its KDoc. This Activity is recreated on every rotation; the Application is
+     * not, so both had to move for "once per process" to actually mean once per process rather
+     * than once per Activity instance.
+     */
+    private val db: LibraryDatabase
+        get() = (application as ReaderApplication).database
+
     private lateinit var adapter: BookGridAdapter
 
     private var currentSort = SortOrder.TITLE
     private var observeJob: Job? = null
 
-    /**
-     * Guards [runLibrary] to once per process, the same shape as [ReaderActivity]'s `opening`
-     * flag and for the same reason: [onResume] re-arms after a permission grant, and without this
-     * a resume that races the still-suspended first sync would start a second one.
-     */
-    private var started = false
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        db = Room.databaseBuilder(applicationContext, LibraryDatabase::class.java, "library.db")
-            .build()
+        currentSort = sortOrderFromSavedValue(savedInstanceState?.getString(KEY_SORT_ORDER))
+
+        // Verification instrumentation for the rotation fix (Plan 2 Task 5 review, fix wave 1):
+        // db's identityHashCode staying constant across onCreate calls proves it's the same
+        // ReaderApplication-scoped Room instance, not a fresh one per Activity/rotation.
+        Log.i(TAG, "onCreate db=${System.identityHashCode(db)} restoredSort=$currentSort")
 
         val recyclerView = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@LibraryActivity, spanCountFor(resources.displayMetrics.widthPixels, COLUMN_WIDTH_PX))
@@ -112,7 +141,16 @@ class LibraryActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (!started && hasAllFilesAccess()) runLibrary()
+        if (!(application as ReaderApplication).librarySynced && hasAllFilesAccess()) runLibrary()
+    }
+
+    /**
+     * Persists [currentSort] across Activity recreation (e.g. a device rotation), which otherwise
+     * snaps the user's chosen sort order back to [SortOrder.TITLE] — user-visible on this device.
+     */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_SORT_ORDER, sortOrderToSavedValue(currentSort))
     }
 
     private fun onSortMenuItemClicked(item: MenuItem): Boolean {
@@ -128,16 +166,33 @@ class LibraryActivity : AppCompatActivity() {
     }
 
     /**
-     * Runs the incremental sync exactly once per entry to this screen, then starts observing the
-     * (now up to date) index. [LibraryIndexer.sync] already confines all of its own work to
+     * Runs the incremental sync exactly once per **process**, then starts observing the (now up
+     * to date) index. [LibraryIndexer.sync] already confines all of its own work to
      * [kotlinx.coroutines.Dispatchers.IO] and returns — it is not scheduled, retried, or repeated
-     * from here; a later visit to this Activity (a fresh process, or backgrounding and returning)
-     * re-arms via [onResume] and runs it again exactly once, which is what "incremental" means: a
-     * cheap stat diff, not a full re-crack.
+     * from here.
+     *
+     * The guard is [ReaderApplication.librarySynced], not an Activity field: a rotation destroys
+     * and recreates this Activity (resetting any field it owned) but not the Application, and a
+     * rotation is not a fresh entry to the library screen per the plan's "indexing runs once on
+     * library entry" constraint. [onResume] still re-arms this call after a permission grant (the
+     * guard not being set yet is what lets that first real entry through); a later *process*
+     * launch (a fresh process, not merely backgrounding and returning) runs it again exactly once,
+     * which is what "incremental" means: a cheap stat diff, not a full re-crack.
+     *
+     * When the sync already ran earlier in this process (the guard is already set — the common
+     * case on a rotation), this still calls [observeSorted]: the guard exists to skip a redundant
+     * *sync*, not to skip populating the brand-new [BookGridAdapter] this recreated Activity just
+     * built. Skipping it here would leave a freshly rotated grid permanently empty.
      */
     private fun runLibrary() {
-        if (started) return
-        started = true
+        val app = application as ReaderApplication
+        if (app.librarySynced) {
+            Log.i(TAG, "runLibrary: sync SKIPPED (already synced this process)")
+            observeSorted(currentSort)
+            return
+        }
+        app.librarySynced = true
+        Log.i(TAG, "runLibrary: sync STARTED")
 
         val roots = listOf(
             File(Environment.getExternalStorageDirectory(), "Document"),
@@ -160,7 +215,11 @@ class LibraryActivity : AppCompatActivity() {
     private fun observeSorted(order: SortOrder) {
         observeJob?.cancel()
         observeJob = lifecycleScope.launch {
-            db.bookDao().observeAllSorted(order).collectLatest { books -> adapter.submitList(books) }
+            // `collect`, not `collectLatest`: ListAdapter.submitList doesn't suspend, so
+            // collectLatest's cancel-the-previous-collector-body semantics never actually engage
+            // here — there is nothing in flight for a new emission to cancel. Plain `collect` says
+            // what's really happening: every emission is submitted in order.
+            db.bookDao().observeAllSorted(order).collect { books -> adapter.submitList(books) }
         }
     }
 
@@ -172,5 +231,9 @@ class LibraryActivity : AppCompatActivity() {
         startActivity(
             Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_BOOK_PATH, book.path)
         )
+    }
+
+    private companion object {
+        const val TAG = "LibraryActivity"
     }
 }

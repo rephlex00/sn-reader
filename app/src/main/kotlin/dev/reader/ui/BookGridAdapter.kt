@@ -32,7 +32,12 @@ import kotlinx.coroutines.withContext
  */
 fun progressLabel(lastOpenedAtMs: Long?, spineIndex: Int, charOffset: Int): String? {
     if (lastOpenedAtMs == null) return null
-    return if (spineIndex == 0 && charOffset == 0) "Just started" else "Chapter ${spineIndex + 1}"
+    // "Chapter N" would claim something the data doesn't support: spineIndex is a SPINE index,
+    // not a chapter ordinal. Real EPUBs routinely carry cover/title/nav as spine items 0-2 (see
+    // ReaderActivity, which skips a zero-page spine item 0 for exactly that reason), so "Chapter
+    // 5" here could actually be the book's chapter 2. "Section N" says only what's true: this is
+    // the Nth entry in reading order, not a claim about the author's chapter numbering.
+    return if (spineIndex == 0 && charOffset == 0) "Just started" else "Section ${spineIndex + 1}"
 }
 
 /**
@@ -43,8 +48,17 @@ fun progressLabel(lastOpenedAtMs: Long?, spineIndex: Int, charOffset: Int): Stri
  */
 fun coverCacheKey(coverPath: String, modifiedAtMs: Long): String = "$coverPath@$modifiedAtMs"
 
-/** Bitmaps held at once — comfortably covers a 15-book library with headroom for a larger one. */
-private const val BITMAP_CACHE_SIZE = 60
+/**
+ * Cache budget in bytes, not entry count. A bound of 60 *entries* with no [LruCache.sizeOf]
+ * override sounds generous for a 15-book library but is the wrong axis for a growing one: at
+ * [Bitmap.Config.ARGB_8888] (the default `BitmapFactory.decodeFile` produces for an 8-bit
+ * grayscale cover PNG) a 224x360 cover is ~322 KB, so 60 of them is ~19 MB worst case — and that
+ * ceiling doesn't move no matter how large a single cover happens to be. Bounding by bytes with
+ * [Bitmap.Config.RGB_565] decoding (see [decodeCover] — free precision loss on a grayscale panel,
+ * halving the per-cover cost to ~161 KB) keeps memory use predictable regardless of library size
+ * or individual cover dimensions: ~8 MB is roughly 50 covers at that size, with headroom.
+ */
+private const val BITMAP_CACHE_BYTES = 8 * 1024 * 1024
 
 /**
  * The library grid. Views only, `RecyclerView` + `GridLayoutManager` (set up by
@@ -64,7 +78,9 @@ class BookGridAdapter(
     private val onClick: (BookEntity) -> Unit,
 ) : ListAdapter<BookEntity, BookGridAdapter.ViewHolder>(DIFF_CALLBACK) {
 
-    private val bitmapCache = LruCache<String, Bitmap>(BITMAP_CACHE_SIZE)
+    private val bitmapCache = object : LruCache<String, Bitmap>(BITMAP_CACHE_BYTES) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_book, parent, false)
@@ -130,7 +146,11 @@ class BookGridAdapter(
     }
 
     private fun decodeCover(path: String): Bitmap? = try {
-        BitmapFactory.decodeFile(path)
+        // RGB_565, not the decoder's ARGB_8888 default: this panel is grayscale, so the alpha
+        // channel and extra color precision ARGB_8888 carries are pure waste — RGB_565 halves
+        // per-cover memory for free. See BITMAP_CACHE_BYTES for the arithmetic.
+        val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+        BitmapFactory.decodeFile(path, options)
     } catch (e: Exception) {
         // A cover file can vanish or corrupt between index time and bind time (e.g. the user
         // clears app storage of covers by hand); a grid cell with no image beats a crash.
