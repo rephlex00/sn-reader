@@ -34,6 +34,7 @@ import dev.reader.formats.render.SpannedChapterBuilder
 import dev.reader.formats.render.TypefaceProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -161,6 +162,16 @@ open class ReaderActivity : AppCompatActivity() {
     private var navigator: PageNavigator? = null
     private var state = ReadingState(0, 0)
     private var config: RenderConfig? = null
+
+    /**
+     * The one in-flight adjacent-chapter prefetch, if any (see [schedulePrefetch]). Held only so a
+     * newer settle can cancel a now-superseded prefetch before launching the next — there is never
+     * more than one, and it is one-shot: it paginates a single neighbour off the main thread and
+     * completes. It costs nothing at rest (the idle promise): no timer, no polling, no re-arm — the
+     * next prefetch is launched only by the user's next page turn. Lives on [lifecycleScope], so
+     * leaving the book (onDestroy) cancels a prefetch still in flight.
+     */
+    private var prefetchJob: Job? = null
 
     /** The pure position-memory logic: the restore rules and the in-memory page-turn debounce. */
     private val session = ReadingSession()
@@ -817,6 +828,75 @@ open class ReaderActivity : AppCompatActivity() {
         // path) follows with flushPosition to write it. Keeping the write out of showPage means the
         // main-thread draw path never touches the DB — the UPDATE happens on the write scope.
         session.recordPageTurn(Locator(state.spineIndex, chapter.pages[pageIndex].startOffset))
+
+        // Now that the page has settled, prefetch the adjacent chapter the next boundary turn would
+        // land on (if any), so that turn does not pay the 230–360ms pagination on the main thread.
+        // One shot; see schedulePrefetch. Reuses chapter.pages.size — no extra work.
+        schedulePrefetch(chapter.pages.size)
+    }
+
+    /**
+     * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s
+     * [chapterToPrefetch] decides which, or none — on ONE background coroutine, then publishes the
+     * result on the main thread. A pure performance nicety: it must never destabilize the reader, so
+     * every load-bearing rule below is defensive.
+     *
+     *  - Correctness: only the now-race-free [EpubDocument.paginate] runs off the main thread (Task
+     *    6b, Part A made it thread-safe by construction); the cache is touched only by [publish], and
+     *    only back on the main thread. [chapter] is never called off-main.
+     *  - Staleness: if the reader changes typography while this is in flight, [publish] discards the
+     *    result (its config no longer matches the cache's) — the boundary turn simply re-paginates.
+     *  - Waste: a neighbour already cached (the usual case for the previous chapter after a forward
+     *    read) is skipped rather than needlessly recomputed.
+     *  - The idle promise: exactly one coroutine per settle, it runs once and completes. It does not
+     *    loop or re-arm; nothing schedules the next prefetch but the user's next turn. A superseded
+     *    in-flight prefetch is cancelled when the next one is scheduled, and all of them are cancelled
+     *    when the book closes (onDestroy cancels [lifecycleScope]).
+     *  - Cost: the pagination runs at the lowest JVM thread priority for the span of the call, then
+     *    restores the pooled thread's priority, so it yields to anything the user is actively doing.
+     */
+    private fun schedulePrefetch(chapterPageCount: Int) {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val target = chapterToPrefetch(state, chapterPageCount, doc.spineSize) ?: return
+        // Already resident (e.g. the chapter just turned away from): the prefetch would recompute it
+        // only for publish to no-op. Skip the wasted pagination.
+        if (doc.isPaginated(target, cfg)) return
+
+        // Supersede any earlier prefetch still running: only the newest neighbour matters, and a
+        // cancelled paginate is simply discarded (it never reached publish).
+        prefetchJob?.cancel()
+        prefetchJob = lifecycleScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                val thread = Thread.currentThread()
+                val priorPriority = thread.priority
+                thread.priority = Thread.MIN_PRIORITY // background work yields to the foreground
+                try {
+                    doc.paginate(target, cfg) // off the main thread — race-free by construction
+                } finally {
+                    thread.priority = priorPriority // restore the pooled thread for its next use
+                }
+            }
+            // Back on the main thread (lifecycleScope is Main): publish drops the result if a
+            // typography change since the launch moved the cache's config on.
+            doc.publish(target, cfg, result)
+        }
+    }
+
+    // -- Test seams -----------------------------------------------------------------------------
+    // The prefetch is a background nicety with no user-visible surface of its own, so these two
+    // read-only hooks let ReaderActivityTest observe it (did the neighbour get cached? did the
+    // coroutine terminate without re-arming?) without widening the production API. Neither is
+    // called in production.
+
+    /** The current prefetch coroutine, if any — a test reads its liveness to prove it terminates. */
+    internal val prefetchJobForTest: Job? get() = prefetchJob
+
+    /** Whether chapter [spineIndex] is cached under the live config — a test's prefetch-landed probe. */
+    internal fun isChapterCachedForTest(spineIndex: Int): Boolean {
+        val doc = document ?: return false
+        val cfg = config ?: return false
+        return doc.isPaginated(spineIndex, cfg)
     }
 
     private fun showMessage(message: String) {

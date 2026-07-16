@@ -146,6 +146,16 @@ class EpubDocument private constructor(
         return true
     }
 
+    /**
+     * Whether chapter [spineIndex] is already paginated under [config] — a read-only cache peek so a
+     * background prefetch can skip re-paginating a neighbour that is already cached (the common case
+     * after a forward read, where the previous chapter is still resident). Main thread only, like
+     * [chapter]/[publish], since it reads [cache]/[cacheConfig]; `containsKey` (unlike `get`) does
+     * NOT reorder the access-ordered cache, so a peek never disturbs LRU eviction.
+     */
+    fun isPaginated(spineIndex: Int, config: RenderConfig): Boolean =
+        cacheConfig == config && cache.containsKey(spineIndex)
+
     private fun readBlocks(spineIndex: Int, config: RenderConfig): List<Block> {
         // Unreachable by construction: EpubPackageParser.parseSpine already filters the
         // spine down to idrefs present in the manifest, so this lookup can never miss.

@@ -587,6 +587,53 @@ class ReaderActivityTest {
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
     }
 
+    // -- Plan 4 Task 6b: adjacent-chapter prefetch --------------------------------------------
+
+    @Test
+    fun `settling on the last page prefetches the next chapter and the coroutine then terminates`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        // The reader opens on chapter 0; chapter 1 is not yet paginated.
+        assertThat(activity.isChapterCachedForTest(1)).isFalse()
+
+        // Turn to the LAST page of chapter 0 (read its page count off the live scrubber), so the
+        // policy targets chapter 1 — the chapter the next boundary turn would cross into.
+        val pages = pageCountOf(scrubberTextOf(activity))
+        repeat(pages - 1) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
+        assertThat(scrubberTextOf(activity)).isEqualTo(scrubberText(pages - 1, pages))
+
+        // The background prefetch paginates chapter 1 off the main thread and publishes it; idle
+        // until it lands as a cache hit — proving the wiring computes AND publishes the neighbour.
+        idleUntil { activity.isChapterCachedForTest(1) }
+        assertThat(activity.isChapterCachedForTest(1)).isTrue()
+        // One-shot: the coroutine ran to completion, leaving no steady-state work.
+        assertThat(activity.prefetchJobForTest!!.isActive).isFalse()
+    }
+
+    @Test
+    fun `the prefetch does not re-arm while the reader sits idle`() {
+        // The idle promise: after a prefetch completes, an untouched reader launches no further
+        // work — no timer, no polling, no re-arm. Only a page turn may start the next prefetch.
+        val controller = openedWithToc()
+        val activity = controller.get()
+        val pages = pageCountOf(scrubberTextOf(activity))
+        repeat(pages - 1) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
+        idleUntil { activity.isChapterCachedForTest(1) }
+
+        val settledJob = activity.prefetchJobForTest
+        // Sit idle: pump the looper and wait, with no page turn in between.
+        repeat(5) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(20)
+        }
+        // No new coroutine was armed, and the one that ran has terminated.
+        assertThat(activity.prefetchJobForTest).isSameInstanceAs(settledJob)
+        assertThat(settledJob!!.isActive).isFalse()
+    }
+
+    private fun pageCountOf(scrubber: String): Int =
+        Regex("""of (\d+)""").find(scrubber)!!.groupValues[1].toInt()
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
