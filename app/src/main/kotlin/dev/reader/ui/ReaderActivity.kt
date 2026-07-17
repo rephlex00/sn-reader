@@ -466,9 +466,27 @@ open class ReaderActivity : AppCompatActivity() {
 
     /**
      * Flips the progress-bar display toggle and redraws the bar in place. A pure display change:
-     * unlike [applySettingsChange] it does NOT re-paginate, turn the page, or record a position —
-     * it only recomputes the fraction (from the already-cached current chapter) and hands it to
-     * [PageView]. A no-op-safe path if the document/config/viewport are not ready yet.
+     * unlike [applySettingsChange] it does NOT re-paginate, turn the page, or record a position.
+     *
+     * It is tempting to assume the current chapter is always already paginated (it is on screen)
+     * and just call [EpubDocument.chapter], but that is NOT a true invariant, for two reasons:
+     *  - Open-path race: [config]/[document]/[chapterWeights]/[showProgressBar] and
+     *    `pageView.onTap` are all assigned before the open coroutine suspends on the
+     *    `Dispatchers.IO` DAO read. A tap landing in that window calls this with `state` still the
+     *    default `ReadingState(0, 0)` and NOTHING paginated yet — a genuine cache miss.
+     *  - A failed [applySettingsChange]: `EpubDocument.chapter()` clears the cache and moves its
+     *    internal `cacheConfig` to the NEW config before paginating; if the re-paginate throws,
+     *    this Activity's [config] correctly stays on the old value, but the document's cache is
+     *    left keyed on the new one — so a later call here is also a miss under the old config.
+     *
+     * Rather than paginating to fill either gap (which would mean this tap handler synchronously
+     * pagin­ates on the main thread — exactly what [EpubDocument.chapter]'s cache-confinement
+     * contract is trying to prevent outside a real page turn), this refuses to paginate BY
+     * CONSTRUCTION: [EpubDocument.isPaginated] is a read-only `containsKey` peek (it does not
+     * disturb the access-ordered LRU), so the fraction is only computed when the chapter is
+     * already resident. Otherwise `null` goes to [PageView.setProgress] — no bar until the next
+     * [showPage], which recomputes the real fraction. That is a rare window and harmless: the bar
+     * simply reappears one page turn later, not a wrong or stale value.
      */
     private fun toggleProgressBar() {
         val prefs = ReaderPrefs(this)
@@ -477,9 +495,7 @@ open class ReaderActivity : AppCompatActivity() {
 
         val doc = document
         val cfg = config
-        val fraction = if (showProgressBar && doc != null && cfg != null) {
-            // The current chapter is always already paginated (it is on screen), so chapter() is a
-            // cached O(1) read here — no pagination on the toggle path.
+        val fraction = if (showProgressBar && doc != null && cfg != null && doc.isPaginated(state.spineIndex, cfg)) {
             val pageCount = doc.chapter(state.spineIndex, cfg).pages.size
             bookProgress(chapterWeights, state.spineIndex, state.pageIndex, pageCount)
         } else {

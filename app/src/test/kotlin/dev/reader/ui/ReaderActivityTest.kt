@@ -698,7 +698,7 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `toggling the progress bar off hides it without turning the page`() {
+    fun `toggling the progress bar off hides it, and toggling again restores it without turning the page`() {
         val controller = openedMultiPage()
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY) // show the overlay
@@ -711,6 +711,33 @@ class ReaderActivityTest {
         assertThat(pageViewOf(activity).progress).isNull()
         // Display-only: the page did not turn.
         assertThat(scrubberTextOf(activity)).isEqualTo(before)
+
+        // Toggling a second time must restore a real fraction and flip the pref back — not leave
+        // the bar permanently hidden after one off/on cycle.
+        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick()
+
+        assertThat(ReaderPrefs(activity).showProgressBar).isTrue()
+        assertThat(pageViewOf(activity).progress).isNotNull()
+        assertThat(scrubberTextOf(activity)).isEqualTo(before)
+    }
+
+    @Test
+    fun `the progress fraction increases across a forward page turn`() {
+        // Guards against an implementation that hardcodes pageIndex = 0 into the bookProgress(...)
+        // call in showPage — that would still pass the "on by default, in [0,1]" test above but
+        // would never move as the reader actually turns pages.
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val before = pageViewOf(activity).progress
+        assertThat(before).isNotNull()
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.NEXT)
+
+        val after = pageViewOf(activity).progress
+        assertThat(after).isNotNull()
+        assertThat(after!!).isGreaterThan(before!!)
+        assertThat(after).isAtLeast(0f)
+        assertThat(after).isAtMost(1f)
     }
 
     // -- Harness --------------------------------------------------------------------------------
