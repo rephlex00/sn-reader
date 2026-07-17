@@ -79,4 +79,33 @@ class ZipResourceSourceTest {
         assertThat(thrown!!.message).contains("bomb.txt")
         assertThat(thrown.message).contains("while reading")
     }
+
+    @Test
+    fun `size returns an entry's uncompressed byte length`() {
+        val file = temp.newFile("sized.zip")
+        val content = "twelve bytes"  // 12 ASCII bytes
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            zip.putNextEntry(ZipEntry("a.txt"))
+            zip.write(content.toByteArray())
+            zip.closeEntry()
+        }
+
+        val size = ZipResourceSource(file).use { it.size("a.txt") }
+
+        assertThat(size).isEqualTo(content.toByteArray().size.toLong())
+    }
+
+    @Test
+    fun `size returns zero for a missing entry rather than throwing`() {
+        val file = temp.newFile("empty.zip")
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            zip.putNextEntry(ZipEntry("present.txt"))
+            zip.write("x".toByteArray())
+            zip.closeEntry()
+        }
+
+        val size = ZipResourceSource(file).use { it.size("absent.txt") }
+
+        assertThat(size).isEqualTo(0L)
+    }
 }

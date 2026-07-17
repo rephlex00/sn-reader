@@ -57,6 +57,12 @@ class ReaderPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_PUBLISHER_STYLING, DEFAULT_PUBLISHER_STYLING)
         set(value) = prefs.edit().putBoolean(KEY_PUBLISHER_STYLING, value).apply()
 
+    /** Whether the whole-book progress bar is drawn at the bottom of the page. A pure display
+     * toggle: deliberately NOT part of [renderConfig], since it changes nothing about pagination. */
+    var showProgressBar: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_PROGRESS_BAR, DEFAULT_SHOW_PROGRESS_BAR)
+        set(value) = prefs.edit().putBoolean(KEY_SHOW_PROGRESS_BAR, value).apply()
+
     /**
      * Builds the [RenderConfig] for one open: the stored typography plus the viewport the view
      * just measured. The pure prefs+viewport→config mapping, factored out so its no-op equivalence
@@ -90,6 +96,7 @@ class ReaderPrefs(context: Context) {
         const val KEY_HYPHENATED = "hyphenated"
         const val KEY_INFER_HEADINGS = "infer_headings"
         const val KEY_PUBLISHER_STYLING = "publisher_styling"
+        const val KEY_SHOW_PROGRESS_BAR = "show_progress_bar"
 
         // The reader's standing typography baseline. All but the font matched openFirstBook's old
         // hardcoded literals; the font default became "literata" when bundled fonts shipped.
@@ -101,5 +108,6 @@ class ReaderPrefs(context: Context) {
         const val DEFAULT_HYPHENATED = true
         const val DEFAULT_INFER_HEADINGS = true
         const val DEFAULT_PUBLISHER_STYLING = true
+        const val DEFAULT_SHOW_PROGRESS_BAR = true
     }
 }

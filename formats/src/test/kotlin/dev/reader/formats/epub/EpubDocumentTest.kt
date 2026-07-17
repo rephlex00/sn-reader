@@ -59,6 +59,71 @@ class EpubDocumentTest {
     }
 
     @Test
+    fun `chapterWeights are the per-chapter byte sizes in spine order`() {
+        val short = "<html><body><p>tiny</p></body></html>"
+        val long = "<html><body><p>" + "padding ".repeat(500) + "</p></body></html>"
+        val file = temp.newFile("weighted.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>W</dc:title></metadata>
+  <manifest>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>""")
+            entry("OEBPS/ch1.xhtml", short)
+            entry("OEBPS/ch2.xhtml", long)
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            val weights = doc.chapterWeights
+            // Manifest order (ch2, ch1) differs from spine order (ch1, ch2): this asserts the
+            // weights follow spine order, not manifest order.
+            assertThat(weights).hasSize(2)
+            assertThat(weights[0]).isEqualTo(short.toByteArray().size.toLong())
+            assertThat(weights[1]).isEqualTo(long.toByteArray().size.toLong())
+            assertThat(weights[1]).isGreaterThan(weights[0])
+        }
+    }
+
+    @Test
+    fun `chapterWeights are 0L for a chapter file absent from the archive`() {
+        val file = temp.newFile("absent-chapter.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Absent</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>""")
+            // Write only ch1, not ch2 — it is declared but absent from the archive.
+            entry("OEBPS/ch1.xhtml", "<html><body><p>Chapter one.</p></body></html>")
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            val weights = doc.chapterWeights
+            // The weights list must have the same length as the spine, with a 0L entry for
+            // the missing chapter (a broken book still opens, just with a weightless chapter).
+            assertThat(weights).hasSize(2)
+            assertThat(weights[0]).isGreaterThan(0L)
+            assertThat(weights[1]).isEqualTo(0L)
+        }
+    }
+
+    @Test
     fun `paginates a chapter into at least one page`() {
         openStandard().use {
             val chapter = it.chapter(0, config)

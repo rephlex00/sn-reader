@@ -23,6 +23,7 @@ import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.TocEntry
 import dev.reader.engine.advance
+import dev.reader.engine.bookProgress
 import dev.reader.engine.pageIndexFor
 import dev.reader.engine.reflowedPageIndex
 import dev.reader.engine.retreat
@@ -162,6 +163,14 @@ open class ReaderActivity : AppCompatActivity() {
     private var navigator: PageNavigator? = null
     private var state = ReadingState(0, 0)
     private var config: RenderConfig? = null
+
+    /** Byte weight per spine chapter (see [EpubDocument.chapterWeights]), captured once at open so
+     *  [bookProgress] can be recomputed cheaply on every page turn without touching the ZIP again. */
+    private var chapterWeights: List<Long> = emptyList()
+
+    /** Mirrors [ReaderPrefs.showProgressBar], read once at open and kept current by
+     *  [toggleProgressBar] — so the hot [showPage] path never constructs [ReaderPrefs] itself. */
+    private var showProgressBar: Boolean = true
 
     /**
      * The one in-flight adjacent-chapter prefetch, if any (see [schedulePrefetch]). Held only so a
@@ -388,6 +397,7 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.toggle_hyphen).setOnClickListener { applySettingsChange { p -> p.hyphenated = !p.hyphenated } }
         overlay.findViewById<View>(R.id.toggle_publisher).setOnClickListener { applySettingsChange { p -> p.publisherStyling = !p.publisherStyling } }
         overlay.findViewById<View>(R.id.toggle_headings).setOnClickListener { applySettingsChange { p -> p.inferHeadings = !p.inferHeadings } }
+        overlay.findViewById<View>(R.id.toggle_progress).setOnClickListener { toggleProgressBar() }
     }
 
     /** Bumps the persisted text size by [deltaPx], clamped to the sane range, then re-paginates. A
@@ -454,6 +464,47 @@ open class ReaderActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Flips the progress-bar display toggle and redraws the bar in place. A pure display change:
+     * unlike [applySettingsChange] it does NOT re-paginate, turn the page, or record a position.
+     *
+     * It is tempting to assume the current chapter is always already paginated (it is on screen)
+     * and just call [EpubDocument.chapter], but that is NOT a true invariant, for two reasons:
+     *  - Open-path race: [config]/[document]/[chapterWeights]/[showProgressBar] and
+     *    `pageView.onTap` are all assigned before the open coroutine suspends on the
+     *    `Dispatchers.IO` DAO read. A tap landing in that window calls this with `state` still the
+     *    default `ReadingState(0, 0)` and NOTHING paginated yet — a genuine cache miss.
+     *  - A failed [applySettingsChange]: `EpubDocument.chapter()` clears the cache and moves its
+     *    internal `cacheConfig` to the NEW config before paginating; if the re-paginate throws,
+     *    this Activity's [config] correctly stays on the old value, but the document's cache is
+     *    left keyed on the new one — so a later call here is also a miss under the old config.
+     *
+     * Rather than paginating to fill either gap (which would mean this tap handler synchronously
+     * paginates on the main thread — exactly what [EpubDocument.chapter]'s cache-confinement
+     * contract is trying to prevent outside a real page turn), this refuses to paginate BY
+     * CONSTRUCTION: [EpubDocument.isPaginated] is a read-only `containsKey` peek (it does not
+     * disturb the access-ordered LRU), so the fraction is only computed when the chapter is
+     * already resident. Otherwise `null` goes to [PageView.setProgress] — no bar until the next
+     * [showPage], which recomputes the real fraction. That is a rare window and harmless: the bar
+     * simply reappears one page turn later, not a wrong or stale value.
+     */
+    private fun toggleProgressBar() {
+        val prefs = ReaderPrefs(this)
+        prefs.showProgressBar = !prefs.showProgressBar
+        showProgressBar = prefs.showProgressBar
+
+        val doc = document
+        val cfg = config
+        val fraction = if (showProgressBar && doc != null && cfg != null && doc.isPaginated(state.spineIndex, cfg)) {
+            val pageCount = doc.chapter(state.spineIndex, cfg).pages.size
+            bookProgress(chapterWeights, state.spineIndex, state.pageIndex, pageCount)
+        } else {
+            null
+        }
+        pageView.setProgress(fraction)
+        refreshSheet()
+    }
+
     /** Syncs the sheet's controls to the current [ReaderPrefs]: the selected option in each group is
      * bolded, the size readout shows the current px, and each [ToggleSwitchView] reflects its
      * boolean. Pure View work. */
@@ -478,6 +529,7 @@ open class ReaderActivity : AppCompatActivity() {
         setToggle(R.id.toggle_hyphen_switch, prefs.hyphenated)
         setToggle(R.id.toggle_publisher_switch, prefs.publisherStyling)
         setToggle(R.id.toggle_headings_switch, prefs.inferHeadings)
+        setToggle(R.id.toggle_progress_switch, prefs.showProgressBar)
     }
 
     private fun setOptionSelected(id: Int, selected: Boolean) {
@@ -649,6 +701,11 @@ open class ReaderActivity : AppCompatActivity() {
                 }
                 val doc = opened!!
                 document = doc
+                // chapterWeights is a lazy, one-time ZIP central-directory read (never a pagination),
+                // so capturing it here costs nothing extra on the open path it already runs on. The
+                // toggle mirrors ReaderPrefs so showPage — the hot path — never constructs it itself.
+                chapterWeights = doc.chapterWeights
+                showProgressBar = ReaderPrefs(this@ReaderActivity).showProgressBar
                 bookPath = file.path
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
@@ -861,6 +918,13 @@ open class ReaderActivity : AppCompatActivity() {
         // than widening MeasuredChapter's contract for a single caller.
         val layout = (chapter.measured as AndroidMeasuredChapter).layout
         pageView.show(layout, chapter.pages[pageIndex], cfg.marginPx)
+        pageView.setProgress(
+            if (showProgressBar) {
+                bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
+            } else {
+                null
+            },
+        )
 
         // Record the new position: the page's startOffset is the stable char offset a later restore
         // maps back to a page. This only sets an in-memory field; the caller (onTap, or the open

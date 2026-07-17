@@ -15,6 +15,20 @@ interface ResourceSource : Closeable {
     fun open(path: String): InputStream?
     fun readText(path: String): String?
     fun exists(path: String): Boolean
+
+    /**
+     * Uncompressed byte size of [path]'s entry, or `0L` if it is absent or the source does not
+     * track sizes. For a zip this is a central-directory read — no decompression, no stream —
+     * which is what lets the reader weigh chapters for a progress estimate without paginating
+     * them. The default returns `0L` (a weightless entry) so non-zip / test sources need not
+     * implement it.
+     *
+     * `ZipEntry.size` returns -1 when an archive does not record an entry's uncompressed size
+     * (e.g., entries in a streaming zip without size predeclaration, or corrupt archives). To
+     * honor this contract and prevent negative weights in progress calculations, a -1 is clamped
+     * to `0L` (weightless), same as an absent entry.
+     */
+    fun size(path: String): Long = 0L
 }
 
 /**
@@ -62,6 +76,8 @@ class ZipResourceSource(file: File) : ResourceSource {
     }
 
     override fun exists(path: String): Boolean = zip.getEntry(path) != null
+
+    override fun size(path: String): Long = zip.getEntry(path)?.size?.coerceAtLeast(0L) ?: 0L
 
     override fun close() = zip.close()
 }
