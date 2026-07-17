@@ -683,6 +683,36 @@ class ReaderActivityTest {
     private fun pageCountOf(scrubber: String): Int =
         Regex("""of (\d+)""").find(scrubber)!!.groupValues[1].toInt()
 
+    // -- Whole-book progress bar ------------------------------------------------------------------
+
+    @Test
+    fun `the progress bar is on by default and reflects whole-book position`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+
+        // Default on: showPage handed PageView a fraction in [0,1] (0 on the opening page).
+        val p = pageViewOf(activity).progress
+        assertThat(p).isNotNull()
+        assertThat(p!!).isAtLeast(0f)
+        assertThat(p).isAtMost(1f)
+    }
+
+    @Test
+    fun `toggling the progress bar off hides it without turning the page`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY) // show the overlay
+        val before = scrubberTextOf(activity)
+        assertThat(ReaderPrefs(activity).showProgressBar).isTrue()
+
+        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick()
+
+        assertThat(ReaderPrefs(activity).showProgressBar).isFalse()
+        assertThat(pageViewOf(activity).progress).isNull()
+        // Display-only: the page did not turn.
+        assertThat(scrubberTextOf(activity)).isEqualTo(before)
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
