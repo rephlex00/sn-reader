@@ -97,8 +97,13 @@ class PageView(context: Context) : View(context) {
         val page = page ?: return
 
         canvas.save()
-        // Clip first: without it, the lines belonging to the next page would spill below.
-        canvas.clipRect(marginPx, marginPx, width - marginPx, height - marginPx)
+        // Clip first: without it, the lines belonging to the next page would spill below. The
+        // bottom edge is THIS page's own content bottom, not the fixed content box (height -
+        // marginPx): onDraw draws the whole chapter's Layout and shows only a page-sized window of
+        // it, but a page breaks at a line boundary and rarely fills the box to the pixel, so a
+        // fixed height-marginPx clip leaves a gap into which the NEXT page's first line bleeds — a
+        // sliver of text clipped mid-glyph under the bottom margin. See [pageClipBottom].
+        canvas.clipRect(marginPx, marginPx, width - marginPx, pageClipBottom(layout, page))
         canvas.translate(marginPx.toFloat(), (marginPx - page.topPx).toFloat())
         layout.draw(canvas)
         canvas.restore()
@@ -129,6 +134,18 @@ class PageView(context: Context) : View(context) {
         }
         else -> super.onTouchEvent(event)
     }
+
+    /**
+     * The y at which the text clip ends: this page's last line's bottom, translated to screen
+     * space (`marginPx + lineBottom(endLine) - topPx`), not the fixed content-box bottom
+     * `height - marginPx`. Because the whole chapter's [Layout] is drawn and only a page-sized
+     * window shown, clipping at the box bottom lets the next page's first line bleed into the slack
+     * a line-boundary page break leaves below the last line. `minOf` with the box bottom guards the
+     * one case the paginator allows a page to exceed the box — a single line taller than the whole
+     * page, which it places alone — so that page still clips to the box rather than past it.
+     */
+    internal fun pageClipBottom(layout: Layout, page: Page): Int =
+        minOf(height - marginPx, marginPx + layout.getLineBottom(page.endLine) - page.topPx)
 
     private fun drawProgressBar(canvas: Canvas, fraction: Float) {
         val left = marginPx.toFloat()

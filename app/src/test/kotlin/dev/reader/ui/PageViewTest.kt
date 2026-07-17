@@ -43,6 +43,44 @@ class PageViewTest {
     }
 
     @Test
+    fun `the clip stops at this page's last line, so the next page's first line cannot bleed in`() {
+        // Regression: onDraw draws the WHOLE chapter's Layout and shows only a page-sized window.
+        // A page breaks at a line boundary and rarely fills the content box to the pixel, so
+        // clipping at the fixed box bottom (height - marginPx) left slack the NEXT line bled into —
+        // a sliver of text clipped mid-glyph under the bottom margin. The clip must stop at THIS
+        // page's last line's bottom instead.
+        val view = PageView(context)
+        val text = (1..60).joinToString(" ") { "word$it" } // wraps to many narrow lines
+        val layout = StaticLayout.Builder
+            .obtain(text, 0, text.length, TextPaint().apply { textSize = 24f }, 180)
+            .build()
+        check(layout.lineCount > 5) { "need a multi-line layout for a bleed to be possible" }
+
+        val marginPx = 30
+        val endLine = 2 // a page that ends well before the layout's last line
+        val page = Page(
+            index = 0, startLine = 0, endLine = endLine,
+            startOffset = 0, endOffset = 1, topPx = layout.getLineTop(0),
+        )
+        view.show(layout, page, marginPx)
+        view.measure(
+            MeasureSpec.makeMeasureSpec(400, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(600, MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+
+        val clipBottom = view.pageClipBottom(layout, page)
+
+        // Ends exactly at this page's last line's bottom, in screen space...
+        assertThat(clipBottom).isEqualTo(marginPx + layout.getLineBottom(endLine) - page.topPx)
+        // ...which is where the NEXT line begins, so that line is fully excluded (the bug drew it).
+        val nextLineScreenTop = marginPx + layout.getLineTop(endLine + 1) - page.topPx
+        assertThat(clipBottom).isAtMost(nextLineScreenTop)
+        // ...and it stops well short of the fixed content-box bottom that caused the bleed.
+        assertThat(clipBottom).isLessThan(view.height - marginPx)
+    }
+
+    @Test
     fun `it draws a page both with a progress bar and without, no error`() {
         // Screencap is black on e-ink, so a Canvas regression must surface here. Exercise the
         // bar-present and bar-absent branches of onDraw.
