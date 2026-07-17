@@ -115,4 +115,19 @@ class ReaderPrefsTest {
         assertThat(built.viewportWidthPx).isEqualTo(1404)
         assertThat(built.viewportHeightPx).isEqualTo(1872)
     }
+
+    @Test
+    fun `toggling the progress bar does not change the RenderConfig (it must never re-paginate)`() {
+        // The progress bar is a display-only toggle that must never reach renderConfig. If it ever
+        // did, toggling it would trigger a re-paginate, which would disturb the reader's
+        // locator-preserving reflow machinery on an e-ink device. This test is the tripwire: if
+        // someone wires showProgressBar into RenderConfig, the configs will no longer be equal.
+        val prefs = ReaderPrefs(context)
+        val configBefore = prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
+
+        prefs.showProgressBar = false
+        val configAfter = prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
+
+        assertThat(configAfter).isEqualTo(configBefore)
+    }
 }
