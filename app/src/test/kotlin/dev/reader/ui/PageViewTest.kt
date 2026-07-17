@@ -81,6 +81,35 @@ class PageViewTest {
     }
 
     @Test
+    fun `a single line taller than the page clips to the content box, not past it`() {
+        // The paginator places a line taller than the whole page alone on its own page. There the
+        // page's span exceeds the content box, so the clip must fall back to the box bottom
+        // (height - marginPx) — the minOf guard — rather than extending past the view.
+        val view = PageView(context)
+        val text = "TALL"
+        val layout = StaticLayout.Builder
+            .obtain(text, 0, text.length, TextPaint().apply { textSize = 90f }, 400)
+            .build()
+        val page = Page(
+            index = 0, startLine = 0, endLine = 0,
+            startOffset = 0, endOffset = text.length, topPx = layout.getLineTop(0),
+        )
+        val marginPx = 20
+        view.show(layout, page, marginPx)
+        view.measure(
+            MeasureSpec.makeMeasureSpec(400, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(100, MeasureSpec.EXACTLY), // box (60px) shorter than the line
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        // Precondition: the line really is taller than the content box, so the guard is what fires.
+        check(layout.getLineBottom(0) - page.topPx > view.height - 2 * marginPx) {
+            "test needs a line taller than the content box to exercise the guard"
+        }
+
+        assertThat(view.pageClipBottom(layout, page)).isEqualTo(view.height - marginPx)
+    }
+
+    @Test
     fun `it draws a page both with a progress bar and without, no error`() {
         // Screencap is black on e-ink, so a Canvas regression must surface here. Exercise the
         // bar-present and bar-absent branches of onDraw.
