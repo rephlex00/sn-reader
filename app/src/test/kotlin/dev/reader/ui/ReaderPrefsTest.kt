@@ -33,6 +33,7 @@ class ReaderPrefsTest {
         assertThat(prefs.hyphenated).isTrue()
         assertThat(prefs.inferHeadings).isTrue()
         assertThat(prefs.publisherStyling).isTrue()
+        assertThat(prefs.showProgressBar).isTrue()
     }
 
     @Test
@@ -46,6 +47,7 @@ class ReaderPrefsTest {
         prefs.hyphenated = false
         prefs.inferHeadings = false
         prefs.publisherStyling = false
+        prefs.showProgressBar = false
 
         assertThat(prefs.fontFamily).isEqualTo("bitter")
         assertThat(prefs.textSizePx).isEqualTo(40f)
@@ -55,6 +57,7 @@ class ReaderPrefsTest {
         assertThat(prefs.hyphenated).isFalse()
         assertThat(prefs.inferHeadings).isFalse()
         assertThat(prefs.publisherStyling).isFalse()
+        assertThat(prefs.showProgressBar).isFalse()
     }
 
     @Test
