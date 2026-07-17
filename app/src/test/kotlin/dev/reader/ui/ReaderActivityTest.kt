@@ -392,9 +392,9 @@ class ReaderActivityTest {
 
         activity.findViewById<View>(R.id.settings_button).performClick()
         assertThat(sheet.visibility).isEqualTo(View.VISIBLE)
-        // Reflects current (default) values: size readout and a toggle label read the live prefs.
+        // Reflects current (default) values: the size readout and each toggle switch read the prefs.
         assertThat(activity.findViewById<TextView>(R.id.size_value).text.toString()).isEqualTo("34px")
-        assertThat(activity.findViewById<TextView>(R.id.toggle_justify).text.toString()).isEqualTo("Justify: On")
+        assertThat(activity.findViewById<ToggleSwitchView>(R.id.toggle_justify_switch).checked).isTrue()
 
         activity.findViewById<View>(R.id.settings_button).performClick()
         assertThat(sheet.visibility).isEqualTo(View.GONE)
@@ -420,20 +420,20 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `flipping the publisher-styling toggle writes the pref and updates its label`() {
+    fun `flipping the publisher-styling toggle writes the pref and updates its switch`() {
         clearReaderPrefs()
         val controller = openedMultiPage()
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         activity.findViewById<View>(R.id.settings_button).performClick()
-        assertThat(activity.findViewById<TextView>(R.id.toggle_publisher).text.toString())
-            .isEqualTo("Publisher styling: On")
+        val switch = activity.findViewById<ToggleSwitchView>(R.id.toggle_publisher_switch)
+        assertThat(switch.checked).isTrue()
 
+        // The whole row is the tap target; performClick on it flips the pref and re-renders.
         activity.findViewById<View>(R.id.toggle_publisher).performClick()
 
         assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).publisherStyling).isFalse()
-        assertThat(activity.findViewById<TextView>(R.id.toggle_publisher).text.toString())
-            .isEqualTo("Publisher styling: Off")
+        assertThat(activity.findViewById<ToggleSwitchView>(R.id.toggle_publisher_switch).checked).isFalse()
     }
 
     @Test

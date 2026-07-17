@@ -23,15 +23,24 @@
         <item name="android:textSize">16sp</item>
     </style>
 
-    <!-- A full-width toggle row: its label carries its own state ("Justify: On") and flips on tap. -->
-    <style name="AaToggle">
+    <!-- A full-width toggle row: a static label on the left and a hand-drawn ToggleSwitchView on the
+         right. The whole row is the tap target (it flips the pref); the switch is a pure display of
+         the resulting boolean, set in ReaderActivity.refreshSheet. No ripple/animation. -->
+    <style name="AaToggleRow">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">horizontal</item>
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
         <item name="android:minHeight">48dp</item>
         <item name="android:gravity">center_vertical</item>
         <item name="android:paddingVertical">10dp</item>
+    </style>
+
+    <style name="AaToggleLabel">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
         <item name="android:textColor">@android:color/black</item>
         <item name="android:textSize">16sp</item>
     </style>
