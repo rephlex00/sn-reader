@@ -438,6 +438,37 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `selecting a font marks only that option and clears the previous selection`() {
+        // Regression: the selected option used to be marked by bolding it, but bold could not be
+        // stripped back off a bundled font's already-bold instance, so switching fonts left the
+        // previous option still marked and every font eventually looked selected. The boxed-outline
+        // background must move to exactly the active option and clear from the others.
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.settings_button).performClick()
+
+        // Default is literata: only its option is marked.
+        assertThat(activity.findViewById<View>(R.id.font_literata).background).isNotNull()
+        assertThat(activity.findViewById<View>(R.id.font_bitter).background).isNull()
+        assertThat(activity.findViewById<View>(R.id.font_atkinson).background).isNull()
+
+        activity.findViewById<View>(R.id.font_atkinson).performClick()
+
+        // Selection MOVED: atkinson marked, literata cleared (the bug left literata marked too).
+        assertThat(activity.findViewById<View>(R.id.font_atkinson).background).isNotNull()
+        assertThat(activity.findViewById<View>(R.id.font_literata).background).isNull()
+        assertThat(activity.findViewById<View>(R.id.font_bitter).background).isNull()
+
+        activity.findViewById<View>(R.id.font_bitter).performClick()
+
+        assertThat(activity.findViewById<View>(R.id.font_bitter).background).isNotNull()
+        assertThat(activity.findViewById<View>(R.id.font_literata).background).isNull()
+        assertThat(activity.findViewById<View>(R.id.font_atkinson).background).isNull()
+    }
+
+    @Test
     fun `flipping the publisher-styling toggle writes the pref and updates its switch`() {
         clearReaderPrefs()
         val controller = openedMultiPage()

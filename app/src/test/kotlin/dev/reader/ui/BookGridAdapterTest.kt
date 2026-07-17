@@ -6,34 +6,62 @@ import org.junit.Test
 
 class BookGridAdapterTest {
 
+    // -- formatAuthor ---------------------------------------------------------------------
+
+    @Test
+    fun `a dangling separator is stripped from the byline`() {
+        // The reported case: a creator list with an empty second entry leaves "Andy Weir;".
+        assertThat(formatAuthor("Andy Weir;")).isEqualTo("Andy Weir")
+        assertThat(formatAuthor("Andy Weir; ")).isEqualTo("Andy Weir")
+        assertThat(formatAuthor("  Caroline Criado Perez ,")).isEqualTo("Caroline Criado Perez")
+    }
+
+    @Test
+    fun `internal punctuation is preserved`() {
+        assertThat(formatAuthor("Weir, Andy")).isEqualTo("Weir, Andy")
+        assertThat(formatAuthor("Martha Wells")).isEqualTo("Martha Wells")
+    }
+
+    @Test
+    fun `null or all-separator input yields empty`() {
+        assertThat(formatAuthor(null)).isEmpty()
+        assertThat(formatAuthor(" ; , ")).isEmpty()
+    }
+
     // -- progressLabel --------------------------------------------------------------------
 
     @Test
     fun `a never-opened book has no progress label`() {
-        assertThat(progressLabel(lastOpenedAtMs = null, spineIndex = 5, charOffset = 200)).isNull()
+        assertThat(progressLabel(lastOpenedAtMs = null, spineIndex = 5, charOffset = 200, progressFraction = 0.4f))
+            .isNull()
     }
 
     @Test
     fun `an opened book at the very start reads Just started`() {
-        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 0, charOffset = 0))
+        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 0, charOffset = 0, progressFraction = 0f))
             .isEqualTo("Just started")
     }
 
     @Test
-    fun `an opened book past the start names its spine section, one-based, not a chapter`() {
-        // spineIndex is a SPINE index, not a chapter ordinal: real EPUBs routinely carry
-        // cover/title/nav as spine items 0-2 (ReaderActivity skips a zero-page spine item 0 for
-        // exactly this reason), so "Chapter 5" here could actually be the book's chapter 2.
-        // "Section N" reports only what the index actually has, honestly.
-        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 4, charOffset = 0))
-            .isEqualTo("Section 5")
+    fun `an opened book shows the stored whole-book percentage, rounded`() {
+        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 4, charOffset = 0, progressFraction = 0.372f))
+            .isEqualTo("37%")
+        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 9, charOffset = 10, progressFraction = 1f))
+            .isEqualTo("100%")
+        // Out-of-range input is clamped rather than printing an impossible percentage.
+        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 1, charOffset = 1, progressFraction = 1.4f))
+            .isEqualTo("100%")
     }
 
     @Test
-    fun `a nonzero charOffset counts as progress even at spineIndex zero`() {
-        // spineIndex 0 with a nonzero charOffset means partway through the first chapter,
-        // which is progress, not "just started" — only (0, 0) exactly is the true start.
-        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 0, charOffset = 50))
+    fun `a row opened before the percentage column shipped falls back to its spine section`() {
+        // progressFraction null = pre-v2 row. spineIndex is a SPINE index, not a chapter ordinal
+        // (cover/title/nav are often spine items 0-2), so "Section N" reports only what the older
+        // index has, one-based, without claiming a chapter number.
+        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 4, charOffset = 0, progressFraction = null))
+            .isEqualTo("Section 5")
+        // spineIndex 0 with a nonzero charOffset is progress, not "just started" — only (0,0) is start.
+        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 0, charOffset = 50, progressFraction = null))
             .isEqualTo("Section 1")
     }
 

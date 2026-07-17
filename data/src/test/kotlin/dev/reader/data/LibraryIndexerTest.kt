@@ -225,7 +225,7 @@ class LibraryIndexerTest {
         val a = writeEpub("a.epub")
         val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
         indexer.sync()
-        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250, lastOpenedAtMs = 1_000L)
+        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250, progressFraction = 0.5f, lastOpenedAtMs = 1_000L)
 
         a.writeText("stub-changed")
         a.setLastModified(a.lastModified() + 60_000)
@@ -242,7 +242,7 @@ class LibraryIndexerTest {
         val a = writeEpub("a.epub")
         val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
         indexer.sync()
-        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250, lastOpenedAtMs = 1_000L)
+        dao.updatePosition(a.path, spineIndex = 4, charOffset = 250, progressFraction = 0.5f, lastOpenedAtMs = 1_000L)
 
         a.writeText("stub")
         a.setLastModified(a.lastModified() + 60_000)
@@ -427,7 +427,7 @@ class LibraryIndexerTest {
         // partial metadata UPDATE that never touches spineIndex/charOffset/lastOpenedAtMs.
         val a = writeEpub("a.epub")
         LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
-        dao.updatePosition(a.path, spineIndex = 1, charOffset = 10, lastOpenedAtMs = 500L)
+        dao.updatePosition(a.path, spineIndex = 1, charOffset = 10, progressFraction = 0.5f, lastOpenedAtMs = 500L)
 
         // Touch: same bytes, bumped mtime — the content-unchanged re-index path.
         a.writeText("stub")
@@ -439,7 +439,7 @@ class LibraryIndexerTest {
         // window under test.
         val racingExtractor = MetadataExtractor { file ->
             runBlocking {
-                dao.updatePosition(file.path, spineIndex = 7, charOffset = 99, lastOpenedAtMs = 2_000L)
+                dao.updatePosition(file.path, spineIndex = 7, charOffset = 99, progressFraction = 0.5f, lastOpenedAtMs = 2_000L)
             }
             BookMetadataResult.Success(title = "A")
         }
@@ -532,7 +532,7 @@ class LibraryIndexerTest {
         val a = File(rootA, "a.epub").apply { writeText("stub") }
         val b = File(rootB, "b.epub").apply { writeText("stub") }
         LibraryIndexer(dao, listOf(rootA, rootB), FakeExtractor()).sync()
-        dao.updatePosition(b.path, spineIndex = 3, charOffset = 120, lastOpenedAtMs = 7_000L)
+        dao.updatePosition(b.path, spineIndex = 3, charOffset = 120, progressFraction = 0.5f, lastOpenedAtMs = 7_000L)
         val bBefore = dao.getByPath(b.path)!!
 
         // Root narrowed to just A. b.epub is under B, which is no longer walked.
@@ -558,7 +558,7 @@ class LibraryIndexerTest {
         File(rootA, "a.epub").writeText("stub")
         val b = File(rootB, "b.epub").apply { writeText("stub") }
         LibraryIndexer(dao, listOf(rootA, rootB), FakeExtractor()).sync()
-        dao.updatePosition(b.path, spineIndex = 3, charOffset = 120, lastOpenedAtMs = 7_000L)
+        dao.updatePosition(b.path, spineIndex = 3, charOffset = 120, progressFraction = 0.5f, lastOpenedAtMs = 7_000L)
 
         // Narrow to A (b survives, hidden), then widen back to both.
         LibraryIndexer(dao, listOf(rootA), FakeExtractor()).sync()
@@ -602,7 +602,7 @@ class LibraryIndexerTest {
         val documents = File(storage, "Documents").apply { mkdirs() }
         val x = File(documents, "x.epub").apply { writeText("stub") }
         LibraryIndexer(dao, listOf(documents), FakeExtractor()).sync()
-        dao.updatePosition(x.path, spineIndex = 2, charOffset = 50, lastOpenedAtMs = 4_000L)
+        dao.updatePosition(x.path, spineIndex = 2, charOffset = 50, progressFraction = 0.5f, lastOpenedAtMs = 4_000L)
 
         // Re-point the root to the sibling directory whose name is a prefix of the real one.
         val result = LibraryIndexer(dao, listOf(document), FakeExtractor()).sync()

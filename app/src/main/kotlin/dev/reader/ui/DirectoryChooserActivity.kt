@@ -82,7 +82,15 @@ open class DirectoryChooserActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val toolbar = Toolbar(this).apply { title = "Choose book folder" }
+        val toolbar = Toolbar(this).apply {
+            title = "Choose book folder"
+            // Up affordance (cancel/return): without it the only way out was the device Back
+            // gesture. This returns to Settings without choosing a folder — the "Up" button in the
+            // list navigates the directory tree, a separate concern.
+            setNavigationIcon(androidx.appcompat.R.drawable.abc_ic_ab_back_material)
+            navigationContentDescription = "Back"
+            setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
+        }
 
         pathLabel = TextView(this).apply { setPadding(48, 24, 48, 24) }
 

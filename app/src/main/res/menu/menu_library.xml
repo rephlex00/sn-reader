@@ -6,8 +6,18 @@
      it and unchecks its siblings automatically, so the active sort order has a visible mark
      on-screen (it didn't before). LibraryActivity.onCreate still has to set the initial check
      mark itself after inflating this menu — a freshly inflated menu (every rotation gets a new
-     one) always starts with nothing checked, regardless of which SortOrder is actually active. -->
+     one) always starts with nothing checked, regardless of which SortOrder is actually active.
+
+     The `header_*` items are disabled (non-clickable) section labels. This popup mixes two
+     separate single-choice radio groups (sort, then view mode) plus a standalone toggle; without
+     labels they read as one undifferentiated list and the two active radio marks look like one
+     group. Disabled items render greyed and inert — LibraryActivity never sees them in
+     onOptionsItemSelected — so they act purely as headings. -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/header_sort"
+        android:enabled="false"
+        android:title="Sort by" />
     <group
         android:id="@+id/sort_group"
         android:checkableBehavior="single">
@@ -28,6 +38,10 @@
          two items a radio pair so the active view mode carries a visible mark. LibraryActivity
          sets the initial check after inflating (a freshly inflated menu — every rotation gets one
          — starts with nothing checked, regardless of the persisted ViewMode). -->
+    <item
+        android:id="@+id/header_view"
+        android:enabled="false"
+        android:title="View" />
     <group
         android:id="@+id/view_group"
         android:checkableBehavior="single">

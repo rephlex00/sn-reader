@@ -1,6 +1,5 @@
 package dev.reader.ui
 
-import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Environment
 import android.view.View
@@ -172,6 +171,10 @@ open class ReaderActivity : AppCompatActivity() {
      *  [toggleProgressBar] — so the hot [showPage] path never constructs [ReaderPrefs] itself. */
     private var showProgressBar: Boolean = true
 
+    /** Whole-book progress `[0,1]` of the page [showPage] last drew — captured there (independently
+     *  of [showProgressBar]) so [persistPosition] can store it for the library's percentage. */
+    private var currentBookProgress: Float = 0f
+
     /**
      * The one in-flight adjacent-chapter prefetch, if any (see [schedulePrefetch]). Held only so a
      * newer settle can cancel a now-superseded prefetch before launching the next — there is never
@@ -289,7 +292,7 @@ open class ReaderActivity : AppCompatActivity() {
             settingsSheet.visibility = View.GONE
         } else {
             tocPanel.visibility = View.GONE // one panel open at a time
-            loadFontPreviewsOnce() // before refreshSheet: it bolds the selected face's own typeface
+            loadFontPreviewsOnce() // before refreshSheet: sets each font option's preview face
             refreshSheet()
             settingsSheet.visibility = View.VISIBLE
         }
@@ -506,8 +509,8 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     /** Syncs the sheet's controls to the current [ReaderPrefs]: the selected option in each group is
-     * bolded, the size readout shows the current px, and each [ToggleSwitchView] reflects its
-     * boolean. Pure View work. */
+     * marked with a boxed outline (see [setOptionSelected]), the size readout shows the current px,
+     * and each [ToggleSwitchView] reflects its boolean. Pure View work. */
     private fun refreshSheet() {
         val prefs = ReaderPrefs(this)
 
@@ -533,11 +536,13 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     private fun setOptionSelected(id: Int, selected: Boolean) {
-        // Preserve the view's own family (the font options preview their face) and change only the
-        // weight — passing null as the family would replace a Literata/Bitter/Atkinson preview with
-        // the default. For the other option groups the family is the default either way.
-        val view = overlay.findViewById<TextView>(id)
-        view.setTypeface(view.typeface, if (selected) Typeface.BOLD else Typeface.NORMAL)
+        // A boxed outline (not bold weight) marks the selection. It is typeface-independent, so it
+        // works with the font options that preview their own face without disturbing that face, and
+        // — crucially — it clears cleanly. The old `setTypeface(view.typeface, NORMAL)` could not
+        // strip bold back off a bundled font's already-bold instance, so de-selecting silently
+        // failed and every font eventually rendered as selected. `0` clears the background.
+        overlay.findViewById<TextView>(id)
+            .setBackgroundResource(if (selected) R.drawable.aa_option_selected else 0)
     }
 
     private fun setToggle(switchId: Int, on: Boolean) {
@@ -625,8 +630,12 @@ open class ReaderActivity : AppCompatActivity() {
         val app = application as ReaderApplication
         val dao = app.database.bookDao()
         val now = System.currentTimeMillis()
+        // Capture the fraction on the main thread, at the same moment the locator is drained, so the
+        // stored percentage matches the stored page — a later showPage must not mutate what this
+        // write commits.
+        val fraction = currentBookProgress
         app.positionWriteScope.launch {
-            dao.updatePosition(path, locator.spineIndex, locator.charOffset, now)
+            dao.updatePosition(path, locator.spineIndex, locator.charOffset, fraction, now)
         }
     }
 
@@ -918,13 +927,12 @@ open class ReaderActivity : AppCompatActivity() {
         // than widening MeasuredChapter's contract for a single caller.
         val layout = (chapter.measured as AndroidMeasuredChapter).layout
         pageView.show(layout, chapter.pages[pageIndex], cfg.marginPx)
-        pageView.setProgress(
-            if (showProgressBar) {
-                bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
-            } else {
-                null
-            },
-        )
+        // Computed once and used two ways: it drives the in-book bar (only when the toggle is on)
+        // AND is captured for persistence below so the library card can show the same percentage.
+        // Persistence is independent of the display toggle — hiding the bar must not blank the
+        // library's progress.
+        currentBookProgress = bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
+        pageView.setProgress(if (showProgressBar) currentBookProgress else null)
 
         // Record the new position: the page's startOffset is the stable char offset a later restore
         // maps back to a page. This only sets an in-memory field; the caller (onTap, or the open

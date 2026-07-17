@@ -148,22 +148,23 @@ class BookDaoTest {
     }
 
     @Test
-    fun `updatePosition round-trips spineIndex, charOffset, and lastOpenedAtMs without touching other columns`(): Unit =
+    fun `updatePosition round-trips spineIndex, charOffset, progressFraction, and lastOpenedAtMs without touching other columns`(): Unit =
         runBlocking {
             dao.upsertAll(listOf(book(path = "/a.epub", title = "Keep Me", spineIndex = 0, charOffset = 0)))
 
-            dao.updatePosition(path = "/a.epub", spineIndex = 3, charOffset = 4521, lastOpenedAtMs = 9_000L)
+            dao.updatePosition(path = "/a.epub", spineIndex = 3, charOffset = 4521, progressFraction = 0.42f, lastOpenedAtMs = 9_000L)
 
             val found = dao.getByPath("/a.epub")!!
             assertThat(found.spineIndex).isEqualTo(3)
             assertThat(found.charOffset).isEqualTo(4521)
+            assertThat(found.progressFraction).isEqualTo(0.42f)
             assertThat(found.lastOpenedAtMs).isEqualTo(9_000L)
             assertThat(found.title).isEqualTo("Keep Me")
         }
 
     @Test
     fun `updatePosition on an unknown path is a no-op, not a crash`(): Unit = runBlocking {
-        dao.updatePosition(path = "/nowhere.epub", spineIndex = 1, charOffset = 1, lastOpenedAtMs = 1L)
+        dao.updatePosition(path = "/nowhere.epub", spineIndex = 1, charOffset = 1, progressFraction = 0.5f, lastOpenedAtMs = 1L)
 
         assertThat(dao.observeAll().first()).isEmpty()
     }

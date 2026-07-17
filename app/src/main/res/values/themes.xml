@@ -7,8 +7,10 @@
     </style>
 
     <!-- Aa sheet controls: monochrome, large tap targets, no ripple/animation. A selected option is
-         shown by bolding it in code (ReaderActivity.refreshSheet), so there is no background state to
-         animate — the e-ink constraint. Shared by the segmented options and the size stepper. -->
+         marked by a boxed outline background (aa_option_selected), set in code
+         (ReaderActivity.setOptionSelected). The outline is a static drawable — no state list, so
+         nothing animates (the e-ink constraint). Shared by the segmented options and the size
+         stepper. -->
     <style name="AaOption">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
