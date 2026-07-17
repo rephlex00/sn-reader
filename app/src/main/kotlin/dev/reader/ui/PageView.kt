@@ -104,8 +104,11 @@ class PageView(context: Context) : View(context) {
         canvas.restore()
 
         // The progress bar lives OUTSIDE the text clip, pinned to the bottom edge of the view
-        // (not the content box), so it sits at the very bottom and never overlaps text even at
-        // marginPx 0. One extra draw folded into this same per-turn redraw — no separate pass.
+        // (not the content box), so it sits at the very bottom. Text clears it only because the
+        // shipped margin floor (MARGIN_NARROW_PX = 24px) leaves a band below the last line — the
+        // draw code does NOT itself enforce clearance, so at marginPx 0 (unreachable via the Aa
+        // sheet) the bar would sit under the final line. One extra draw folded into this same
+        // per-turn redraw — no separate pass.
         progress?.let { drawProgressBar(canvas, it) }
     }
 
