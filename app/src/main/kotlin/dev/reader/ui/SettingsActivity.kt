@@ -30,7 +30,15 @@ open class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val toolbar = Toolbar(this).apply { title = "Settings" }
+        val toolbar = Toolbar(this).apply {
+            title = "Settings"
+            // An explicit up affordance: this screen is reached from the library overflow and had
+            // no on-screen way back — only the device's Back gesture, the same discoverability gap
+            // the reader's own "‹ Back" control was added to close.
+            setNavigationIcon(androidx.appcompat.R.drawable.abc_ic_ab_back_material)
+            navigationContentDescription = "Back"
+            setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
+        }
 
         val label = TextView(this).apply {
             text = "Book folder"

@@ -42,6 +42,16 @@ fun progressLabel(lastOpenedAtMs: Long?, spineIndex: Int, charOffset: Int): Stri
 }
 
 /**
+ * Cleans a raw `dc:creator` string for display. EPUB metadata routinely leaves a dangling
+ * separator — e.g. "Andy Weir;" from a creator list whose second entry is empty — which the stored
+ * value carries verbatim. Strips leading/trailing separator punctuation (`;`, `,`) and whitespace
+ * so the byline reads "Andy Weir", while leaving internal punctuation ("Weir, Andy") untouched.
+ * Pure and total; null or all-separator input yields "".
+ */
+internal fun formatAuthor(raw: String?): String =
+    raw?.trim { it.isWhitespace() || it == ';' || it == ',' }.orEmpty()
+
+/**
  * The badge shown for a book in **list** mode: the reading status from [statusOf] rendered as text,
  * with the stored reason spelled out for an unreadable book. Tiles keep [progressLabel]'s
  * behavior instead (progress-if-opened, nothing if never opened) — status text is a list-mode
@@ -217,7 +227,7 @@ open class BookGridAdapter(
         holder.job = null
 
         holder.title.text = book.title
-        holder.author.text = book.author ?: ""
+        holder.author.text = formatAuthor(book.author)
         holder.itemView.setOnClickListener { onBookClick(book) }
 
         holder.status.text = when {
@@ -231,8 +241,9 @@ open class BookGridAdapter(
 
     private fun bindBookRow(holder: BookRowViewHolder, book: BookEntity) {
         holder.title.text = book.title
-        holder.author.text = book.author ?: ""
-        holder.author.visibility = if (book.author.isNullOrEmpty()) View.GONE else View.VISIBLE
+        val author = formatAuthor(book.author)
+        holder.author.text = author
+        holder.author.visibility = if (author.isEmpty()) View.GONE else View.VISIBLE
         holder.size.text = humanReadableSize(book.sizeBytes)
         holder.status.text = statusText(book)
         holder.itemView.setOnClickListener { onBookClick(book) }

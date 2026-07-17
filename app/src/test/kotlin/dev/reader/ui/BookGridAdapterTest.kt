@@ -6,6 +6,28 @@ import org.junit.Test
 
 class BookGridAdapterTest {
 
+    // -- formatAuthor ---------------------------------------------------------------------
+
+    @Test
+    fun `a dangling separator is stripped from the byline`() {
+        // The reported case: a creator list with an empty second entry leaves "Andy Weir;".
+        assertThat(formatAuthor("Andy Weir;")).isEqualTo("Andy Weir")
+        assertThat(formatAuthor("Andy Weir; ")).isEqualTo("Andy Weir")
+        assertThat(formatAuthor("  Caroline Criado Perez ,")).isEqualTo("Caroline Criado Perez")
+    }
+
+    @Test
+    fun `internal punctuation is preserved`() {
+        assertThat(formatAuthor("Weir, Andy")).isEqualTo("Weir, Andy")
+        assertThat(formatAuthor("Martha Wells")).isEqualTo("Martha Wells")
+    }
+
+    @Test
+    fun `null or all-separator input yields empty`() {
+        assertThat(formatAuthor(null)).isEmpty()
+        assertThat(formatAuthor(" ; , ")).isEmpty()
+    }
+
     // -- progressLabel --------------------------------------------------------------------
 
     @Test
