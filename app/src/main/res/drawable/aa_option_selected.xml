@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Selected-option indicator for the Aa sheet's segmented controls (font / line spacing /
+     margins): a thin black rounded outline drawn behind the chosen option. Typeface-independent,
+     unlike the old bold weight — which could not be reliably stripped back off a bundled font's
+     already-bold instance (Typeface.create(boldInstance, NORMAL) stays bold), so switching fonts
+     left a stale mark on the previous option and every option eventually read as selected. An
+     outline clears cleanly and is a clearer signal than bold on a grayscale e-ink panel. No fill,
+     so it adds minimal ink. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="8dp" />
+    <stroke
+        android:width="2dp"
+        android:color="@android:color/black" />
+</shape>

@@ -1,6 +1,5 @@
 package dev.reader.ui
 
-import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Environment
 import android.view.View
@@ -289,7 +288,7 @@ open class ReaderActivity : AppCompatActivity() {
             settingsSheet.visibility = View.GONE
         } else {
             tocPanel.visibility = View.GONE // one panel open at a time
-            loadFontPreviewsOnce() // before refreshSheet: it bolds the selected face's own typeface
+            loadFontPreviewsOnce() // before refreshSheet: sets each font option's preview face
             refreshSheet()
             settingsSheet.visibility = View.VISIBLE
         }
@@ -533,11 +532,13 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     private fun setOptionSelected(id: Int, selected: Boolean) {
-        // Preserve the view's own family (the font options preview their face) and change only the
-        // weight — passing null as the family would replace a Literata/Bitter/Atkinson preview with
-        // the default. For the other option groups the family is the default either way.
-        val view = overlay.findViewById<TextView>(id)
-        view.setTypeface(view.typeface, if (selected) Typeface.BOLD else Typeface.NORMAL)
+        // A boxed outline (not bold weight) marks the selection. It is typeface-independent, so it
+        // works with the font options that preview their own face without disturbing that face, and
+        // — crucially — it clears cleanly. The old `setTypeface(view.typeface, NORMAL)` could not
+        // strip bold back off a bundled font's already-bold instance, so de-selecting silently
+        // failed and every font eventually rendered as selected. `0` clears the background.
+        overlay.findViewById<TextView>(id)
+            .setBackgroundResource(if (selected) R.drawable.aa_option_selected else 0)
     }
 
     private fun setToggle(switchId: Int, on: Boolean) {
