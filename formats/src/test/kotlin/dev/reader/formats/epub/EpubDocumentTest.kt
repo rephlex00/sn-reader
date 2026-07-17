@@ -59,6 +59,38 @@ class EpubDocumentTest {
     }
 
     @Test
+    fun `chapterWeights are the per-chapter byte sizes in spine order`() {
+        val short = "<html><body><p>tiny</p></body></html>"
+        val long = "<html><body><p>" + "padding ".repeat(500) + "</p></body></html>"
+        val file = temp.newFile("weighted.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>W</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>""")
+            entry("OEBPS/ch1.xhtml", short)
+            entry("OEBPS/ch2.xhtml", long)
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            val weights = doc.chapterWeights
+            assertThat(weights).hasSize(2)
+            assertThat(weights[0]).isEqualTo(short.toByteArray().size.toLong())
+            assertThat(weights[1]).isEqualTo(long.toByteArray().size.toLong())
+            assertThat(weights[1]).isGreaterThan(weights[0])
+        }
+    }
+
+    @Test
     fun `paginates a chapter into at least one page`() {
         openStandard().use {
             val chapter = it.chapter(0, config)
