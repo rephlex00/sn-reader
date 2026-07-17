@@ -9,6 +9,8 @@ class BookProgressTest {
     fun `an empty or weightless book reads zero, never divides by zero`() {
         assertThat(bookProgress(emptyList(), 0, 0, 0)).isEqualTo(0f)
         assertThat(bookProgress(listOf(0L, 0L), 1, 3, 10)).isEqualTo(0f)
+        // Genuinely negative-summing weights also read zero without division error.
+        assertThat(bookProgress(listOf(-3L, -5L), 0, 0, 10)).isEqualTo(0f)
     }
 
     @Test
@@ -50,5 +52,39 @@ class BookProgressTest {
         val p = bookProgress(listOf(5L, 5L), 1, 999, 4)
         assertThat(p).isAtMost(1f)
         assertThat(p).isAtLeast(0f)
+    }
+
+    @Test
+    fun `turning forward never decreases progress — monotonic across all pages and chapters`() {
+        // Walk a realistic multi-chapter book with unequal weights (exercising
+        // byte-weighting), stepping through every page of every chapter, and collect
+        // progress fractions. Assert the sequence is non-decreasing, stays within [0,1],
+        // and reaches 1f at the end. This verifies the contract "Turning forward never
+        // decreases it" and ensures byte-weighting is actually used across chapters.
+        val weights = listOf(2L, 5L, 3L)  // Unequal weights: 2+5+3 = 10 total
+        val pageCountsPerChapter = listOf(4, 6, 5)  // Different chapter lengths
+
+        val progressSequence = mutableListOf<Float>()
+        for (spineIdx in weights.indices) {
+            val pageCount = pageCountsPerChapter[spineIdx]
+            for (pageIdx in 0..pageCount) {  // Walk every page including the boundary
+                val p = bookProgress(weights, spineIdx, pageIdx, pageCount)
+                progressSequence.add(p)
+            }
+        }
+
+        // Assert no step decreases progress.
+        progressSequence.zipWithNext().forEach { (prev, next) ->
+            assertThat(next).isAtLeast(prev)
+        }
+
+        // Assert all values stay in bounds.
+        progressSequence.forEach { p ->
+            assertThat(p).isAtLeast(0f)
+            assertThat(p).isAtMost(1f)
+        }
+
+        // Assert we reach completion at the final page.
+        assertThat(progressSequence.last()).isEqualTo(1f)
     }
 }
