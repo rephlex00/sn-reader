@@ -3,13 +3,14 @@ package dev.reader.formats.render
 import android.graphics.Typeface
 
 /**
- * Resolves a [RenderConfig.fontFamily] to a Typeface. Bundled reader fonts arrive in a
- * later plan; until then the platform families are enough.
+ * Resolves a [dev.reader.engine.RenderConfig] font family to a Typeface — the seam between the
+ * `:formats` measurer and whatever supplies fonts. Production uses `:app`'s `BundledTypefaceProvider`
+ * (the bundled OFL faces the Aa picker offers, e.g. `"literata"`).
  *
- * The family strings are the exact vocabulary [dev.reader.ui.ReaderPrefs]/the Aa sheet store —
- * `"serif"`, `"sans-serif"`, `"monospace"` (also the CSS/Android family names). This mapping is
- * the other end of that contract: a mismatch here silently renders every choice as serif, so
- * [TypefaceProviderTest] pins these exact strings.
+ * [Platform] is the fallback used by tests and by non-rendering opens (metadata/cover extraction)
+ * that never actually resolve a font. It maps the generic `"serif"`/`"sans-serif"`/`"monospace"`
+ * family names (the CSS/Android names) to platform typefaces; [TypefaceProviderTest] pins that
+ * mapping (a mismatch there once rendered every choice as serif).
  */
 fun interface TypefaceProvider {
     fun get(family: String): Typeface

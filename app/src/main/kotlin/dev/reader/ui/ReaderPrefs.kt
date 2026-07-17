@@ -91,7 +91,8 @@ class ReaderPrefs(context: Context) {
         const val KEY_INFER_HEADINGS = "infer_headings"
         const val KEY_PUBLISHER_STYLING = "publisher_styling"
 
-        // Defaults MUST equal the literals openFirstBook used to hardcode — the no-op guarantee.
+        // The reader's standing typography baseline. All but the font matched openFirstBook's old
+        // hardcoded literals; the font default became "literata" when bundled fonts shipped.
         const val DEFAULT_FONT_FAMILY = "literata"
         const val DEFAULT_TEXT_SIZE_PX = 34f
         const val DEFAULT_LINE_SPACING = 1.4f

@@ -176,6 +176,10 @@ open class ReaderActivity : AppCompatActivity() {
     /** Page turns since the last full-panel refresh; drives the [REFRESH_CADENCE] ghost-clear. */
     private var turnsSinceRefresh = 0
 
+    /** Whether the Aa font options have been given their preview typefaces yet (loaded once, on
+     * the first sheet-open — see [loadFontPreviewsOnce]). */
+    private var fontPreviewsLoaded = false
+
     /** The pure position-memory logic: the restore rules and the in-memory page-turn debounce. */
     private val session = ReadingSession()
 
@@ -276,9 +280,21 @@ open class ReaderActivity : AppCompatActivity() {
             settingsSheet.visibility = View.GONE
         } else {
             tocPanel.visibility = View.GONE // one panel open at a time
+            loadFontPreviewsOnce() // before refreshSheet: it bolds the selected face's own typeface
             refreshSheet()
             settingsSheet.visibility = View.VISIBLE
         }
+    }
+
+    /** Shows each font option in its own face, so the picker previews the fonts before selection.
+     * Deferred to first sheet-open and done once — loading three font families is real work that a
+     * reader who never opens the Aa sheet should not pay at every book open. */
+    private fun loadFontPreviewsOnce() {
+        if (fontPreviewsLoaded) return
+        fontPreviewsLoaded = true
+        overlay.findViewById<TextView>(R.id.font_literata).typeface = ResourcesCompat.getFont(this, R.font.literata)
+        overlay.findViewById<TextView>(R.id.font_bitter).typeface = ResourcesCompat.getFont(this, R.font.bitter)
+        overlay.findViewById<TextView>(R.id.font_atkinson).typeface = ResourcesCompat.getFont(this, R.font.atkinson)
     }
 
     /** Opens or closes the Contents panel — a visibility flip (one redraw). Opening first rebuilds
@@ -353,10 +369,9 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.font_literata).setOnClickListener { applySettingsChange { p -> p.fontFamily = "literata" } }
         overlay.findViewById<View>(R.id.font_bitter).setOnClickListener { applySettingsChange { p -> p.fontFamily = "bitter" } }
         overlay.findViewById<View>(R.id.font_atkinson).setOnClickListener { applySettingsChange { p -> p.fontFamily = "atkinson" } }
-        // Preview each option in its own face, so the picker shows the fonts before selection.
-        overlay.findViewById<TextView>(R.id.font_literata).typeface = ResourcesCompat.getFont(this, R.font.literata)
-        overlay.findViewById<TextView>(R.id.font_bitter).typeface = ResourcesCompat.getFont(this, R.font.bitter)
-        overlay.findViewById<TextView>(R.id.font_atkinson).typeface = ResourcesCompat.getFont(this, R.font.atkinson)
+        // The per-option preview typefaces are loaded lazily on first sheet-open, not here — see
+        // loadFontPreviewsOnce. Loading three font families synchronously at every book open (even
+        // for a reader who never touches the Aa sheet) would be cold-open work for nothing.
 
         overlay.findViewById<View>(R.id.size_minus).setOnClickListener { stepTextSize(-TEXT_SIZE_STEP_PX) }
         overlay.findViewById<View>(R.id.size_plus).setOnClickListener { stepTextSize(TEXT_SIZE_STEP_PX) }
