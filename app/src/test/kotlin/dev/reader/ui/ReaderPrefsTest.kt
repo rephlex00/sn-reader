@@ -23,9 +23,9 @@ class ReaderPrefsTest {
     }
 
     @Test
-    fun `defaults equal today's hardcoded literals on a fresh install`() {
+    fun `defaults are the shipped reader baseline on a fresh install`() {
         val prefs = ReaderPrefs(context)
-        assertThat(prefs.fontFamily).isEqualTo("serif")
+        assertThat(prefs.fontFamily).isEqualTo("literata")
         assertThat(prefs.textSizePx).isEqualTo(34f)
         assertThat(prefs.lineSpacingMultiplier).isEqualTo(1.4f)
         assertThat(prefs.marginPx).isEqualTo(48)
@@ -38,7 +38,7 @@ class ReaderPrefsTest {
     @Test
     fun `every field round-trips through a write`() {
         val prefs = ReaderPrefs(context)
-        prefs.fontFamily = "monospace"
+        prefs.fontFamily = "bitter"
         prefs.textSizePx = 40f
         prefs.lineSpacingMultiplier = 1.6f
         prefs.marginPx = 64
@@ -47,7 +47,7 @@ class ReaderPrefsTest {
         prefs.inferHeadings = false
         prefs.publisherStyling = false
 
-        assertThat(prefs.fontFamily).isEqualTo("monospace")
+        assertThat(prefs.fontFamily).isEqualTo("bitter")
         assertThat(prefs.textSizePx).isEqualTo(40f)
         assertThat(prefs.lineSpacingMultiplier).isEqualTo(1.6f)
         assertThat(prefs.marginPx).isEqualTo(64)
@@ -66,15 +66,15 @@ class ReaderPrefsTest {
     }
 
     @Test
-    fun `an untouched ReaderPrefs builds exactly the RenderConfig the old literals produced`() {
-        // The no-op guarantee: with defaults equal to the old literals and a fixed viewport, the
-        // built config is identical to the one openFirstBook used to hardcode. This pins the
-        // task as a behavior no-op until the Aa sheet changes a value.
+    fun `an untouched ReaderPrefs builds the shipped default RenderConfig`() {
+        // Pins the exact config the reader opens with on a fresh install (Literata baseline), so a
+        // stray change to a default or the mapping is caught. The font default is "literata" since
+        // bundled fonts shipped; everything else is the reader's standing baseline.
         val prefs = ReaderPrefs(context)
         val built = prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
 
-        val old = RenderConfig(
-            fontFamily = "serif",
+        val expected = RenderConfig(
+            fontFamily = "literata",
             textSizePx = 34f,
             lineSpacingMultiplier = 1.4f,
             marginPx = 48,
@@ -83,7 +83,7 @@ class ReaderPrefsTest {
             viewportWidthPx = 1404,
             viewportHeightPx = 1872,
         )
-        assertThat(built).isEqualTo(old)
+        assertThat(built).isEqualTo(expected)
     }
 
     @Test

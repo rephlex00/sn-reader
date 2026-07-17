@@ -9,6 +9,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
@@ -31,7 +32,6 @@ import dev.reader.formats.epub.PaginatedChapter
 import dev.reader.formats.render.AndroidMeasuredChapter
 import dev.reader.formats.render.AndroidTextMeasurer
 import dev.reader.formats.render.SpannedChapterBuilder
-import dev.reader.formats.render.TypefaceProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -176,6 +176,10 @@ open class ReaderActivity : AppCompatActivity() {
     /** Page turns since the last full-panel refresh; drives the [REFRESH_CADENCE] ghost-clear. */
     private var turnsSinceRefresh = 0
 
+    /** Whether the Aa font options have been given their preview typefaces yet (loaded once, on
+     * the first sheet-open — see [loadFontPreviewsOnce]). */
+    private var fontPreviewsLoaded = false
+
     /** The pure position-memory logic: the restore rules and the in-memory page-turn debounce. */
     private val session = ReadingSession()
 
@@ -276,9 +280,21 @@ open class ReaderActivity : AppCompatActivity() {
             settingsSheet.visibility = View.GONE
         } else {
             tocPanel.visibility = View.GONE // one panel open at a time
+            loadFontPreviewsOnce() // before refreshSheet: it bolds the selected face's own typeface
             refreshSheet()
             settingsSheet.visibility = View.VISIBLE
         }
+    }
+
+    /** Shows each font option in its own face, so the picker previews the fonts before selection.
+     * Deferred to first sheet-open and done once — loading three font families is real work that a
+     * reader who never opens the Aa sheet should not pay at every book open. */
+    private fun loadFontPreviewsOnce() {
+        if (fontPreviewsLoaded) return
+        fontPreviewsLoaded = true
+        overlay.findViewById<TextView>(R.id.font_literata).typeface = ResourcesCompat.getFont(this, R.font.literata)
+        overlay.findViewById<TextView>(R.id.font_bitter).typeface = ResourcesCompat.getFont(this, R.font.bitter)
+        overlay.findViewById<TextView>(R.id.font_atkinson).typeface = ResourcesCompat.getFont(this, R.font.atkinson)
     }
 
     /** Opens or closes the Contents panel — a visibility flip (one redraw). Opening first rebuilds
@@ -350,9 +366,12 @@ open class ReaderActivity : AppCompatActivity() {
     /** Wires every Aa-sheet control to its pref write + live re-paginate. Called once from onCreate;
      * the listeners hold no state and fire only on a deliberate tap, so they cost nothing at rest. */
     private fun wireSettingsControls() {
-        overlay.findViewById<View>(R.id.font_serif).setOnClickListener { applySettingsChange { p -> p.fontFamily = "serif" } }
-        overlay.findViewById<View>(R.id.font_sans).setOnClickListener { applySettingsChange { p -> p.fontFamily = "sans-serif" } }
-        overlay.findViewById<View>(R.id.font_mono).setOnClickListener { applySettingsChange { p -> p.fontFamily = "monospace" } }
+        overlay.findViewById<View>(R.id.font_literata).setOnClickListener { applySettingsChange { p -> p.fontFamily = "literata" } }
+        overlay.findViewById<View>(R.id.font_bitter).setOnClickListener { applySettingsChange { p -> p.fontFamily = "bitter" } }
+        overlay.findViewById<View>(R.id.font_atkinson).setOnClickListener { applySettingsChange { p -> p.fontFamily = "atkinson" } }
+        // The per-option preview typefaces are loaded lazily on first sheet-open, not here — see
+        // loadFontPreviewsOnce. Loading three font families synchronously at every book open (even
+        // for a reader who never touches the Aa sheet) would be cold-open work for nothing.
 
         overlay.findViewById<View>(R.id.size_minus).setOnClickListener { stepTextSize(-TEXT_SIZE_STEP_PX) }
         overlay.findViewById<View>(R.id.size_plus).setOnClickListener { stepTextSize(TEXT_SIZE_STEP_PX) }
@@ -441,9 +460,9 @@ open class ReaderActivity : AppCompatActivity() {
     private fun refreshSheet() {
         val prefs = ReaderPrefs(this)
 
-        setOptionSelected(R.id.font_serif, prefs.fontFamily == "serif")
-        setOptionSelected(R.id.font_sans, prefs.fontFamily == "sans-serif")
-        setOptionSelected(R.id.font_mono, prefs.fontFamily == "monospace")
+        setOptionSelected(R.id.font_literata, prefs.fontFamily == "literata")
+        setOptionSelected(R.id.font_bitter, prefs.fontFamily == "bitter")
+        setOptionSelected(R.id.font_atkinson, prefs.fontFamily == "atkinson")
 
         overlay.findViewById<TextView>(R.id.size_value).text = "${prefs.textSizePx.toInt()}px"
 
@@ -462,7 +481,11 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     private fun setOptionSelected(id: Int, selected: Boolean) {
-        overlay.findViewById<TextView>(id).setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+        // Preserve the view's own family (the font options preview their face) and change only the
+        // weight — passing null as the family would replace a Literata/Bitter/Atkinson preview with
+        // the default. For the other option groups the family is the default either way.
+        val view = overlay.findViewById<TextView>(id)
+        view.setTypeface(view.typeface, if (selected) Typeface.BOLD else Typeface.NORMAL)
     }
 
     private fun setToggle(switchId: Int, on: Boolean) {
@@ -721,7 +744,7 @@ open class ReaderActivity : AppCompatActivity() {
      */
     protected open fun openDocument(file: File): EpubDocument = EpubDocument.open(
         file,
-        AndroidTextMeasurer(SpannedChapterBuilder(), TypefaceProvider.Platform),
+        AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(this)),
     )
 
     /**
