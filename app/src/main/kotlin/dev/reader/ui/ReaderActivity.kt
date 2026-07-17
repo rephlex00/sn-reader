@@ -454,18 +454,18 @@ open class ReaderActivity : AppCompatActivity() {
         setOptionSelected(R.id.margin_medium, prefs.marginPx == MARGIN_MEDIUM_PX)
         setOptionSelected(R.id.margin_wide, prefs.marginPx == MARGIN_WIDE_PX)
 
-        setToggleLabel(R.id.toggle_justify, "Justify", prefs.justified)
-        setToggleLabel(R.id.toggle_hyphen, "Hyphenation", prefs.hyphenated)
-        setToggleLabel(R.id.toggle_publisher, "Publisher styling", prefs.publisherStyling)
-        setToggleLabel(R.id.toggle_headings, "Heading detection", prefs.inferHeadings)
+        setToggle(R.id.toggle_justify_switch, prefs.justified)
+        setToggle(R.id.toggle_hyphen_switch, prefs.hyphenated)
+        setToggle(R.id.toggle_publisher_switch, prefs.publisherStyling)
+        setToggle(R.id.toggle_headings_switch, prefs.inferHeadings)
     }
 
     private fun setOptionSelected(id: Int, selected: Boolean) {
         overlay.findViewById<TextView>(id).setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
     }
 
-    private fun setToggleLabel(id: Int, label: String, on: Boolean) {
-        overlay.findViewById<TextView>(id).text = "$label: ${if (on) "On" else "Off"}"
+    private fun setToggle(switchId: Int, on: Boolean) {
+        overlay.findViewById<ToggleSwitchView>(switchId).checked = on
     }
 
     /**
