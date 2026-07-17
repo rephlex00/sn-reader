@@ -509,8 +509,8 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     /** Syncs the sheet's controls to the current [ReaderPrefs]: the selected option in each group is
-     * bolded, the size readout shows the current px, and each [ToggleSwitchView] reflects its
-     * boolean. Pure View work. */
+     * marked with a boxed outline (see [setOptionSelected]), the size readout shows the current px,
+     * and each [ToggleSwitchView] reflects its boolean. Pure View work. */
     private fun refreshSheet() {
         val prefs = ReaderPrefs(this)
 
