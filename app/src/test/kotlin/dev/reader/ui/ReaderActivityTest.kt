@@ -420,6 +420,24 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `tapping a font option writes that family and re-paginates`() {
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        // Fresh install opens on the default face.
+        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).fontFamily).isEqualTo("literata")
+
+        activity.findViewById<View>(R.id.font_bitter).performClick()
+
+        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).fontFamily).isEqualTo("bitter")
+        // Re-paginated live without crashing; still on a valid page, sheet still open.
+        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+ left in chapter""")
+        assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
+    }
+
+    @Test
     fun `flipping the publisher-styling toggle writes the pref and updates its switch`() {
         clearReaderPrefs()
         val controller = openedMultiPage()

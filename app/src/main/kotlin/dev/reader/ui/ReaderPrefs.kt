@@ -22,8 +22,9 @@ class ReaderPrefs(context: Context) {
 
     private val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
 
-    /** One of the three built-in families "serif"/"sans-serif"/"monospace" (bundled OFL faces are
-     * deferred to a later plan). */
+    /** A bundled reader face — one of [BundledTypefaceProvider.FAMILIES] ("literata"/"bitter"/
+     * "atkinson"). A legacy or unknown value resolves to the default face at render time (see
+     * [BundledTypefaceProvider.fontResFor]); the store itself is a dumb string. */
     var fontFamily: String
         get() = prefs.getString(KEY_FONT_FAMILY, null) ?: DEFAULT_FONT_FAMILY
         set(value) = prefs.edit().putString(KEY_FONT_FAMILY, value).apply()
@@ -91,7 +92,7 @@ class ReaderPrefs(context: Context) {
         const val KEY_PUBLISHER_STYLING = "publisher_styling"
 
         // Defaults MUST equal the literals openFirstBook used to hardcode — the no-op guarantee.
-        const val DEFAULT_FONT_FAMILY = "serif"
+        const val DEFAULT_FONT_FAMILY = "literata"
         const val DEFAULT_TEXT_SIZE_PX = 34f
         const val DEFAULT_LINE_SPACING = 1.4f
         const val DEFAULT_MARGIN_PX = 48

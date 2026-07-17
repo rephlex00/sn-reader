@@ -175,20 +175,22 @@
                     android:textColor="@android:color/black"
                     android:textSize="16sp" />
 
+                <!-- Each option is shown in its own face (set in ReaderActivity), so the picker
+                     previews the fonts before selection. -->
                 <TextView
-                    android:id="@+id/font_serif"
+                    android:id="@+id/font_literata"
                     style="@style/AaOption"
-                    android:text="Serif" />
+                    android:text="Literata" />
 
                 <TextView
-                    android:id="@+id/font_sans"
+                    android:id="@+id/font_bitter"
                     style="@style/AaOption"
-                    android:text="Sans" />
+                    android:text="Bitter" />
 
                 <TextView
-                    android:id="@+id/font_mono"
+                    android:id="@+id/font_atkinson"
                     style="@style/AaOption"
-                    android:text="Mono" />
+                    android:text="Atkinson" />
             </LinearLayout>
 
             <!-- Text size stepper -->
