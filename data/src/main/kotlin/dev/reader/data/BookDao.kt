@@ -43,7 +43,9 @@ interface BookDao {
 
     /**
      * Written by the reader: on open (setting [BookEntity.lastOpenedAtMs] to now) and on every
-     * page turn thereafter. Never touches any other column.
+     * page turn thereafter. Writes only the position columns — `spineIndex`/`charOffset`, the
+     * whole-book [BookEntity.progressFraction] the library shows as a percentage, and
+     * `lastOpenedAtMs` — never the metadata a re-index owns.
      *
      * Deliberately NOT `suspend`: a suspend `@Query` hops to Room's own multi-threaded query
      * executor, so two writes launched in order could still acquire SQLite's write lock out of
@@ -54,9 +56,15 @@ interface BookDao {
      */
     @Query(
         "UPDATE books SET spineIndex = :spineIndex, charOffset = :charOffset, " +
-            "lastOpenedAtMs = :lastOpenedAtMs WHERE path = :path",
+            "progressFraction = :progressFraction, lastOpenedAtMs = :lastOpenedAtMs WHERE path = :path",
     )
-    fun updatePosition(path: String, spineIndex: Int, charOffset: Int, lastOpenedAtMs: Long)
+    fun updatePosition(
+        path: String,
+        spineIndex: Int,
+        charOffset: Int,
+        progressFraction: Float,
+        lastOpenedAtMs: Long,
+    )
 
     /**
      * [LibraryIndexer]'s write path for a re-indexed row whose CONTENT is unchanged (same

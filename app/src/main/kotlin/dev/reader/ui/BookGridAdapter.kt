@@ -19,26 +19,32 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * What the grid shows under a book's title, or null to show nothing.
  *
- * The library index ([BookEntity]) has no stored "total chapters"/spine-size column — the grid
- * never opens a book to learn one, since that would mean re-parsing every EPUB on every emission
- * just to render a fraction, defeating the whole point of an indexed library. So this reports
- * what the index actually has: whether the book has ever been opened, and how far into it
- * [BookEntity.spineIndex]/[BookEntity.charOffset] (both written by the reader, once Task 6 wires
- * position memory) say the reader got. A book that has never been opened shows nothing at all —
- * "reading progress if the book has been opened", per the brief — rather than a misleading "0%".
+ * A never-opened book shows nothing ("reading progress if the book has been opened", per the
+ * brief) rather than a misleading "0%". An opened book prefers [BookEntity.progressFraction] — the
+ * byte-weighted whole-book position the reader stored (schema v2), the same value the in-book
+ * progress bar shows — rendered as a percentage.
+ *
+ * The fallback, for a row opened before that column shipped ([BookEntity.progressFraction] still
+ * null), is "Section N" from the spine index. It is deliberately not "Chapter N": spineIndex is a
+ * SPINE index, not a chapter ordinal — real EPUBs routinely carry cover/title/nav as spine items
+ * 0-2 (ReaderActivity skips a zero-page spine item 0 for exactly that reason) — so "Section N"
+ * reports only what the older index actually has, without claiming a chapter number.
  */
-fun progressLabel(lastOpenedAtMs: Long?, spineIndex: Int, charOffset: Int): String? {
+fun progressLabel(
+    lastOpenedAtMs: Long?,
+    spineIndex: Int,
+    charOffset: Int,
+    progressFraction: Float?,
+): String? {
     if (lastOpenedAtMs == null) return null
-    // "Chapter N" would claim something the data doesn't support: spineIndex is a SPINE index,
-    // not a chapter ordinal. Real EPUBs routinely carry cover/title/nav as spine items 0-2 (see
-    // ReaderActivity, which skips a zero-page spine item 0 for exactly that reason), so "Chapter
-    // 5" here could actually be the book's chapter 2. "Section N" says only what's true: this is
-    // the Nth entry in reading order, not a claim about the author's chapter numbering.
-    return if (spineIndex == 0 && charOffset == 0) "Just started" else "Section ${spineIndex + 1}"
+    if (spineIndex == 0 && charOffset == 0) return "Just started"
+    progressFraction?.let { return "${(it.coerceIn(0f, 1f) * 100).roundToInt()}%" }
+    return "Section ${spineIndex + 1}"
 }
 
 /**
@@ -232,7 +238,7 @@ open class BookGridAdapter(
 
         holder.status.text = when {
             book.unreadable -> book.unreadableReason ?: "Unreadable"
-            else -> progressLabel(book.lastOpenedAtMs, book.spineIndex, book.charOffset)
+            else -> progressLabel(book.lastOpenedAtMs, book.spineIndex, book.charOffset, book.progressFraction)
         }
         holder.status.visibility = if (holder.status.text.isNullOrEmpty()) View.GONE else View.VISIBLE
 

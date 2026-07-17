@@ -37,7 +37,9 @@ import kotlinx.coroutines.SupervisorJob
 class ReaderApplication : Application() {
 
     val database: LibraryDatabase by lazy {
-        Room.databaseBuilder(applicationContext, LibraryDatabase::class.java, "library.db").build()
+        Room.databaseBuilder(applicationContext, LibraryDatabase::class.java, "library.db")
+            .addMigrations(LibraryDatabase.MIGRATION_1_2)
+            .build()
     }
 
     /**

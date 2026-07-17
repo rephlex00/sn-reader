@@ -171,6 +171,10 @@ open class ReaderActivity : AppCompatActivity() {
      *  [toggleProgressBar] — so the hot [showPage] path never constructs [ReaderPrefs] itself. */
     private var showProgressBar: Boolean = true
 
+    /** Whole-book progress `[0,1]` of the page [showPage] last drew — captured there (independently
+     *  of [showProgressBar]) so [persistPosition] can store it for the library's percentage. */
+    private var currentBookProgress: Float = 0f
+
     /**
      * The one in-flight adjacent-chapter prefetch, if any (see [schedulePrefetch]). Held only so a
      * newer settle can cancel a now-superseded prefetch before launching the next — there is never
@@ -626,8 +630,12 @@ open class ReaderActivity : AppCompatActivity() {
         val app = application as ReaderApplication
         val dao = app.database.bookDao()
         val now = System.currentTimeMillis()
+        // Capture the fraction on the main thread, at the same moment the locator is drained, so the
+        // stored percentage matches the stored page — a later showPage must not mutate what this
+        // write commits.
+        val fraction = currentBookProgress
         app.positionWriteScope.launch {
-            dao.updatePosition(path, locator.spineIndex, locator.charOffset, now)
+            dao.updatePosition(path, locator.spineIndex, locator.charOffset, fraction, now)
         }
     }
 
@@ -919,13 +927,12 @@ open class ReaderActivity : AppCompatActivity() {
         // than widening MeasuredChapter's contract for a single caller.
         val layout = (chapter.measured as AndroidMeasuredChapter).layout
         pageView.show(layout, chapter.pages[pageIndex], cfg.marginPx)
-        pageView.setProgress(
-            if (showProgressBar) {
-                bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
-            } else {
-                null
-            },
-        )
+        // Computed once and used two ways: it drives the in-book bar (only when the toggle is on)
+        // AND is captured for persistence below so the library card can show the same percentage.
+        // Persistence is independent of the display toggle — hiding the bar must not blank the
+        // library's progress.
+        currentBookProgress = bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
+        pageView.setProgress(if (showProgressBar) currentBookProgress else null)
 
         // Record the new position: the page's startOffset is the stable char offset a later restore
         // maps back to a page. This only sets an in-memory field; the caller (onTap, or the open

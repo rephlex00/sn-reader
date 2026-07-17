@@ -55,6 +55,16 @@ data class BookEntity(
     val unreadableReason: String?,
     val addedAtMs: Long,
     val lastOpenedAtMs: Long?,
+    /**
+     * Whole-book reading progress in `[0,1]` the last time the reader turned a page, or null for a
+     * book never opened since this column shipped (schema v2). The reader computes it from the
+     * byte-weighted [dev.reader.engine.bookProgress] — the same value the in-book progress bar
+     * shows — and writes it alongside the position on every turn, so the library can show an
+     * accurate percentage without opening the file. Nullable and defaulted so [upsertAll] on a
+     * newly-indexed book, and the v1->v2 migration on an existing one, both leave it unset until
+     * the reader fills it in.
+     */
+    val progressFraction: Float? = null,
 )
 
 /**
