@@ -80,6 +80,9 @@ class EpubDocument private constructor(
      * Read from the zip central directory via [ResourceSource.size] — no chapter is paginated to
      * weigh it, so this stays cheap enough to read at open time. Computed once (the archive is
      * immutable) and reused. Length equals [spineSize].
+     *
+     * Thread-safe: Kotlin's `by lazy` defaults to [LazyThreadSafetyMode.SYNCHRONIZED], so the
+     * initializer runs under a lock exactly once and all threads then observe the published result.
      */
     val chapterWeights: List<Long> by lazy {
         pkg.spine.map { idref -> pkg.manifest[idref]?.href?.let(source::size) ?: 0L }
