@@ -3,6 +3,7 @@ package dev.reader.ui
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.text.Layout
 import android.view.MotionEvent
 import android.view.View
@@ -33,6 +34,16 @@ class PageView(context: Context) : View(context) {
     private var page: Page? = null
     private var marginPx = 0
 
+    /** Whole-book progress in `[0,1]`, or null to draw no bar. Set via [setProgress]. */
+    internal var progress: Float? = null
+        private set
+
+    private val density = resources.displayMetrics.density
+    private val progressBarThicknessPx = 2f * density
+    private val progressBarBottomInsetPx = 6f * density
+    private val progressTrackPaint = Paint().apply { color = Color.parseColor("#CCCCCC") }
+    private val progressFillPaint = Paint().apply { color = Color.BLACK }
+
     var onTap: ((TapZone) -> Unit)? = null
 
     init {
@@ -51,6 +62,16 @@ class PageView(context: Context) : View(context) {
         this.layout = layout
         this.page = page
         this.marginPx = marginPx
+        invalidate()
+    }
+
+    /**
+     * Sets the whole-book progress fraction the bottom bar shows (null hides it) and invalidates.
+     * A display-only change — it never re-paginates. Called once per page turn from
+     * [ReaderActivity.showPage], and directly when the progress-bar toggle flips.
+     */
+    fun setProgress(fraction: Float?) {
+        this.progress = fraction
         invalidate()
     }
 
@@ -81,6 +102,11 @@ class PageView(context: Context) : View(context) {
         canvas.translate(marginPx.toFloat(), (marginPx - page.topPx).toFloat())
         layout.draw(canvas)
         canvas.restore()
+
+        // The progress bar lives OUTSIDE the text clip, pinned to the bottom edge of the view
+        // (not the content box), so it sits at the very bottom and never overlaps text even at
+        // marginPx 0. One extra draw folded into this same per-turn redraw — no separate pass.
+        progress?.let { drawProgressBar(canvas, it) }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean = when (event.actionMasked) {
@@ -99,5 +125,16 @@ class PageView(context: Context) : View(context) {
             true
         }
         else -> super.onTouchEvent(event)
+    }
+
+    private fun drawProgressBar(canvas: Canvas, fraction: Float) {
+        val left = marginPx.toFloat()
+        val right = (width - marginPx).toFloat()
+        if (right <= left) return
+        val bottom = height - progressBarBottomInsetPx
+        val top = bottom - progressBarThicknessPx
+        canvas.drawRect(left, top, right, bottom, progressTrackPaint)
+        val fillRight = left + (right - left) * fraction.coerceIn(0f, 1f)
+        canvas.drawRect(left, top, fillRight, bottom, progressFillPaint)
     }
 }
