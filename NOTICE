@@ -56,5 +56,26 @@ See docs/superpowers/specs/2026-07-15-supernote-reader-design.md, section
 "Licensing", for the full reasoning.
 --------------------------------------------------------------------------------
 
-Bundled fonts, when added, will be licensed under the SIL Open Font License
-(OFL) and listed here individually at that time.
+--------------------------------------------------------------------------------
+Bundled reader fonts — SIL Open Font License 1.1
+--------------------------------------------------------------------------------
+
+The reader ships the following open-license typefaces for the Aa font picker.
+Each is under the SIL Open Font License, Version 1.1; the full license text for
+each accompanies the fonts in app/src/main/assets/licenses/.
+
+Literata — OFL 1.1
+https://github.com/googlefonts/literata
+Copyright 2017 The Literata Project Authors
+
+Bitter — OFL 1.1
+https://github.com/solmatas/BitterPro
+Copyright 2011 The Bitter Project Authors
+
+Atkinson Hyperlegible — OFL 1.1
+https://github.com/googlefonts/atkinson-hyperlegible
+Copyright 2020 Braille Institute of America, Inc.
+
+Used as the reader's selectable body typefaces (res/font/), each with real
+regular, bold, italic, and bold-italic cuts.
+--------------------------------------------------------------------------------

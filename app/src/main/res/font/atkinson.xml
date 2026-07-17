@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- atkinson as a font family: the four static styles, so a StyleSpan(BOLD/ITALIC) on an
+     emphasis run resolves to the real bold/italic cut rather than a synthesized slant/smear.
+     SIL Open Font License 1.1 — see app/src/main/assets/licenses/ and the repo NOTICE. -->
+<font-family xmlns:android="http://schemas.android.com/apk/res/android">
+    <font android:fontStyle="normal" android:fontWeight="400" android:font="@font/atkinson_regular" />
+    <font android:fontStyle="normal" android:fontWeight="700" android:font="@font/atkinson_bold" />
+    <font android:fontStyle="italic" android:fontWeight="400" android:font="@font/atkinson_italic" />
+    <font android:fontStyle="italic" android:fontWeight="700" android:font="@font/atkinson_bold_italic" />
+</font-family>
