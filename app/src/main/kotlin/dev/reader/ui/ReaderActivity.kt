@@ -480,7 +480,7 @@ open class ReaderActivity : AppCompatActivity() {
      *    left keyed on the new one — so a later call here is also a miss under the old config.
      *
      * Rather than paginating to fill either gap (which would mean this tap handler synchronously
-     * pagin­ates on the main thread — exactly what [EpubDocument.chapter]'s cache-confinement
+     * paginates on the main thread — exactly what [EpubDocument.chapter]'s cache-confinement
      * contract is trying to prevent outside a real page turn), this refuses to paginate BY
      * CONSTRUCTION: [EpubDocument.isPaginated] is a read-only `containsKey` peek (it does not
      * disturb the access-ordered LRU), so the fraction is only computed when the chapter is
