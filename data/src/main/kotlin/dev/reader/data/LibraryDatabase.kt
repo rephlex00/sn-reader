@@ -5,10 +5,11 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [BookEntity::class, BookmarkEntity::class], version = 3, exportSchema = true)
+@Database(entities = [BookEntity::class, BookmarkEntity::class, HighlightEntity::class], version = 4, exportSchema = true)
 abstract class LibraryDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun bookmarkDao(): BookmarkDao
+    abstract fun highlightDao(): HighlightDao
 
     companion object {
         /**
@@ -41,6 +42,30 @@ abstract class LibraryDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_bookmarks_bookPath` ON `bookmarks` (`bookPath`)",
+                )
+            }
+        }
+
+        /**
+         * v3 -> v4: creates the `highlights` table (text-range highlights). Purely additive — no
+         * existing row is touched. The CREATE statements MUST match Room's generated v4 schema
+         * (`schemas/…/4.json`) exactly, or Room's runtime schema validation refuses to open a
+         * migrated DB. Registered in [dev.reader.ReaderApplication]'s builder.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `highlights` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`bookPath` TEXT NOT NULL, `spineIndex` INTEGER NOT NULL, " +
+                        "`startOffset` INTEGER NOT NULL, `endOffset` INTEGER NOT NULL, " +
+                        "`text` TEXT NOT NULL, `progressFraction` REAL NOT NULL, " +
+                        "`createdAtMs` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`bookPath`) REFERENCES `books`(`path`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_highlights_bookPath` ON `highlights` (`bookPath`)",
                 )
             }
         }

@@ -127,4 +127,62 @@ class LibraryDatabaseMigrationTest {
         }
         db.close()
     }
+
+    private val v3BooksCreateSql = v2CreateSql // books shape is unchanged v2→v3
+
+    private val v3BookmarksCreateSql =
+        "CREATE TABLE IF NOT EXISTS `bookmarks` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`bookPath` TEXT NOT NULL, `spineIndex` INTEGER NOT NULL, `charOffset` INTEGER NOT NULL, " +
+            "`progressFraction` REAL NOT NULL, `createdAtMs` INTEGER NOT NULL, " +
+            "FOREIGN KEY(`bookPath`) REFERENCES `books`(`path`) ON UPDATE NO ACTION ON DELETE CASCADE )"
+
+    private fun openV3(): SupportSQLiteDatabase {
+        val config = SupportSQLiteOpenHelper.Configuration.builder(RuntimeEnvironment.getApplication())
+            .name(null)
+            .callback(object : SupportSQLiteOpenHelper.Callback(3) {
+                override fun onCreate(db: SupportSQLiteDatabase) {
+                    db.execSQL(v3BooksCreateSql)
+                    db.execSQL(v3BookmarksCreateSql)
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_bookPath` ON `bookmarks` (`bookPath`)")
+                }
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            })
+            .build()
+        return FrameworkSQLiteOpenHelperFactory().create(config).writableDatabase
+    }
+
+    @Test
+    fun `migration 3 to 4 creates the highlights table and preserves books and bookmarks`() {
+        val db = openV3()
+        db.execSQL(
+            "INSERT INTO books (path, sizeBytes, modifiedAtMs, title, spineIndex, charOffset, " +
+                "unreadable, addedAtMs, progressFraction) VALUES ('/a.epub', 1, 2, 'T', 0, 0, 0, 3, 0.4)",
+        )
+        db.execSQL(
+            "INSERT INTO bookmarks (bookPath, spineIndex, charOffset, progressFraction, createdAtMs) " +
+                "VALUES ('/a.epub', 2, 50, 0.5, 9)",
+        )
+
+        LibraryDatabase.MIGRATION_3_4.migrate(db)
+
+        // Books and bookmarks survive.
+        db.query("SELECT progressFraction FROM books WHERE path = '/a.epub'").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getFloat(0)).isEqualTo(0.4f)
+        }
+        db.query("SELECT count(*) FROM bookmarks").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getInt(0)).isEqualTo(1)
+        }
+        // The highlights table now exists and accepts a row.
+        db.execSQL(
+            "INSERT INTO highlights (bookPath, spineIndex, startOffset, endOffset, text, progressFraction, createdAtMs) " +
+                "VALUES ('/a.epub', 2, 10, 40, 'hi', 0.5, 9)",
+        )
+        db.query("SELECT count(*) FROM highlights").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getInt(0)).isEqualTo(1)
+        }
+        db.close()
+    }
 }
