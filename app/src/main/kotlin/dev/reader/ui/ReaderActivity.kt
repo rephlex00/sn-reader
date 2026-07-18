@@ -17,6 +17,8 @@ import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.data.BookmarkEntity
+import dev.reader.data.HighlightEntity
+import dev.reader.engine.ExistingHighlight
 import dev.reader.engine.Locator
 import dev.reader.engine.PageNavigator
 import dev.reader.engine.ReadingState
@@ -24,9 +26,12 @@ import dev.reader.engine.RenderConfig
 import dev.reader.engine.TocEntry
 import dev.reader.engine.advance
 import dev.reader.engine.bookProgress
+import dev.reader.engine.highlightContaining
+import dev.reader.engine.mergeHighlights
 import dev.reader.engine.pageIndexFor
 import dev.reader.engine.reflowedPageIndex
 import dev.reader.engine.retreat
+import dev.reader.engine.snapToWords
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
 import dev.reader.formats.epub.PaginatedChapter
@@ -173,6 +178,19 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var bookmarksEmpty: TextView
     private lateinit var bookmarkToggle: TextView
 
+    /**
+     * The Highlights panel — a visibility-toggled, full-height layer inside [overlay], opened by the
+     * Highlights button. Same shape as [bookmarksPanel]: one `visibility` flip, no timer or animation.
+     * Unlike the bookmarks panel it has NO add/remove toggle — highlighting happens on the page with
+     * the pen (see [onStylusTap]/[onStylusDrag]/[commitHighlight]). [highlightsList] is backed by
+     * [highlightsAdapter]; [highlightsEmpty] takes its place when the book has no highlights yet. Its
+     * list is loaded once per open by [refreshHighlights] — never a standing observer.
+     */
+    private lateinit var highlightsPanel: View
+    private lateinit var highlightsList: RecyclerView
+    private lateinit var highlightsAdapter: HighlightAdapter
+    private lateinit var highlightsEmpty: TextView
+
     private var document: EpubDocument? = null
     private var navigator: PageNavigator? = null
     private var state = ReadingState(0, 0)
@@ -189,6 +207,14 @@ open class ReaderActivity : AppCompatActivity() {
     /** Whole-book progress `[0,1]` of the page [showPage] last drew — captured there (independently
      *  of [showProgressBar]) so [persistPosition] can store it for the library's percentage. */
     private var currentBookProgress: Float = 0f
+
+    /** The current chapter's highlights, cached so page turns within a chapter never re-query. Keyed by
+     *  [chapterHighlightsSpine]; reloaded only on a chapter change or after an edit. */
+    private var chapterHighlights: List<HighlightEntity> = emptyList()
+    private var chapterHighlightsSpine: Int = -1
+
+    /** The armed bracket-start offset (transient UI state, not persisted); null when no bracket is armed. */
+    private var bracketAnchorOffset: Int? = null
 
     /**
      * The one in-flight adjacent-chapter prefetch, if any (see [schedulePrefetch]). Held only so a
@@ -263,11 +289,21 @@ open class ReaderActivity : AppCompatActivity() {
         bookmarksList.layoutManager = LinearLayoutManager(this)
         bookmarksList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
         bookmarksList.adapter = bookmarksAdapter
+        highlightsPanel = overlay.findViewById(R.id.highlights_panel)
+        highlightsList = overlay.findViewById(R.id.highlights_list)
+        highlightsEmpty = overlay.findViewById(R.id.highlights_empty)
+        highlightsAdapter = HighlightAdapter(onJump = ::jumpToHighlight, onDelete = ::deleteHighlightRow)
+        highlightsList.layoutManager = LinearLayoutManager(this)
+        highlightsList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
+        highlightsList.adapter = highlightsAdapter
         overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
+        overlay.findViewById<View>(R.id.highlights_button).setOnClickListener { toggleHighlights() }
         overlay.findViewById<View>(R.id.bookmarks_button).setOnClickListener { toggleBookmarks() }
         overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleToc() }
         overlay.findViewById<View>(R.id.settings_button).setOnClickListener { toggleSettings() }
         bookmarkToggle.setOnClickListener { toggleCurrentPageBookmark() }
+        pageView.onStylusTap = ::onStylusTap
+        pageView.onStylusDrag = ::onStylusDrag
         wireSettingsControls()
         setContentView(container)
 
@@ -279,8 +315,9 @@ open class ReaderActivity : AppCompatActivity() {
                 // The Bookmarks/TOC panels and the Aa sheet are layers inside the overlay: Back peels
                 // whichever is open off first, then the overlay, then the book — one thing per press.
                 // Only one panel is ever open at a time (opening any one closes the others), so the
-                // order among them is a formality; Bookmarks is checked first as the topmost-drawn
-                // layer (added after toc_panel in the XML).
+                // order among them is a formality; Highlights is checked first as the topmost-drawn
+                // layer (added last in the XML), then Bookmarks, then the TOC/Aa layers.
+                highlightsPanel.visibility == View.VISIBLE -> highlightsPanel.visibility = View.GONE
                 bookmarksPanel.visibility == View.VISIBLE -> bookmarksPanel.visibility = View.GONE
                 tocPanel.visibility == View.VISIBLE -> tocPanel.visibility = View.GONE
                 settingsSheet.visibility == View.VISIBLE -> settingsSheet.visibility = View.GONE
@@ -311,6 +348,10 @@ open class ReaderActivity : AppCompatActivity() {
         settingsSheet.visibility = View.GONE
         tocPanel.visibility = View.GONE
         bookmarksPanel.visibility = View.GONE
+        highlightsPanel.visibility = View.GONE
+        // Opening the chrome ends any on-page pen selection in progress: a pending bracket-start is
+        // dropped (the marker would otherwise linger under the overlay).
+        clearBracketAnchor()
         overlay.visibility = View.GONE
     }
 
@@ -322,6 +363,7 @@ open class ReaderActivity : AppCompatActivity() {
         } else {
             tocPanel.visibility = View.GONE // one panel open at a time
             bookmarksPanel.visibility = View.GONE
+            highlightsPanel.visibility = View.GONE
             loadFontPreviewsOnce() // before refreshSheet: sets each font option's preview face
             refreshSheet()
             settingsSheet.visibility = View.VISIBLE
@@ -348,6 +390,7 @@ open class ReaderActivity : AppCompatActivity() {
         } else {
             settingsSheet.visibility = View.GONE // one panel open at a time
             bookmarksPanel.visibility = View.GONE
+            highlightsPanel.visibility = View.GONE
             refreshToc()
             tocPanel.visibility = View.VISIBLE
         }
@@ -360,6 +403,7 @@ open class ReaderActivity : AppCompatActivity() {
         } else {
             settingsSheet.visibility = View.GONE // one panel open at a time
             tocPanel.visibility = View.GONE
+            highlightsPanel.visibility = View.GONE
             bookmarksPanel.visibility = View.VISIBLE
             refreshBookmarks()
         }
@@ -557,6 +601,217 @@ open class ReaderActivity : AppCompatActivity() {
             showMessage("Couldn't open that bookmark: ${e.message ?: e.javaClass.simpleName}")
         }
     }
+
+    // -- Highlights ------------------------------------------------------------------------------
+
+    private fun highlightDao() = (application as ReaderApplication).database.highlightDao()
+
+    /** Opens/closes the Highlights panel — one panel open at a time (closes the Aa sheet, TOC, Marks). */
+    private fun toggleHighlights() {
+        if (highlightsPanel.visibility == View.VISIBLE) {
+            highlightsPanel.visibility = View.GONE
+        } else {
+            settingsSheet.visibility = View.GONE
+            tocPanel.visibility = View.GONE
+            bookmarksPanel.visibility = View.GONE
+            highlightsPanel.visibility = View.VISIBLE
+            refreshHighlights()
+        }
+    }
+
+    /**
+     * Loads this book's highlights (one-shot, off-main) and rebinds the panel list + empty state. No
+     * standing observer: the panel re-reads each time it opens, and delete calls this again.
+     */
+    private fun refreshHighlights() {
+        val path = bookPath ?: return
+        lifecycleScope.launch {
+            val hl = withContext(Dispatchers.IO) { highlightDao().highlightsForBook(path) }
+            val rows = highlightRows(hl, document?.toc.orEmpty())
+            highlightsAdapter.submit(rows)
+            val empty = rows.isEmpty()
+            highlightsEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+            highlightsList.visibility = if (empty) View.GONE else View.VISIBLE
+        }
+    }
+
+    /**
+     * Jumps to a tapped highlight via the SAME restore machinery as [jumpToToc]/[jumpToBookmark]:
+     * resolve the target page via [tocTarget] (lands on the page containing the highlight's start
+     * offset, re-pagination-safe), then [showPage] + [flushPosition], and close the chrome.
+     */
+    private fun jumpToHighlight(row: HighlightRow) {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val nav = navigator ?: return
+        val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
+        try {
+            val target = tocTarget(
+                spineIndex = row.spineIndex,
+                charOffset = row.startOffset,
+                pageCountFor = pageCountFor,
+                offsetToPageIndex = { spineIndex, charOffset ->
+                    pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
+                },
+                firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
+            ) ?: run { showMessage("This book has no readable text."); return }
+            hideOverlay()
+            showPage(target)
+            flushPosition()
+        } catch (e: EpubException) {
+            showMessage("Couldn't open that highlight: ${e.message}")
+        } catch (e: Exception) {
+            showMessage("Couldn't open that highlight: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private fun deleteHighlightRow(row: HighlightRow) = deleteHighlight(row.id) { refreshHighlights() }
+
+    /** Clears a pending bracket-start (both the field and the on-page marker). */
+    private fun clearBracketAnchor() {
+        bracketAnchorOffset = null
+        pageView.setBracketAnchor(null)
+    }
+
+    /** The current chapter's source text (the StaticLayout's text), for word-snapping and excerpting. */
+    private fun currentChapterText(): String? {
+        val doc = document ?: return null
+        val cfg = config ?: return null
+        return (doc.chapter(state.spineIndex, cfg).measured as? AndroidMeasuredChapter)?.layout?.text?.toString()
+    }
+
+    /**
+     * A pen tap: if it lands inside an existing highlight, offer to remove it; otherwise it is a
+     * bracket endpoint — the first tap arms a start marker, a second tap in a different word commits
+     * the span, and a second tap in the same word cancels.
+     */
+    internal fun onStylusTap(offset: Int) {
+        val existing = highlightContaining(chapterHighlights.toExisting(), offset)
+        if (existing != null) { promptRemoveHighlight(existing.id); return }
+
+        val text = currentChapterText() ?: return
+        val anchor = bracketAnchorOffset
+        if (anchor == null) {
+            bracketAnchorOffset = offset
+            pageView.setBracketAnchor(offset)
+            return
+        }
+        // Tapping the same word as the anchor cancels; otherwise commit the span between them.
+        if (snapToWords(text, anchor, anchor) == snapToWords(text, offset, offset)) {
+            clearBracketAnchor()
+        } else {
+            clearBracketAnchor()
+            commitHighlight(minOf(anchor, offset), maxOf(anchor, offset))
+        }
+    }
+
+    /** A pen drag: clear any armed bracket and commit the swiped span. */
+    internal fun onStylusDrag(startOffset: Int, endOffset: Int) {
+        clearBracketAnchor()
+        commitHighlight(minOf(startOffset, endOffset), maxOf(startOffset, endOffset))
+    }
+
+    /**
+     * Word-snaps [rawStart,rawEnd], merges with the chapter's existing highlights, and writes one row
+     * — FK-guarded (a not-yet-indexed book has no `books` row) and cancellation-safe. Reloads the
+     * chapter's washes on success. All within the current chapter ([state.spineIndex]); brackets never
+     * cross chapters because the anchor is dropped on a chapter change (see [showPage]).
+     *
+     * `internal`, not `private`, purely as a test seam: [ReaderActivityTest] drives commits with
+     * explicit offsets so its assertions do not depend on Robolectric's coarse text measurement.
+     */
+    internal fun commitHighlight(rawStart: Int, rawEnd: Int) {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val path = bookPath ?: return
+        val spineIndex = state.spineIndex
+        val text = currentChapterText() ?: return
+        val snapped = snapToWords(text, rawStart, rawEnd) ?: return // landed between words → no-op
+        lifecycleScope.launch {
+            val inLibrary = withContext(Dispatchers.IO) { bookDao().getByPath(path) != null }
+            if (!inLibrary) { showMessage("This book isn't in your library yet."); return@launch }
+            try {
+                val existing = withContext(Dispatchers.IO) { highlightDao().highlightsForChapter(path, spineIndex) }
+                val merge = mergeHighlights(existing.map { ExistingHighlight(it.id, it.startOffset, it.endOffset) }, snapped)
+                val pages = doc.chapter(spineIndex, cfg).pages
+                val frac = bookProgress(chapterWeights, spineIndex, pageIndexFor(pages, merge.merged.start), pages.size)
+                val excerpt = text.substring(merge.merged.start, merge.merged.end)
+                withContext(Dispatchers.IO) {
+                    merge.removedIds.forEach { highlightDao().deleteById(it) }
+                    highlightDao().insert(
+                        HighlightEntity(
+                            bookPath = path, spineIndex = spineIndex,
+                            startOffset = merge.merged.start, endOffset = merge.merged.end,
+                            text = excerpt, progressFraction = frac, createdAtMs = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+                reloadChapterHighlightsIfCurrent(spineIndex)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                showMessage("Couldn't save that highlight: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    /** Confirms and deletes a highlight tapped on the page. */
+    private fun promptRemoveHighlight(id: Long) {
+        android.app.AlertDialog.Builder(this)
+            .setMessage("Remove this highlight?")
+            .setPositiveButton("Remove") { _, _ -> deleteHighlight(id) { } }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Deletes a highlight by id (off-main), reloads the current chapter's washes, then runs [also]. */
+    private fun deleteHighlight(id: Long, also: () -> Unit) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { highlightDao().deleteById(id) }
+            reloadChapterHighlightsIfCurrent(state.spineIndex)
+            also()
+        }
+    }
+
+    /** Maps the cached entities to the engine's [ExistingHighlight] shape. */
+    private fun List<HighlightEntity>.toExisting(): List<ExistingHighlight> =
+        map { ExistingHighlight(it.id, it.startOffset, it.endOffset) }
+
+    /** One-shot off-main load of a chapter's highlights into the cache + PageView washes. */
+    private fun loadChapterHighlights(spineIndex: Int) {
+        val path = bookPath ?: return
+        lifecycleScope.launch {
+            val hl = try {
+                withContext(Dispatchers.IO) { highlightDao().highlightsForChapter(path, spineIndex) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emptyList()
+            }
+            if (spineIndex != chapterHighlightsSpine) return@launch // a later chapter change won the race
+            chapterHighlights = hl
+            pageView.setHighlights(hl.map { it.startOffset to it.endOffset })
+        }
+    }
+
+    /** Reloads the chapter cache after an edit, but only if that chapter is still the one on screen. */
+    private fun reloadChapterHighlightsIfCurrent(spineIndex: Int) {
+        if (spineIndex == chapterHighlightsSpine) loadChapterHighlights(spineIndex)
+    }
+
+    // -- Highlight test seams --------------------------------------------------------------------
+    // The on-page gesture machine has no observable production surface of its own, so these read-only
+    // hooks let ReaderActivityTest assert against the cache and the armed bracket without widening the
+    // production API. None is called in production.
+
+    /** The armed bracket-start offset, or null — a test's "did the chapter change drop it?" probe. */
+    internal val bracketAnchorForTest: Int? get() = bracketAnchorOffset
+
+    /** The current chapter's cached highlights — a test waits on this before tapping into a wash. */
+    internal val chapterHighlightsForTest: List<HighlightEntity> get() = chapterHighlights
+
+    /** The current chapter's source text — a test computes the expected word-snap against it. */
+    internal fun currentChapterTextForTest(): String? = currentChapterText()
 
     /** Wires every Aa-sheet control to its pref write + live re-paginate. Called once from onCreate;
      * the listeners hold no state and fire only on a deliberate tap, so they cost nothing at rest. */
@@ -1097,6 +1352,18 @@ open class ReaderActivity : AppCompatActivity() {
 
         val pageIndex = next.pageIndex.coerceIn(0, chapter.pages.lastIndex)
         state = next.copy(pageIndex = pageIndex)
+
+        if (state.spineIndex != chapterHighlightsSpine) {
+            // Moved to a new chapter: a pending bracket cannot cross chapters, so drop it with a note.
+            if (bracketAnchorOffset != null) {
+                showMessage("Highlight cancelled — you moved to another chapter.")
+                clearBracketAnchor()
+            }
+            chapterHighlightsSpine = state.spineIndex
+            chapterHighlights = emptyList()
+            pageView.setHighlights(emptyList())
+            loadChapterHighlights(state.spineIndex)
+        }
 
         // Keep the overlay's read-only readout current with the page just shown, so it is right the
         // next time the overlay opens. Reuses the chapter already fetched above — no extra work, and
