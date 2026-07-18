@@ -17,11 +17,13 @@ data class ExistingHighlight(val id: Long, val start: Int, val end: Int)
 data class MergeResult(val merged: HighlightRange, val removedIds: List<Long>)
 
 /**
- * Snaps a raw selection to whole-word boundaries: the start expands left to the start of the word it
- * lands in, the end expands right to the end of the word it lands in. A single point (`start == end`)
- * returns the enclosing word. Returns null when the snapped span is empty or whitespace-only (a tap
- * or drag that landed between words), which the caller treats as "no highlight". Pure — uses
- * [BreakIterator], available on plain JVM, so it is unit-testable without a device.
+ * Snaps a raw selection to whole-word boundaries by unioning every word token the selection
+ * intersects: a range `[lo, hi)` with `lo < hi` grabs word tokens it strictly overlaps, while a
+ * single point (`lo == hi`) grabs the word token(s) it touches inclusively — so a tap that lands
+ * exactly on a word's boundary, or at end-of-text, still snaps to the enclosing/adjacent word.
+ * Returns null when the resulting span is empty or whitespace-only (a tap or drag that landed
+ * between words), which the caller treats as "no highlight". Pure — uses [BreakIterator],
+ * available on plain JVM, so it is unit-testable without a device.
  */
 fun snapToWords(text: CharSequence, start: Int, end: Int): HighlightRange? {
     val len = text.length
@@ -33,14 +35,23 @@ fun snapToWords(text: CharSequence, start: Int, end: Int): HighlightRange? {
     val bi = BreakIterator.getWordInstance()
     bi.setText(text.toString())
 
-    val wordStart = if (bi.isBoundary(lo)) lo else bi.preceding(lo).let { if (it == BreakIterator.DONE) 0 else it }
-    // For a point, extend from the same index so a zero-width selection captures its enclosing word.
-    val wordEnd = when {
-        hi > wordStart && bi.isBoundary(hi) -> hi
-        else -> bi.following(hi).let { if (it == BreakIterator.DONE) len else it }
+    var wordStart = -1
+    var wordEnd = -1
+    var tokStart = bi.first()
+    var tokEnd = bi.next()
+    while (tokEnd != BreakIterator.DONE) {
+        val isWord = !text.subSequence(tokStart, tokEnd).isBlank()
+        // A range grabs word tokens it strictly overlaps; a zero-width point grabs the word token(s)
+        // it touches (inclusive), so a tap on a word's boundary or at end-of-text still snaps.
+        val intersects = if (lo == hi) tokStart <= lo && lo <= tokEnd else tokStart < hi && lo < tokEnd
+        if (isWord && intersects) {
+            if (wordStart == -1) wordStart = tokStart
+            wordEnd = tokEnd
+        }
+        tokStart = tokEnd
+        tokEnd = bi.next()
     }
-    if (wordEnd <= wordStart) return null
-    if (text.subSequence(wordStart, wordEnd).isBlank()) return null
+    if (wordStart == -1 || wordEnd <= wordStart) return null
     return HighlightRange(wordStart, wordEnd)
 }
 

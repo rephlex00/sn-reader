@@ -35,6 +35,16 @@ class HighlightsTest {
     }
 
     @Test
+    fun `snapToWords on a point at a word's trailing boundary returns that word`() {
+        assertThat(snapToWords(text, 9, 9)).isEqualTo(HighlightRange(4, 9))
+    }
+
+    @Test
+    fun `snapToWords on a point at end of text returns the last word`() {
+        assertThat(snapToWords("Hi", 2, 2)).isEqualTo(HighlightRange(0, 2))
+    }
+
+    @Test
     fun `mergeHighlights keeps a disjoint highlight separate`() {
         val existing = listOf(ExistingHighlight(1, 0, 3))
         val result = mergeHighlights(existing, HighlightRange(10, 15))
