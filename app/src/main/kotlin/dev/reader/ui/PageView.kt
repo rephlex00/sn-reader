@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PointF
 import android.text.Layout
 import android.view.MotionEvent
 import android.view.View
@@ -66,7 +67,7 @@ class PageView(context: Context) : View(context) {
     /** The armed bracket-start offset, if any — drawn as a caret so the reader sees the pending start. */
     private var bracketAnchor: Int? = null
 
-    private val washPaint = Paint().apply { color = Color.parseColor("#DDDDDD") } // light gray; tuned on device
+    private val washPaint = Paint().apply { color = Color.parseColor("#A8A8A8") } // highlight wash gray; tuned on device
     private val anchorPaint = Paint().apply { color = Color.BLACK; strokeWidth = 1.5f * density }
     private val selectionPath = Path()
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
@@ -75,6 +76,16 @@ class PageView(context: Context) : View(context) {
     private var penDownY = 0f
     private var penDownOffset = 0
     private var penMoved = false
+
+    /**
+     * The live selection (min, max offset) drawn while the pen is mid-drag, so the reader sees the
+     * highlight forming under the pen instead of nothing. This deliberately relaxes the
+     * no-repaint-during-a-gesture rule for the ACTIVE pen drag only — the reader at rest and page
+     * turns keep the e-ink discipline. Cleared on UP (the committed wash then arrives via
+     * [setHighlights]). [lastPreviewOffset] throttles the redraw to when the boundary crosses a glyph.
+     */
+    private var pendingSelection: Pair<Int, Int>? = null
+    private var lastPreviewOffset = -1
 
     init {
         setBackgroundColor(Color.WHITE)
@@ -116,6 +127,10 @@ class PageView(context: Context) : View(context) {
         bracketAnchor = offset
         invalidate()
     }
+
+    /** The live drag preview (min, max offset) or null — a test asserts a MOVE builds it and UP clears it. */
+    internal val pendingSelectionForTest: Pair<Int, Int>?
+        get() = pendingSelection
 
     /**
      * The character offset under a screen point. Inverts [onDraw]'s translate (text drawn at
@@ -200,8 +215,9 @@ class PageView(context: Context) : View(context) {
     }
 
     /**
-     * Pen selection: capture the stroke silently (no repaint during MOVE — e-ink discipline), then on UP
-     * fire a tap or a drag by whether it moved past [touchSlop]. Offsets are resolved via [offsetAt].
+     * Pen selection: as the pen drags, paint the growing selection live (see [pendingSelection]) so
+     * the reader can see what they are highlighting; on UP, fire a tap or a drag by whether it moved
+     * past [touchSlop]. Offsets are resolved via [offsetAt].
      */
     private fun handleSelectionTouch(event: MotionEvent): Boolean = when (event.actionMasked) {
         MotionEvent.ACTION_DOWN -> {
@@ -209,16 +225,31 @@ class PageView(context: Context) : View(context) {
             penDownY = event.y
             penDownOffset = offsetAt(event.x, event.y)
             penMoved = false
+            pendingSelection = null
+            lastPreviewOffset = -1
             true
         }
         MotionEvent.ACTION_MOVE -> {
-            if (abs(event.x - penDownX) > touchSlop || abs(event.y - penDownY) > touchSlop) penMoved = true
+            if (abs(event.x - penDownX) > touchSlop || abs(event.y - penDownY) > touchSlop) {
+                penMoved = true
+                val current = offsetAt(event.x, event.y)
+                // Redraw only when the boundary actually crosses a glyph — bounds the e-ink refreshes
+                // to meaningful changes over the course of the drag.
+                if (current != lastPreviewOffset) {
+                    lastPreviewOffset = current
+                    pendingSelection = minOf(penDownOffset, current) to maxOf(penDownOffset, current)
+                    invalidate()
+                }
+            }
             true
         }
         MotionEvent.ACTION_UP -> {
             performClick()
+            pendingSelection = null
+            lastPreviewOffset = -1
             if (penMoved) onStylusDrag?.invoke(penDownOffset, offsetAt(event.x, event.y))
             else onStylusTap?.invoke(penDownOffset)
+            invalidate() // erase the live preview; the committed wash (if any) arrives via setHighlights
             true
         }
         else -> super.onTouchEvent(event)
@@ -243,6 +274,28 @@ class PageView(context: Context) : View(context) {
             layout.getSelectionPath(start, end, selectionPath)
             canvas.drawPath(selectionPath, washPaint)
         }
+        // The live drag preview, drawn in the same wash so it reads exactly like the final highlight.
+        pendingSelection?.let { (start, end) ->
+            if (start < end && end > page.startOffset && start < page.endOffset) {
+                selectionPath.reset()
+                layout.getSelectionPath(start, end, selectionPath)
+                canvas.drawPath(selectionPath, washPaint)
+            }
+        }
+    }
+
+    /**
+     * The view-space point just below the glyph at [offset] — where an on-page control (the delete
+     * chip) is anchored — or null if [offset] is not on the visible page. Inverts [onDraw]'s translate.
+     */
+    internal fun caretPointFor(offset: Int): PointF? {
+        val layout = layout ?: return null
+        val page = page ?: return null
+        if (offset < page.startOffset || offset > page.endOffset) return null
+        val line = layout.getLineForOffset(offset)
+        val x = layout.getPrimaryHorizontal(offset) + marginPx
+        val y = layout.getLineBottom(line).toFloat() + (marginPx - page.topPx)
+        return PointF(x, y)
     }
 
     private fun drawBracketAnchor(canvas: Canvas, layout: Layout, page: Page) {

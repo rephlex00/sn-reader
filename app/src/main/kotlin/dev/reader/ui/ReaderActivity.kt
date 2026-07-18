@@ -1,5 +1,6 @@
 package dev.reader.ui
 
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Environment
 import android.view.View
@@ -216,6 +217,13 @@ open class ReaderActivity : AppCompatActivity() {
     /** The armed bracket-start offset (transient UI state, not persisted); null when no bracket is armed. */
     private var bracketAnchorOffset: Int? = null
 
+    /** A small on-page "✕ Delete" chip, revealed when a pen tap lands inside an existing highlight;
+     *  tapping it removes that highlight. Positioned per-tap over the page (see [showDeleteChipAt]). */
+    private lateinit var deleteChip: TextView
+
+    /** The highlight the visible [deleteChip] would remove, or null when the chip is hidden. */
+    private var pendingDeleteId: Long? = null
+
     /**
      * The one in-flight adjacent-chapter prefetch, if any (see [schedulePrefetch]). Held only so a
      * newer settle can cancel a now-superseded prefetch before launching the next — there is never
@@ -271,6 +279,30 @@ open class ReaderActivity : AppCompatActivity() {
         container.addView(pageView, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         overlay = layoutInflater.inflate(R.layout.overlay_reader, container, false)
         container.addView(overlay)
+        // The on-page delete chip: added last so it draws above the page; hidden until a pen tap lands
+        // inside a highlight. Positioned per-tap. Its own tap consumes the touch (isClickable), so a tap
+        // on the chip deletes while a tap elsewhere falls through to pageView and dismisses it.
+        val chipPadH = (16 * resources.displayMetrics.density).toInt()
+        val chipPadV = (10 * resources.displayMetrics.density).toInt()
+        deleteChip = TextView(this).apply {
+            text = "✕ Delete"
+            setTextColor(Color.BLACK)
+            textSize = 16f
+            setBackgroundResource(R.drawable.delete_chip_bg)
+            setPadding(chipPadH, chipPadV, chipPadH, chipPadV)
+            minHeight = (44 * resources.displayMetrics.density).toInt()
+            isClickable = true
+            visibility = View.GONE
+            setOnClickListener {
+                val id = pendingDeleteId
+                hideDeleteChip()
+                if (id != null) deleteHighlight(id) { }
+            }
+        }
+        container.addView(
+            deleteChip,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT),
+        )
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
@@ -693,10 +725,11 @@ open class ReaderActivity : AppCompatActivity() {
      * the span, and a second tap in the same word cancels.
      */
     internal fun onStylusTap(offset: Int) {
+        hideDeleteChip() // any pen tap dismisses a chip from a previous tap; a hit below re-shows it
         val existing = highlightContaining(chapterHighlights.toExisting(), offset)
         if (existing != null) {
             clearBracketAnchor() // a remove-tap also abandons any pending bracket
-            promptRemoveHighlight(existing.id)
+            showDeleteChipAt(existing.id, offset)
             return
         }
 
@@ -716,8 +749,9 @@ open class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** A pen drag: clear any armed bracket and commit the swiped span. */
+    /** A pen drag: clear any armed bracket and delete chip, then commit the swiped span. */
     internal fun onStylusDrag(startOffset: Int, endOffset: Int) {
+        hideDeleteChip()
         clearBracketAnchor()
         commitHighlight(minOf(startOffset, endOffset), maxOf(startOffset, endOffset))
     }
@@ -766,13 +800,29 @@ open class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** Confirms and deletes a highlight tapped on the page. */
-    private fun promptRemoveHighlight(id: Long) {
-        android.app.AlertDialog.Builder(this)
-            .setMessage("Remove this highlight?")
-            .setPositiveButton("Remove") { _, _ -> deleteHighlight(id) { } }
-            .setNegativeButton("Cancel", null)
-            .show()
+    /**
+     * Reveals the [deleteChip] anchored under the tapped highlight (via [PageView.caretPointFor]),
+     * clamped to stay on screen. The chip is measured before it is shown so it appears already in
+     * place — no first-frame jump. Tapping it removes [highlightId]; tapping elsewhere hides it.
+     */
+    private fun showDeleteChipAt(highlightId: Long, offset: Int) {
+        val at = pageView.caretPointFor(offset) ?: return
+        pendingDeleteId = highlightId
+        deleteChip.measure(
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val maxX = (pageView.width - deleteChip.measuredWidth).coerceAtLeast(0)
+        val maxY = (pageView.height - deleteChip.measuredHeight).coerceAtLeast(0)
+        deleteChip.translationX = at.x.coerceIn(0f, maxX.toFloat())
+        deleteChip.translationY = at.y.coerceIn(0f, maxY.toFloat())
+        deleteChip.visibility = View.VISIBLE
+    }
+
+    /** Hides the on-page delete chip and forgets its target. Safe to call when already hidden. */
+    private fun hideDeleteChip() {
+        pendingDeleteId = null
+        if (deleteChip.visibility != View.GONE) deleteChip.visibility = View.GONE
     }
 
     /** Deletes a highlight by id (off-main), reloads the current chapter's washes, then runs [also]. */
@@ -823,6 +873,9 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** The current chapter's source text — a test computes the expected word-snap against it. */
     internal fun currentChapterTextForTest(): String? = currentChapterText()
+
+    /** The on-page delete chip — a test asserts a highlight-tap reveals it and its tap deletes. */
+    internal val deleteChipForTest: TextView get() = deleteChip
 
     /** Wires every Aa-sheet control to its pref write + live re-paginate. Called once from onCreate;
      * the listeners hold no state and fire only on a deliberate tap, so they cost nothing at rest. */
@@ -1291,6 +1344,7 @@ open class ReaderActivity : AppCompatActivity() {
      * below is main-thread-confined, as `EpubDocument.chapter()`'s unsynchronized cache requires.
      */
     private fun onTap(zone: TapZone) {
+        hideDeleteChip() // a finger tap (page turn or overlay toggle) dismisses any on-page delete chip
         // While the overlay is up, any tap that reaches pageView is on the page area (the overlay's
         // Back control sits above pageView and consumes its own tap), so it dismisses the overlay
         // and turns NO page — not even a PREVIOUS/NEXT zone tap. Paired with the TOGGLE_OVERLAY show
@@ -1363,6 +1417,8 @@ open class ReaderActivity : AppCompatActivity() {
 
         val pageIndex = next.pageIndex.coerceIn(0, chapter.pages.lastIndex)
         state = next.copy(pageIndex = pageIndex)
+
+        hideDeleteChip() // the page is changing; an anchored delete chip no longer points at anything
 
         if (state.spineIndex != chapterHighlightsSpine) {
             // Moved to a new chapter: a pending bracket cannot cross chapters, so drop it with a note.

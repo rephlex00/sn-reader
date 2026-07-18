@@ -174,6 +174,22 @@ class PageViewTest {
         assertThat(stylusTapped).isTrue()
     }
 
+    @Test
+    fun `a stylus drag paints a live preview while the pen is down and clears it on lift`() {
+        val view = laidOutPageView()
+        fun ev(action: Int, x: Float, y: Float): MotionEvent {
+            val props = MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_STYLUS }
+            val coords = MotionEvent.PointerCoords().apply { this.x = x; this.y = y }
+            return MotionEvent.obtain(0, 0, action, 1, arrayOf(props), arrayOf(coords), 0, 0, 1f, 1f, 0, 0, 0, 0)
+        }
+        view.dispatchTouchEvent(ev(MotionEvent.ACTION_DOWN, 20f, 40f))
+        view.dispatchTouchEvent(ev(MotionEvent.ACTION_MOVE, 320f, 40f))
+        assertThat(view.pendingSelectionForTest).isNotNull() // the forming highlight is shown mid-drag
+
+        view.dispatchTouchEvent(ev(MotionEvent.ACTION_UP, 320f, 40f))
+        assertThat(view.pendingSelectionForTest).isNull() // and removed on lift (committed wash replaces it)
+    }
+
     private fun dispatch(
         view: PageView, toolType: Int,
         downX: Float, downY: Float, upX: Float, upY: Float,

@@ -1,6 +1,5 @@
 package dev.reader.ui
 
-import android.content.DialogInterface
 import android.content.Intent
 import android.os.Looper
 import android.view.View
@@ -28,7 +27,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
-import org.robolectric.shadows.ShadowAlertDialog
 import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -813,7 +811,7 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `a pen tap inside a highlight opens the remove dialog and confirming deletes it`() {
+    fun `a pen tap inside a highlight reveals the delete chip and tapping it deletes`() {
         val (controller, path) = openedMultiPageInLibrary()
         val activity = controller.get()
 
@@ -824,14 +822,16 @@ class ReaderActivityTest {
         idleUntil { activity.chapterHighlightsForTest.isNotEmpty() }
         val hl = highlightsOf(path)[0]
 
-        // A tap at the highlight's start offset falls inside its half-open range -> the remove dialog.
+        // A tap at the highlight's start offset falls inside its half-open range -> reveal the chip.
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.GONE)
         activity.onStylusTap(hl.startOffset)
-        val dialog = ShadowAlertDialog.getLatestAlertDialog()
-        assertThat(dialog).isNotNull()
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.VISIBLE)
 
-        dialog!!.getButton(DialogInterface.BUTTON_POSITIVE).performClick()
+        // Tapping the chip removes the highlight and hides the chip again.
+        activity.deleteChipForTest.performClick()
         idleUntil { highlightsOf(path).isEmpty() }
         assertThat(highlightsOf(path)).isEmpty()
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.GONE)
     }
 
     @Test
@@ -845,16 +845,15 @@ class ReaderActivityTest {
         val hl = highlightsOf(path)[0]
 
         // Arm a bracket-start just past the highlight's end -> outside its half-open range, so this
-        // tap finds no existing highlight and arms the anchor instead of opening the remove dialog.
+        // tap finds no existing highlight and arms the anchor instead of revealing the chip.
         val anchorOffset = hl.endOffset
         activity.onStylusTap(anchorOffset)
         assertThat(activity.bracketAnchorForTest).isEqualTo(anchorOffset)
 
-        // A tap inside the existing highlight opens the remove dialog AND must clear that stale anchor
+        // A tap inside the existing highlight reveals the delete chip AND must clear that stale anchor
         // — otherwise the reader's next tap would silently commit an unexpected span.
         activity.onStylusTap(hl.startOffset)
-        val dialog = ShadowAlertDialog.getLatestAlertDialog()
-        assertThat(dialog).isNotNull()
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.VISIBLE)
         assertThat(activity.bracketAnchorForTest).isNull()
     }
 
