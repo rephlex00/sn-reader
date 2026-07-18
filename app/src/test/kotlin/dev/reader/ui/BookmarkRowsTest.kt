@@ -47,4 +47,14 @@ class BookmarkRowsTest {
         val page = Page(index = 1, startLine = 5, endLine = 9, startOffset = 100, endOffset = 200, topPx = 0)
         assertThat(currentPageBookmark(listOf(mark(2, 3, 400, 0.3f)), spineIndex = 3, page = page)).isNull()
     }
+
+    @Test
+    fun `currentPageBookmark ignores a same-offset bookmark in a different chapter`() {
+        // The ONLY bookmark whose offset falls on the page range is in a different chapter (spine 4,
+        // not the current spine 3). Detection must reject it — this pins the spine-index guard, which
+        // a check on offset alone would drop silently.
+        val page = Page(index = 1, startLine = 5, endLine = 9, startOffset = 100, endOffset = 200, topPx = 0)
+        val otherChapterSameOffset = mark(9, spine = 4, off = 150, frac = 0.4f)
+        assertThat(currentPageBookmark(listOf(otherChapterSameOffset), spineIndex = 3, page = page)).isNull()
+    }
 }
