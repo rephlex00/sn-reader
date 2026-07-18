@@ -420,6 +420,8 @@ open class ReaderActivity : AppCompatActivity() {
 
     private fun bookmarkDao() = (application as ReaderApplication).database.bookmarkDao()
 
+    private fun bookDao() = (application as ReaderApplication).database.bookDao()
+
     /**
      * Loads this book's bookmarks (one-shot, off-main) and rebinds the panel: the list (chapter · %,
      * in reading order), the empty state, and the "Add/remove this page" toggle's label — set from
@@ -456,6 +458,17 @@ open class ReaderActivity : AppCompatActivity() {
      * that never re-paginates or moves the reading position. Captures the page's top [Locator] and
      * the current [currentBookProgress] (independent of the display toggle). Reloads the panel after
      * the write so the list + toggle reflect it.
+     *
+     * Guarded by a library-membership check first: [BookmarkEntity.bookPath] is a foreign key to
+     * `books.path` with FK enforcement ON, but the reader also opens books that have no `books` row
+     * — a sideloaded EPUB launched directly, or one the library indexer hasn't reached yet. For such
+     * a book, inserting a bookmark would violate the FK and throw `SQLiteConstraintException`.
+     * Unlike [persistPosition] (an `UPDATE ... WHERE path` that harmlessly no-ops on 0 rows), an
+     * INSERT has no such graceful fallback, so we check membership via [bookDao] before attempting
+     * any write and bail out with a message instead — a book with no `books` row also can't have any
+     * existing bookmarks, so there is nothing to remove either. The try/catch around the write itself
+     * is a backstop for the race where a concurrent library sync deletes the `books` row between this
+     * check and the write: surface the failure instead of letting it crash the coroutine.
      */
     private fun toggleCurrentPageBookmark() {
         val doc = document ?: return
@@ -464,25 +477,34 @@ open class ReaderActivity : AppCompatActivity() {
         val pages = doc.chapter(state.spineIndex, cfg).pages
         val page = pages.getOrNull(state.pageIndex) ?: return
         lifecycleScope.launch {
+            val inLibrary = withContext(Dispatchers.IO) { bookDao().getByPath(path) != null }
+            if (!inLibrary) {
+                showMessage("This book isn't in your library yet.")
+                return@launch
+            }
             val existing = withContext(Dispatchers.IO) {
                 currentPageBookmark(bookmarkDao().bookmarksFor(path), state.spineIndex, page)
             }
-            withContext(Dispatchers.IO) {
-                if (existing != null) {
-                    bookmarkDao().deleteById(existing.id)
-                } else {
-                    bookmarkDao().insert(
-                        BookmarkEntity(
-                            bookPath = path,
-                            spineIndex = state.spineIndex,
-                            charOffset = page.startOffset,
-                            progressFraction = currentBookProgress,
-                            createdAtMs = System.currentTimeMillis(),
-                        ),
-                    )
+            try {
+                withContext(Dispatchers.IO) {
+                    if (existing != null) {
+                        bookmarkDao().deleteById(existing.id)
+                    } else {
+                        bookmarkDao().insert(
+                            BookmarkEntity(
+                                bookPath = path,
+                                spineIndex = state.spineIndex,
+                                charOffset = page.startOffset,
+                                progressFraction = currentBookProgress,
+                                createdAtMs = System.currentTimeMillis(),
+                            ),
+                        )
+                    }
                 }
+                refreshBookmarks()
+            } catch (e: Exception) {
+                showMessage("Couldn't save that bookmark: ${e.message ?: e.javaClass.simpleName}")
             }
-            refreshBookmarks()
         }
     }
 

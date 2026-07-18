@@ -708,6 +708,34 @@ class ReaderActivityTest {
         assertThat(scrubberTextOf(activity)).isEqualTo(before)
     }
 
+    @Test
+    fun `toggling the bookmark for a book not in the library does not crash and writes nothing`() {
+        // Deliberately do NOT upsert a books row (unlike the test above) — this is the standalone-
+        // launch path: a sideloaded EPUB, or one the library indexer hasn't reached yet.
+        // BookmarkEntity.bookPath is a FOREIGN KEY on books.path with enforcement on, so an INSERT
+        // for this book would violate the FK. Before Task 4's fix that threw an uncaught
+        // SQLiteConstraintException inside the coroutine and crashed the app.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        // No bookDao().upsertAll(...) here — that's the whole point of this test.
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+
+        val toggle = overlayOf(activity).findViewById<android.widget.TextView>(R.id.bookmark_toggle)
+        overlayOf(activity).findViewById<View>(R.id.bookmarks_button).performClick()
+        idleUntil { toggle.text.isNotBlank() }
+
+        // Tap the toggle: the handler must complete (no crash) without inserting a bookmark, and
+        // must tell the user why instead of silently doing nothing.
+        toggle.performClick()
+        idleUntil { ShadowToast.getTextOfLatestToast() != null }
+        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("This book isn't in your library yet.")
+        assertThat(runBlocking { app.database.bookmarkDao().bookmarksFor(book.path) }).isEmpty()
+    }
+
     // -- Plan 4 Task 6b: adjacent-chapter prefetch --------------------------------------------
 
     @Test
