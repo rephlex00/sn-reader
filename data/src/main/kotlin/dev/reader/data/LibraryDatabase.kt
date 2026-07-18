@@ -12,7 +12,9 @@ abstract class LibraryDatabase : RoomDatabase() {
 
     companion object {
         /**
-         * v1 -> v2: adds [BookEntity.progressFraction] (see git history). Purely additive.
+         * v1 -> v2: adds [BookEntity.progressFraction]. Purely additive. Keep it registered even
+         * though a newer migration exists — without it Room cannot open a still-v1 `library.db`
+         * under the current schema and crashes the library on launch (it is not redundant).
          */
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
