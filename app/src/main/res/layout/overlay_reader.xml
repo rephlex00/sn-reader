@@ -60,6 +60,24 @@
                 android:textColor="@android:color/black"
                 android:textSize="18sp" />
 
+            <!-- Opens the Bookmarks panel. Like Back, the only clickable thing in its own footprint,
+                 so it consumes its own tap while page-area taps fall through to dismiss. -->
+            <TextView
+                android:id="@+id/bookmarks_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="12dp"
+                android:text="Marks"
+                android:textColor="@android:color/black"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
             <!-- Opens the table-of-contents panel. Like Back, the only clickable thing in its own
                  footprint, so it consumes its own tap while page-area taps fall through to dismiss. -->
             <TextView
@@ -391,6 +409,69 @@
             android:gravity="center"
             android:padding="24dp"
             android:text="No contents"
+            android:textColor="@android:color/black"
+            android:textSize="16sp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- The bookmarks panel: an "Add/remove this page" toggle, then the book's bookmarks (chapter ·
+         %, tap to jump, ✕ to delete). Visibility-toggled like the Contents panel; one e-ink redraw,
+         no animation. clickable=true so a tap on its own chrome is consumed, not fallen through to
+         dismiss the overlay. -->
+    <LinearLayout
+        android:id="@+id/bookmarks_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/white"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="16dp"
+            android:text="Bookmarks"
+            android:textColor="@android:color/black"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/bookmark_toggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:focusable="true"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp"
+            android:textColor="@android:color/black"
+            android:textSize="16sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="@android:color/black" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/bookmarks_list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="vertical" />
+
+        <TextView
+            android:id="@+id/bookmarks_empty"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="No bookmarks yet"
             android:textColor="@android:color/black"
             android:textSize="16sp"
             android:visibility="gone" />

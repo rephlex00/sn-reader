@@ -16,6 +16,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
 import dev.reader.ReaderApplication
+import dev.reader.data.BookmarkEntity
 import dev.reader.engine.Locator
 import dev.reader.engine.PageNavigator
 import dev.reader.engine.ReadingState
@@ -158,6 +159,20 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var tocEmpty: View
     private lateinit var tocAdapter: TocAdapter
 
+    /**
+     * The Bookmarks panel — a visibility-toggled, full-height layer inside [overlay], opened by the
+     * Bookmarks ("Marks") button. Same shape as [tocPanel]: one `visibility` flip, no timer or
+     * animation. [bookmarkToggle] reads "Bookmark this page" / "Remove bookmark from this page"
+     * from a fresh, one-shot [refreshBookmarks] read — never a standing observer, so an idle reader
+     * with the panel closed (or even open) costs nothing. [bookmarksList] is backed by
+     * [bookmarksAdapter]; [bookmarksEmpty] takes its place when the book has no bookmarks yet.
+     */
+    private lateinit var bookmarksPanel: View
+    private lateinit var bookmarksList: RecyclerView
+    private lateinit var bookmarksAdapter: BookmarkAdapter
+    private lateinit var bookmarksEmpty: TextView
+    private lateinit var bookmarkToggle: TextView
+
     private var document: EpubDocument? = null
     private var navigator: PageNavigator? = null
     private var state = ReadingState(0, 0)
@@ -240,9 +255,19 @@ open class ReaderActivity : AppCompatActivity() {
         tocList.layoutManager = LinearLayoutManager(this)
         tocList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
         tocList.adapter = tocAdapter
+        bookmarksPanel = overlay.findViewById(R.id.bookmarks_panel)
+        bookmarksList = overlay.findViewById(R.id.bookmarks_list)
+        bookmarksEmpty = overlay.findViewById(R.id.bookmarks_empty)
+        bookmarkToggle = overlay.findViewById(R.id.bookmark_toggle)
+        bookmarksAdapter = BookmarkAdapter(onJump = ::jumpToBookmark, onDelete = ::deleteBookmark)
+        bookmarksList.layoutManager = LinearLayoutManager(this)
+        bookmarksList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
+        bookmarksList.adapter = bookmarksAdapter
         overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
+        overlay.findViewById<View>(R.id.bookmarks_button).setOnClickListener { toggleBookmarks() }
         overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleToc() }
         overlay.findViewById<View>(R.id.settings_button).setOnClickListener { toggleSettings() }
+        bookmarkToggle.setOnClickListener { toggleCurrentPageBookmark() }
         wireSettingsControls()
         setContentView(container)
 
@@ -251,10 +276,12 @@ open class ReaderActivity : AppCompatActivity() {
         // shown: Back only closes it. Overlay hidden: Back leaves the book, flushing position first.
         onBackPressedDispatcher.addCallback(this) {
             when {
-                // The TOC panel and the Aa sheet are layers inside the overlay: Back peels whichever
-                // is open off first, then the overlay, then the book — one thing per press. Only one
-                // panel is ever open at a time (opening either closes the other), so the order among
-                // them is a formality; TOC is checked first as the topmost-drawn layer.
+                // The Bookmarks/TOC panels and the Aa sheet are layers inside the overlay: Back peels
+                // whichever is open off first, then the overlay, then the book — one thing per press.
+                // Only one panel is ever open at a time (opening any one closes the others), so the
+                // order among them is a formality; Bookmarks is checked first as the topmost-drawn
+                // layer (added after toc_panel in the XML).
+                bookmarksPanel.visibility == View.VISIBLE -> bookmarksPanel.visibility = View.GONE
                 tocPanel.visibility == View.VISIBLE -> tocPanel.visibility = View.GONE
                 settingsSheet.visibility == View.VISIBLE -> settingsSheet.visibility = View.GONE
                 isOverlayVisible() -> hideOverlay()
@@ -277,11 +304,13 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.visibility = View.VISIBLE
     }
 
-    /** Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet and the
-     * Contents panel, so the overlay always reopens to its bare bar rather than a stale open panel. */
+    /** Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet, the
+     * Contents panel, and the Bookmarks panel, so the overlay always reopens to its bare bar rather
+     * than a stale open panel. */
     private fun hideOverlay() {
         settingsSheet.visibility = View.GONE
         tocPanel.visibility = View.GONE
+        bookmarksPanel.visibility = View.GONE
         overlay.visibility = View.GONE
     }
 
@@ -292,6 +321,7 @@ open class ReaderActivity : AppCompatActivity() {
             settingsSheet.visibility = View.GONE
         } else {
             tocPanel.visibility = View.GONE // one panel open at a time
+            bookmarksPanel.visibility = View.GONE
             loadFontPreviewsOnce() // before refreshSheet: sets each font option's preview face
             refreshSheet()
             settingsSheet.visibility = View.VISIBLE
@@ -317,8 +347,21 @@ open class ReaderActivity : AppCompatActivity() {
             tocPanel.visibility = View.GONE
         } else {
             settingsSheet.visibility = View.GONE // one panel open at a time
+            bookmarksPanel.visibility = View.GONE
             refreshToc()
             tocPanel.visibility = View.VISIBLE
+        }
+    }
+
+    /** Opens/closes the Bookmarks panel — one panel open at a time (closes the Aa sheet and TOC). */
+    private fun toggleBookmarks() {
+        if (bookmarksPanel.visibility == View.VISIBLE) {
+            bookmarksPanel.visibility = View.GONE
+        } else {
+            settingsSheet.visibility = View.GONE // one panel open at a time
+            tocPanel.visibility = View.GONE
+            bookmarksPanel.visibility = View.VISIBLE
+            refreshBookmarks()
         }
     }
 
@@ -372,6 +415,119 @@ open class ReaderActivity : AppCompatActivity() {
             showMessage("Couldn't open that section: ${e.message}")
         } catch (e: Exception) {
             showMessage("Couldn't open that section: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private fun bookmarkDao() = (application as ReaderApplication).database.bookmarkDao()
+
+    /**
+     * Loads this book's bookmarks (one-shot, off-main) and rebinds the panel: the list (chapter · %,
+     * in reading order), the empty state, and the "Add/remove this page" toggle's label — set from
+     * range-based [currentPageBookmark] detection so it stays correct after a re-paginate. No
+     * standing observer: the panel re-reads each time it opens, and add/remove/delete call this again.
+     */
+    private fun refreshBookmarks() {
+        val path = bookPath ?: return
+        lifecycleScope.launch {
+            val marks = withContext(Dispatchers.IO) { bookmarkDao().bookmarksFor(path) }
+            val rows = bookmarkRows(marks, document?.toc.orEmpty())
+            bookmarksAdapter.submit(rows)
+            val empty = rows.isEmpty()
+            bookmarksEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+            bookmarksList.visibility = if (empty) View.GONE else View.VISIBLE
+
+            val onThisPage = currentPageBookmarkForState(marks)
+            bookmarkToggle.text = if (onThisPage != null) "Remove bookmark from this page" else "Bookmark this page"
+        }
+    }
+
+    /** The bookmark on the page [showPage] last drew, if any (range-based). Null if the reader has no
+     *  current chapter/page yet. */
+    private fun currentPageBookmarkForState(marks: List<BookmarkEntity>): BookmarkEntity? {
+        val doc = document ?: return null
+        val cfg = config ?: return null
+        val pages = doc.chapter(state.spineIndex, cfg).pages
+        val page = pages.getOrNull(state.pageIndex) ?: return null
+        return currentPageBookmark(marks, state.spineIndex, page)
+    }
+
+    /**
+     * Adds a bookmark for the current page, or removes the one already on it — a pure data action
+     * that never re-paginates or moves the reading position. Captures the page's top [Locator] and
+     * the current [currentBookProgress] (independent of the display toggle). Reloads the panel after
+     * the write so the list + toggle reflect it.
+     */
+    private fun toggleCurrentPageBookmark() {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val path = bookPath ?: return
+        val pages = doc.chapter(state.spineIndex, cfg).pages
+        val page = pages.getOrNull(state.pageIndex) ?: return
+        lifecycleScope.launch {
+            val existing = withContext(Dispatchers.IO) {
+                currentPageBookmark(bookmarkDao().bookmarksFor(path), state.spineIndex, page)
+            }
+            withContext(Dispatchers.IO) {
+                if (existing != null) {
+                    bookmarkDao().deleteById(existing.id)
+                } else {
+                    bookmarkDao().insert(
+                        BookmarkEntity(
+                            bookPath = path,
+                            spineIndex = state.spineIndex,
+                            charOffset = page.startOffset,
+                            progressFraction = currentBookProgress,
+                            createdAtMs = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+            }
+            refreshBookmarks()
+        }
+    }
+
+    /** Deletes a bookmark from the list's ✕ and reloads the panel. */
+    private fun deleteBookmark(row: BookmarkRow) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { bookmarkDao().deleteById(row.id) }
+            refreshBookmarks()
+        }
+    }
+
+    /**
+     * Jumps to a tapped bookmark through the SAME restore machinery as [jumpToToc]: resolve the
+     * target page via [tocTarget] (lands on the page containing the bookmark's char offset, re-
+     * pagination-safe; skips forward if the chapter is empty), then [showPage] + [flushPosition] and
+     * close the chrome. Wrapped like [jumpToToc] since the lazy [EpubDocument.chapter] can throw.
+     */
+    private fun jumpToBookmark(row: BookmarkRow) {
+        val doc = document ?: return
+        val cfg = config ?: return
+        val nav = navigator ?: return
+        val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
+        try {
+            val target = tocTarget(
+                spineIndex = row.spineIndex,
+                charOffset = row.charOffset,
+                pageCountFor = pageCountFor,
+                offsetToPageIndex = { spineIndex, charOffset ->
+                    pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
+                },
+                firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
+            )
+            if (target == null) {
+                showMessage("This book has no readable text.")
+                return
+            }
+            // Hide the chrome BEFORE drawing the page (like jumpToToc), so the jump is one clean
+            // e-ink redraw rather than a page draw followed by an overlay-dismiss redraw.
+            hideOverlay()
+            showPage(target)
+            flushPosition()
+        } catch (e: EpubException) {
+            showMessage("Couldn't open that bookmark: ${e.message}")
+        } catch (e: Exception) {
+            showMessage("Couldn't open that bookmark: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
