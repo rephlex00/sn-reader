@@ -502,6 +502,11 @@ open class ReaderActivity : AppCompatActivity() {
                     }
                 }
                 refreshBookmarks()
+            } catch (e: CancellationException) {
+                // The Activity was destroyed mid-write: let structured-concurrency cancellation
+                // propagate rather than swallowing it into a "couldn't save" toast on a dying
+                // screen — the same rule openFirstBook and the prefetch coroutine hold in this file.
+                throw e
             } catch (e: Exception) {
                 showMessage("Couldn't save that bookmark: ${e.message ?: e.javaClass.simpleName}")
             }
