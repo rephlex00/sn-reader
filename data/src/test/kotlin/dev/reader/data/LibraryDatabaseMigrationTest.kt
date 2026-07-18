@@ -41,6 +41,24 @@ class LibraryDatabaseMigrationTest {
         return FrameworkSQLiteOpenHelperFactory().create(config).writableDatabase
     }
 
+    private val v2CreateSql =
+        "CREATE TABLE IF NOT EXISTS `books` (`path` TEXT NOT NULL, `sizeBytes` INTEGER NOT NULL, " +
+            "`modifiedAtMs` INTEGER NOT NULL, `title` TEXT NOT NULL, `author` TEXT, " +
+            "`coverPath` TEXT, `spineIndex` INTEGER NOT NULL, `charOffset` INTEGER NOT NULL, " +
+            "`unreadable` INTEGER NOT NULL, `unreadableReason` TEXT, `addedAtMs` INTEGER NOT NULL, " +
+            "`lastOpenedAtMs` INTEGER, `progressFraction` REAL, PRIMARY KEY(`path`))"
+
+    private fun openV2(): SupportSQLiteDatabase {
+        val config = SupportSQLiteOpenHelper.Configuration.builder(RuntimeEnvironment.getApplication())
+            .name(null) // in-memory
+            .callback(object : SupportSQLiteOpenHelper.Callback(2) {
+                override fun onCreate(db: SupportSQLiteDatabase) = db.execSQL(v2CreateSql)
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            })
+            .build()
+        return FrameworkSQLiteOpenHelperFactory().create(config).writableDatabase
+    }
+
     @Test
     fun `migration 1 to 2 adds progressFraction as null and preserves existing rows`() {
         val db = openV1()
@@ -79,6 +97,33 @@ class LibraryDatabaseMigrationTest {
         db.query("SELECT progressFraction FROM books WHERE path = '/b.epub'").use { c ->
             assertThat(c.moveToFirst()).isTrue()
             assertThat(c.getFloat(0)).isEqualTo(0.5f)
+        }
+        db.close()
+    }
+
+    @Test
+    fun `migration 2 to 3 creates the bookmarks table and preserves books`() {
+        val db = openV2()
+        db.execSQL(
+            "INSERT INTO books (path, sizeBytes, modifiedAtMs, title, spineIndex, charOffset, " +
+                "unreadable, addedAtMs, progressFraction) VALUES ('/a.epub', 1, 2, 'T', 0, 0, 0, 3, 0.4)",
+        )
+
+        LibraryDatabase.MIGRATION_2_3.migrate(db)
+
+        // Books survive.
+        db.query("SELECT progressFraction FROM books WHERE path = '/a.epub'").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getFloat(0)).isEqualTo(0.4f)
+        }
+        // The bookmarks table now exists and accepts a row.
+        db.execSQL(
+            "INSERT INTO bookmarks (bookPath, spineIndex, charOffset, progressFraction, createdAtMs) " +
+                "VALUES ('/a.epub', 2, 50, 0.5, 9)",
+        )
+        db.query("SELECT count(*) FROM bookmarks").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getInt(0)).isEqualTo(1)
         }
         db.close()
     }

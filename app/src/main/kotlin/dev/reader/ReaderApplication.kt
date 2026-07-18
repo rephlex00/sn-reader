@@ -38,7 +38,7 @@ class ReaderApplication : Application() {
 
     val database: LibraryDatabase by lazy {
         Room.databaseBuilder(applicationContext, LibraryDatabase::class.java, "library.db")
-            .addMigrations(LibraryDatabase.MIGRATION_1_2)
+            .addMigrations(LibraryDatabase.MIGRATION_1_2, LibraryDatabase.MIGRATION_2_3)
             .build()
     }
 

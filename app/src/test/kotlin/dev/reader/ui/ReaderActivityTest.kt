@@ -667,6 +667,75 @@ class ReaderActivityTest {
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
     }
 
+    // -- Bookmarks panel ------------------------------------------------------------------------
+
+    @Test
+    fun `adding then reopening the panel shows the bookmark and marks the page`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        // The bookmarks table's bookPath column is a FOREIGN KEY on books.path (CASCADE delete) —
+        // a book not in the library cannot take a bookmark. Match BookmarkDaoTest's convention:
+        // insert the row first.
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+
+        // Open the bookmarks panel; nothing bookmarked yet -> empty view, toggle says "Bookmark".
+        val toggle = overlayOf(activity).findViewById<android.widget.TextView>(R.id.bookmark_toggle)
+        overlayOf(activity).findViewById<View>(R.id.bookmarks_button).performClick()
+        // The async refresh sets the toggle label when it completes; wait for that.
+        idleUntil { toggle.text.isNotBlank() }
+        assertThat(overlayOf(activity).findViewById<View>(R.id.bookmarks_empty).visibility).isEqualTo(View.VISIBLE)
+        assertThat(toggle.text.toString()).contains("Bookmark this page")
+
+        // Tap the toggle: bookmarks the current page, list now non-empty, toggle flips to "Remove".
+        toggle.performClick()
+        idleUntil { toggle.text.toString().contains("Remove") }
+        assertThat(overlayOf(activity).findViewById<View>(R.id.bookmarks_empty).visibility).isEqualTo(View.GONE)
+        assertThat(overlayOf(activity).findViewById<View>(R.id.bookmarks_list).visibility).isEqualTo(View.VISIBLE)
+    }
+
+    @Test
+    fun `the bookmarks button does not turn the page`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        val before = scrubberTextOf(activity)
+        overlayOf(activity).findViewById<View>(R.id.bookmarks_button).performClick()
+        assertThat(scrubberTextOf(activity)).isEqualTo(before)
+    }
+
+    @Test
+    fun `toggling the bookmark for a book not in the library does not crash and writes nothing`() {
+        // Deliberately do NOT upsert a books row (unlike the test above) — this is the standalone-
+        // launch path: a sideloaded EPUB, or one the library indexer hasn't reached yet.
+        // BookmarkEntity.bookPath is a FOREIGN KEY on books.path with enforcement on, so an INSERT
+        // for this book would violate the FK. Before Task 4's fix that threw an uncaught
+        // SQLiteConstraintException inside the coroutine and crashed the app.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        // No bookDao().upsertAll(...) here — that's the whole point of this test.
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+
+        val toggle = overlayOf(activity).findViewById<android.widget.TextView>(R.id.bookmark_toggle)
+        overlayOf(activity).findViewById<View>(R.id.bookmarks_button).performClick()
+        idleUntil { toggle.text.isNotBlank() }
+
+        // Tap the toggle: the handler must complete (no crash) without inserting a bookmark, and
+        // must tell the user why instead of silently doing nothing.
+        toggle.performClick()
+        idleUntil { ShadowToast.getTextOfLatestToast() != null }
+        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("This book isn't in your library yet.")
+        assertThat(runBlocking { app.database.bookmarkDao().bookmarksFor(book.path) }).isEmpty()
+    }
+
     // -- Plan 4 Task 6b: adjacent-chapter prefetch --------------------------------------------
 
     @Test
