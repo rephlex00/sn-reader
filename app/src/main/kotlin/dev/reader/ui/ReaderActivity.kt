@@ -301,6 +301,13 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.bookmarks_button).setOnClickListener { toggleBookmarks() }
         overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleToc() }
         overlay.findViewById<View>(R.id.settings_button).setOnClickListener { toggleSettings() }
+        // The device has no hardware Back, so each panel/sheet carries a top-right ✕ that peels it
+        // back to the reading toolbar — the same first step system Back takes. Closing a panel only
+        // hides that layer; the bare overlay stays up (tap the page to return to reading).
+        overlay.findViewById<View>(R.id.toc_close).setOnClickListener { tocPanel.visibility = View.GONE }
+        overlay.findViewById<View>(R.id.bookmarks_close).setOnClickListener { bookmarksPanel.visibility = View.GONE }
+        overlay.findViewById<View>(R.id.highlights_close).setOnClickListener { highlightsPanel.visibility = View.GONE }
+        overlay.findViewById<View>(R.id.settings_close).setOnClickListener { settingsSheet.visibility = View.GONE }
         bookmarkToggle.setOnClickListener { toggleCurrentPageBookmark() }
         pageView.onStylusTap = ::onStylusTap
         pageView.onStylusDrag = ::onStylusDrag

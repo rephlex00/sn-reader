@@ -406,6 +406,33 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `each panel's close button hides that panel and leaves the reading toolbar up`() {
+        // The device has no hardware Back, so every panel/sheet must be dismissible on-screen. Each
+        // top-right ✕ peels its own layer back to the bare overlay (not out of the chrome).
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+
+        data class CloseCase(val openId: Int, val closeId: Int, val panelId: Int)
+        val cases = listOf(
+            CloseCase(R.id.contents_button, R.id.toc_close, R.id.toc_panel),
+            CloseCase(R.id.bookmarks_button, R.id.bookmarks_close, R.id.bookmarks_panel),
+            CloseCase(R.id.highlights_button, R.id.highlights_close, R.id.highlights_panel),
+            CloseCase(R.id.settings_button, R.id.settings_close, R.id.settings_sheet),
+        )
+        for (c in cases) {
+            activity.findViewById<View>(c.openId).performClick()
+            assertThat(activity.findViewById<View>(c.panelId).visibility).isEqualTo(View.VISIBLE)
+
+            activity.findViewById<View>(c.closeId).performClick()
+            assertThat(activity.findViewById<View>(c.panelId).visibility).isEqualTo(View.GONE)
+            // Closing a panel returns to the reading toolbar, it does not dismiss the whole overlay.
+            assertThat(overlayOf(activity).visibility).isEqualTo(View.VISIBLE)
+        }
+    }
+
+    @Test
     fun `bumping the text size writes the pref, re-paginates, and keeps the reader on a valid page`() {
         clearReaderPrefs()
         val controller = openedMultiPage()
