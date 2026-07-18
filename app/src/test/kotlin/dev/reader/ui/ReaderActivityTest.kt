@@ -808,6 +808,30 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `tapping a highlight to remove it also abandons a pending bracket anchor`() {
+        val (controller, path) = openedMultiPageInLibrary()
+        val activity = controller.get()
+
+        activity.commitHighlight(0, 12)
+        idleUntil { highlightsOf(path).size == 1 }
+        idleUntil { activity.chapterHighlightsForTest.isNotEmpty() }
+        val hl = highlightsOf(path)[0]
+
+        // Arm a bracket-start just past the highlight's end -> outside its half-open range, so this
+        // tap finds no existing highlight and arms the anchor instead of opening the remove dialog.
+        val anchorOffset = hl.endOffset
+        activity.onStylusTap(anchorOffset)
+        assertThat(activity.bracketAnchorForTest).isEqualTo(anchorOffset)
+
+        // A tap inside the existing highlight opens the remove dialog AND must clear that stale anchor
+        // — otherwise the reader's next tap would silently commit an unexpected span.
+        activity.onStylusTap(hl.startOffset)
+        val dialog = ShadowAlertDialog.getLatestAlertDialog()
+        assertThat(dialog).isNotNull()
+        assertThat(activity.bracketAnchorForTest).isNull()
+    }
+
+    @Test
     fun `arming a bracket then changing chapter clears the anchor and messages`() {
         val app = RuntimeEnvironment.getApplication() as ReaderApplication
         val book = tocEpub(tempFolder.newFile("book.epub"))

@@ -76,4 +76,18 @@ class HighlightDaoTest {
         books.deleteByPaths(listOf("/a.epub"))
         assertThat(highlights.highlightsForBook("/a.epub")).isEmpty()
     }
+
+    @Test
+    fun `replaceWithMerged deletes the subsumed rows and inserts the merged one`() = runBlocking {
+        books.upsertAll(listOf(book("/a.epub")))
+        val id1 = highlights.insert(hl("/a.epub", spine = 1, start = 0, end = 10))
+        val id2 = highlights.insert(hl("/a.epub", spine = 1, start = 8, end = 20))
+
+        highlights.replaceWithMerged(listOf(id1, id2), hl("/a.epub", spine = 1, start = 0, end = 20))
+
+        val remaining = highlights.highlightsForBook("/a.epub")
+        assertThat(remaining).hasSize(1)
+        assertThat(remaining[0].startOffset).isEqualTo(0)
+        assertThat(remaining[0].endOffset).isEqualTo(20)
+    }
 }

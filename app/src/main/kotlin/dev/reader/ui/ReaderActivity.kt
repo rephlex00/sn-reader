@@ -687,7 +687,11 @@ open class ReaderActivity : AppCompatActivity() {
      */
     internal fun onStylusTap(offset: Int) {
         val existing = highlightContaining(chapterHighlights.toExisting(), offset)
-        if (existing != null) { promptRemoveHighlight(existing.id); return }
+        if (existing != null) {
+            clearBracketAnchor() // a remove-tap also abandons any pending bracket
+            promptRemoveHighlight(existing.id)
+            return
+        }
 
         val text = currentChapterText() ?: return
         val anchor = bracketAnchorOffset
@@ -737,8 +741,8 @@ open class ReaderActivity : AppCompatActivity() {
                 val frac = bookProgress(chapterWeights, spineIndex, pageIndexFor(pages, merge.merged.start), pages.size)
                 val excerpt = text.substring(merge.merged.start, merge.merged.end)
                 withContext(Dispatchers.IO) {
-                    merge.removedIds.forEach { highlightDao().deleteById(it) }
-                    highlightDao().insert(
+                    highlightDao().replaceWithMerged(
+                        merge.removedIds,
                         HighlightEntity(
                             bookPath = path, spineIndex = spineIndex,
                             startOffset = merge.merged.start, endOffset = merge.merged.end,

@@ -3,6 +3,7 @@ package dev.reader.data
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 
 @Dao
 interface HighlightDao {
@@ -12,6 +13,17 @@ interface HighlightDao {
 
     @Query("DELETE FROM highlights WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    /**
+     * Atomically replaces a set of highlights with one merged highlight: deletes [removedIds] and inserts
+     * [merged] in a single transaction, so an overlap-merge can never leave the subsumed highlights
+     * deleted with no replacement (a failed insert rolls the deletes back). Returns the merged row's id.
+     */
+    @Transaction
+    suspend fun replaceWithMerged(removedIds: List<Long>, merged: HighlightEntity): Long {
+        removedIds.forEach { deleteById(it) }
+        return insert(merged)
+    }
 
     /**
      * One chapter's highlights, ordered by start offset — the one-shot read the reader does when a
