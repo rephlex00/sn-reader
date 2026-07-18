@@ -4,10 +4,13 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.text.Layout
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import dev.reader.engine.Page
+import kotlin.math.abs
 
 enum class TapZone { PREVIOUS, NEXT, TOGGLE_OVERLAY }
 
@@ -46,6 +49,33 @@ class PageView(context: Context) : View(context) {
 
     var onTap: ((TapZone) -> Unit)? = null
 
+    var onStylusTap: ((offset: Int) -> Unit)? = null
+    var onStylusDrag: ((startOffset: Int, endOffset: Int) -> Unit)? = null
+
+    /**
+     * Fallback seam for the Task 1 pen probe: when true, ALL touches route to selection regardless of
+     * tool type (used only if the Nomad's pen does not reach the app as [MotionEvent.TOOL_TYPE_STYLUS],
+     * in which case an explicit highlight-mode toggle drives this). When false (the expected case),
+     * only stylus events select and the finger navigates.
+     */
+    var forceHighlightMode = false
+
+    /** Highlight spans for the current chapter as (startOffset, endOffset-exclusive). Drawn as a wash. */
+    private var highlightSpans: List<Pair<Int, Int>> = emptyList()
+
+    /** The armed bracket-start offset, if any — drawn as a caret so the reader sees the pending start. */
+    private var bracketAnchor: Int? = null
+
+    private val washPaint = Paint().apply { color = Color.parseColor("#DDDDDD") } // light gray; tuned on device
+    private val anchorPaint = Paint().apply { color = Color.BLACK; strokeWidth = 1.5f * density }
+    private val selectionPath = Path()
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
+    private var penDownX = 0f
+    private var penDownY = 0f
+    private var penDownOffset = 0
+    private var penMoved = false
+
     init {
         setBackgroundColor(Color.WHITE)
         // No hardware layer, no animation: e-ink wants one clean full redraw per turn.
@@ -73,6 +103,32 @@ class PageView(context: Context) : View(context) {
     fun setProgress(fraction: Float?) {
         this.progress = fraction
         invalidate()
+    }
+
+    /** Sets the current chapter's highlight spans (start, end-exclusive) to wash, and invalidates. */
+    fun setHighlights(spans: List<Pair<Int, Int>>) {
+        highlightSpans = spans
+        invalidate()
+    }
+
+    /** Sets (or clears, with null) the pending bracket-start marker, and invalidates. */
+    fun setBracketAnchor(offset: Int?) {
+        bracketAnchor = offset
+        invalidate()
+    }
+
+    /**
+     * The character offset under a screen point. Inverts [onDraw]'s translate (text drawn at
+     * `marginPx, marginPx - page.topPx`) and clamps the line into the visible page's own line range, so
+     * a touch in the bottom margin cannot land on a hidden next-page line.
+     */
+    internal fun offsetAt(x: Float, y: Float): Int {
+        val layout = layout ?: return 0
+        val page = page ?: return 0
+        val layoutY = (y - marginPx + page.topPx).toInt()
+        val line = layout.getLineForVertical(layoutY).coerceIn(page.startLine, page.endLine)
+        val layoutX = (x - marginPx).coerceAtLeast(0f)
+        return layout.getOffsetForHorizontal(line, layoutX)
     }
 
     /** Test-visible count of [fullRefresh] calls — the one observable of a background nicety. */
@@ -105,7 +161,9 @@ class PageView(context: Context) : View(context) {
         // sliver of text clipped mid-glyph under the bottom margin. See [pageClipBottom].
         canvas.clipRect(marginPx, marginPx, width - marginPx, pageClipBottom(layout, page))
         canvas.translate(marginPx.toFloat(), (marginPx - page.topPx).toFloat())
+        drawHighlights(canvas, layout, page)
         layout.draw(canvas)
+        drawBracketAnchor(canvas, layout, page)
         canvas.restore()
 
         // The progress bar lives OUTSIDE the text clip, pinned to the bottom edge of the view
@@ -117,7 +175,13 @@ class PageView(context: Context) : View(context) {
         progress?.let { drawProgressBar(canvas, it) }
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean = when (event.actionMasked) {
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val selecting = forceHighlightMode || event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
+        return if (selecting) handleSelectionTouch(event) else handleNavigationTouch(event)
+    }
+
+    /** The original navigation gesture: consume DOWN, fire the tap-zone on UP. */
+    private fun handleNavigationTouch(event: MotionEvent): Boolean = when (event.actionMasked) {
         // With isClickable false, View would not consume ACTION_DOWN and we would never be sent
         // the matching ACTION_UP. Consume it here instead: this is the whole reason View's
         // clickable machinery is not needed. Nothing is posted and no pressed state is set, so
@@ -136,6 +200,31 @@ class PageView(context: Context) : View(context) {
     }
 
     /**
+     * Pen selection: capture the stroke silently (no repaint during MOVE — e-ink discipline), then on UP
+     * fire a tap or a drag by whether it moved past [touchSlop]. Offsets are resolved via [offsetAt].
+     */
+    private fun handleSelectionTouch(event: MotionEvent): Boolean = when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> {
+            penDownX = event.x
+            penDownY = event.y
+            penDownOffset = offsetAt(event.x, event.y)
+            penMoved = false
+            true
+        }
+        MotionEvent.ACTION_MOVE -> {
+            if (abs(event.x - penDownX) > touchSlop || abs(event.y - penDownY) > touchSlop) penMoved = true
+            true
+        }
+        MotionEvent.ACTION_UP -> {
+            performClick()
+            if (penMoved) onStylusDrag?.invoke(penDownOffset, offsetAt(event.x, event.y))
+            else onStylusTap?.invoke(penDownOffset)
+            true
+        }
+        else -> super.onTouchEvent(event)
+    }
+
+    /**
      * The y at which the text clip ends: this page's last line's bottom, translated to screen
      * space (`marginPx + lineBottom(endLine) - topPx`), not the fixed content-box bottom
      * `height - marginPx`. Because the whole chapter's [Layout] is drawn and only a page-sized
@@ -146,6 +235,23 @@ class PageView(context: Context) : View(context) {
      */
     internal fun pageClipBottom(layout: Layout, page: Page): Int =
         minOf(height - marginPx, marginPx + layout.getLineBottom(page.endLine) - page.topPx)
+
+    private fun drawHighlights(canvas: Canvas, layout: Layout, page: Page) {
+        for ((start, end) in highlightSpans) {
+            if (end <= page.startOffset || start >= page.endOffset) continue // not on this page
+            selectionPath.reset()
+            layout.getSelectionPath(start, end, selectionPath)
+            canvas.drawPath(selectionPath, washPaint)
+        }
+    }
+
+    private fun drawBracketAnchor(canvas: Canvas, layout: Layout, page: Page) {
+        val anchor = bracketAnchor ?: return
+        if (anchor < page.startOffset || anchor >= page.endOffset) return
+        val line = layout.getLineForOffset(anchor)
+        val x = layout.getPrimaryHorizontal(anchor)
+        canvas.drawLine(x, layout.getLineTop(line).toFloat(), x, layout.getLineBottom(line).toFloat(), anchorPaint)
+    }
 
     private fun drawProgressBar(canvas: Canvas, fraction: Float) {
         val left = marginPx.toFloat()

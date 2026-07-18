@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.view.MotionEvent
 import android.view.View.MeasureSpec
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.Page
@@ -120,5 +121,74 @@ class PageViewTest {
         view.draw(canvas)
         view.setProgress(null)
         view.draw(canvas)
+    }
+
+    @Test
+    fun `a finger tap routes to navigation, not selection`() {
+        val view = laidOutPageView()
+        var navZone: TapZone? = null
+        var stylusTapped = false
+        view.onTap = { navZone = it }
+        view.onStylusTap = { stylusTapped = true }
+
+        dispatch(view, MotionEvent.TOOL_TYPE_FINGER, downX = 20f, downY = 40f, upX = 20f, upY = 40f)
+
+        assertThat(stylusTapped).isFalse()
+        assertThat(navZone).isEqualTo(TapZone.PREVIOUS) // left 25%
+    }
+
+    @Test
+    fun `a stylus tap routes to onStylusTap, not navigation`() {
+        val view = laidOutPageView()
+        var navZone: TapZone? = null
+        var tapOffset: Int? = null
+        view.onTap = { navZone = it }
+        view.onStylusTap = { tapOffset = it }
+
+        dispatch(view, MotionEvent.TOOL_TYPE_STYLUS, downX = 40f, downY = 40f, upX = 40f, upY = 40f)
+
+        assertThat(navZone).isNull()
+        assertThat(tapOffset).isNotNull()
+    }
+
+    @Test
+    fun `a stylus drag routes to onStylusDrag`() {
+        val view = laidOutPageView()
+        var dragged: Pair<Int, Int>? = null
+        view.onStylusDrag = { s, e -> dragged = s to e }
+
+        dispatch(view, MotionEvent.TOOL_TYPE_STYLUS, downX = 30f, downY = 40f, upX = 300f, upY = 40f, moveThrough = true)
+
+        assertThat(dragged).isNotNull()
+    }
+
+    @Test
+    fun `forceHighlightMode makes a finger event select instead of navigate`() {
+        val view = laidOutPageView()
+        view.forceHighlightMode = true
+        var stylusTapped = false
+        view.onStylusTap = { stylusTapped = true }
+
+        dispatch(view, MotionEvent.TOOL_TYPE_FINGER, downX = 40f, downY = 40f, upX = 40f, upY = 40f)
+
+        assertThat(stylusTapped).isTrue()
+    }
+
+    private fun dispatch(
+        view: PageView, toolType: Int,
+        downX: Float, downY: Float, upX: Float, upY: Float,
+        moveThrough: Boolean = false,
+    ) {
+        fun ev(action: Int, x: Float, y: Float): MotionEvent {
+            val props = MotionEvent.PointerProperties().apply { id = 0; this.toolType = toolType }
+            val coords = MotionEvent.PointerCoords().apply { this.x = x; this.y = y }
+            return MotionEvent.obtain(
+                0, 0, action, 1, arrayOf(props), arrayOf(coords),
+                0, 0, 1f, 1f, 0, 0, 0, 0,
+            )
+        }
+        view.dispatchTouchEvent(ev(MotionEvent.ACTION_DOWN, downX, downY))
+        if (moveThrough) view.dispatchTouchEvent(ev(MotionEvent.ACTION_MOVE, upX, upY))
+        view.dispatchTouchEvent(ev(MotionEvent.ACTION_UP, upX, upY))
     }
 }
