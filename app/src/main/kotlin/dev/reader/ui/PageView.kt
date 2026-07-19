@@ -245,11 +245,24 @@ class PageView(context: Context) : View(context) {
         }
         MotionEvent.ACTION_UP -> {
             performClick()
+            val hadPreview = pendingSelection != null
             pendingSelection = null
             lastPreviewOffset = -1
             if (penMoved) onStylusDrag?.invoke(penDownOffset, offsetAt(event.x, event.y))
             else onStylusTap?.invoke(penDownOffset)
-            invalidate() // erase the live preview; the committed wash (if any) arrives via setHighlights
+            // Erase the live preview. Only when there actually was one — a plain tap never draws it,
+            // and a committed wash arrives separately via setHighlights.
+            if (hadPreview) invalidate()
+            true
+        }
+        MotionEvent.ACTION_CANCEL -> {
+            // The touch stream was interrupted mid-drag (focus/window loss, a system gesture). Drop the
+            // live preview so a later unrelated redraw cannot resurrect its stale offsets on the page.
+            if (pendingSelection != null) {
+                pendingSelection = null
+                lastPreviewOffset = -1
+                invalidate()
+            }
             true
         }
         else -> super.onTouchEvent(event)
@@ -292,7 +305,9 @@ class PageView(context: Context) : View(context) {
         val layout = layout ?: return null
         val page = page ?: return null
         if (offset < page.startOffset || offset > page.endOffset) return null
-        val line = layout.getLineForOffset(offset)
+        // Clamp into the visible page's own lines, matching [offsetAt], so an offset at the exclusive
+        // page end can't resolve to a next-page line and drop the chip below the visible content.
+        val line = layout.getLineForOffset(offset).coerceIn(page.startLine, page.endLine)
         val x = layout.getPrimaryHorizontal(offset) + marginPx
         val y = layout.getLineBottom(line).toFloat() + (marginPx - page.topPx)
         return PointF(x, y)

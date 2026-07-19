@@ -377,6 +377,7 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Reveals the reading chrome — one redraw, no animation. */
     private fun showOverlay() {
+        hideDeleteChip() // the chip is a reading-mode affordance; it never coexists with the chrome
         overlay.visibility = View.VISIBLE
     }
 
@@ -391,12 +392,14 @@ open class ReaderActivity : AppCompatActivity() {
         // Opening the chrome ends any on-page pen selection in progress: a pending bracket-start is
         // dropped (the marker would otherwise linger under the overlay).
         clearBracketAnchor()
+        hideDeleteChip()
         overlay.visibility = View.GONE
     }
 
     /** Opens or closes the Aa sheet — a visibility flip (one redraw). Opening first syncs its
      * controls to the current [ReaderPrefs] so it always shows the live values. */
     private fun toggleSettings() {
+        hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
         if (settingsSheet.visibility == View.VISIBLE) {
             settingsSheet.visibility = View.GONE
         } else {
@@ -424,6 +427,7 @@ open class ReaderActivity : AppCompatActivity() {
      * the list from the current [EpubDocument.toc] and current chapter, and closes the Aa sheet so
      * only one panel is ever open. */
     private fun toggleToc() {
+        hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
         if (tocPanel.visibility == View.VISIBLE) {
             tocPanel.visibility = View.GONE
         } else {
@@ -437,6 +441,7 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Opens/closes the Bookmarks panel — one panel open at a time (closes the Aa sheet and TOC). */
     private fun toggleBookmarks() {
+        hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
         if (bookmarksPanel.visibility == View.VISIBLE) {
             bookmarksPanel.visibility = View.GONE
         } else {
@@ -647,6 +652,7 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Opens/closes the Highlights panel — one panel open at a time (closes the Aa sheet, TOC, Marks). */
     private fun toggleHighlights() {
+        hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
         if (highlightsPanel.visibility == View.VISIBLE) {
             highlightsPanel.visibility = View.GONE
         } else {

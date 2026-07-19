@@ -835,6 +835,25 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `opening a panel from the toolbar dismisses a floating delete chip`() {
+        val (controller, path) = openedMultiPageInLibrary()
+        val activity = controller.get()
+
+        activity.commitHighlight(0, 12)
+        idleUntil { highlightsOf(path).size == 1 }
+        idleUntil { activity.chapterHighlightsForTest.isNotEmpty() }
+        val hl = highlightsOf(path)[0]
+
+        activity.onStylusTap(hl.startOffset)
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.VISIBLE)
+
+        // A toolbar tap is NOT routed through PageView, so opening a panel must itself hide the chip —
+        // otherwise it floats over the panel pointing at a now-hidden highlight.
+        activity.findViewById<View>(R.id.highlights_button).performClick()
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
     fun `tapping a highlight to remove it also abandons a pending bracket anchor`() {
         val (controller, path) = openedMultiPageInLibrary()
         val activity = controller.get()
