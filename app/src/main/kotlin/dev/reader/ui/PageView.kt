@@ -53,6 +53,10 @@ class PageView(context: Context) : View(context) {
     var onStylusTap: ((offset: Int) -> Unit)? = null
     var onStylusDrag: ((startOffset: Int, endOffset: Int) -> Unit)? = null
 
+    /** The hardware e-ink refresher [fullRefresh] uses. Defaults to [NoopRefresher] (so construction and
+     *  tests need no device); [ReaderActivity] sets the real [EinkController] after construction. */
+    var epd: EpdRefresher = NoopRefresher
+
     /**
      * Fallback seam for the Task 1 pen probe: when true, ALL touches route to selection regardless of
      * tool type (used only if the Nomad's pen does not reach the app as [MotionEvent.TOOL_TYPE_STYLUS],
@@ -152,15 +156,16 @@ class PageView(context: Context) : View(context) {
 
     /**
      * Forces a full-panel redraw to clear accumulated e-ink ghosting, driven by [ReaderActivity]
-     * every `REFRESH_CADENCE` page turns. On stock Android this is a plain [invalidate] — the same
-     * full redraw a normal page turn already issues — so its ghost-clearing effect is
-     * vendor-dependent: it is the seam where a Supernote EPD full-refresh-mode hint would be applied
-     * (a research item; the app is fully functional without it). Counter-driven, never time-driven,
+     * every `REFRESH_CADENCE` page turns. Drives the real hardware clean refresh via [EpdRefresher]
+     * when available, falling back to a plain [invalidate] when the panel API is unavailable or has
+     * degraded — the reader never depends on the hidden EinkManager. Counter-driven, never time-driven,
      * so it adds no steady-state cost.
      */
     fun fullRefresh() {
         fullRefreshCount++
-        invalidate()
+        // Prefer the real hardware clean refresh (clears ghosting); fall back to a plain redraw when the
+        // panel API is unavailable or has degraded — the reader never depends on the hidden EinkManager.
+        if (!epd.cleanRefresh()) invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
