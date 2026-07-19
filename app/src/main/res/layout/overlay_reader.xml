@@ -78,6 +78,24 @@
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
+            <!-- Opens the Highlights panel. Like Back, the only clickable thing in its own footprint,
+                 so it consumes its own tap while page-area taps fall through to dismiss. -->
+            <TextView
+                android:id="@+id/highlights_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="12dp"
+                android:text="Highlights"
+                android:textColor="@android:color/black"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
             <!-- Opens the table-of-contents panel. Like Back, the only clickable thing in its own
                  footprint, so it consumes its own tap while page-area taps fall through to dismiss. -->
             <TextView
@@ -172,6 +190,31 @@
             android:orientation="vertical"
             android:paddingHorizontal="16dp"
             android:paddingBottom="24dp">
+
+            <!-- Header row: title + a top-right ✕ that closes the sheet (back to the reading toolbar),
+                 matching the Contents/Bookmarks/Highlights panels so the dismiss is in one place. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:paddingVertical="12dp"
+                    android:text="Display"
+                    android:textColor="@android:color/black"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/settings_close"
+                    style="@style/PanelClose"
+                    android:contentDescription="Close display settings" />
+
+            </LinearLayout>
 
             <View
                 android:layout_width="match_parent"
@@ -376,15 +419,31 @@
         android:orientation="vertical"
         android:visibility="gone">
 
-        <TextView
+        <!-- Header row: title + a top-right ✕ that closes this panel (back to the reading toolbar).
+             The device has no hardware Back, so every panel carries its own on-screen dismiss. -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="16dp"
-            android:text="Contents"
-            android:textColor="@android:color/black"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="16dp"
+                android:text="Contents"
+                android:textColor="@android:color/black"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/toc_close"
+                style="@style/PanelClose"
+                android:contentDescription="Close contents" />
+
+        </LinearLayout>
 
         <View
             android:layout_width="match_parent"
@@ -429,15 +488,30 @@
         android:orientation="vertical"
         android:visibility="gone">
 
-        <TextView
+        <!-- Header row: title + a top-right ✕ that closes this panel (back to the reading toolbar). -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="16dp"
-            android:text="Bookmarks"
-            android:textColor="@android:color/black"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="16dp"
+                android:text="Bookmarks"
+                android:textColor="@android:color/black"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/bookmarks_close"
+                style="@style/PanelClose"
+                android:contentDescription="Close bookmarks" />
+
+        </LinearLayout>
 
         <TextView
             android:id="@+id/bookmark_toggle"
@@ -472,6 +546,73 @@
             android:gravity="center"
             android:padding="24dp"
             android:text="No bookmarks yet"
+            android:textColor="@android:color/black"
+            android:textSize="16sp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- The highlights panel: the book's highlights (excerpt, chapter · %, tap to jump, ✕ to delete).
+         Unlike the bookmarks panel it has NO add/remove toggle — highlighting happens on the page with
+         the pen, not from here. Visibility-toggled like the Contents/Bookmarks panels; one e-ink
+         redraw, no animation. clickable=true so a tap on its own chrome is consumed, not fallen
+         through to dismiss the overlay. -->
+    <LinearLayout
+        android:id="@+id/highlights_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/white"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <!-- Header row: title + a top-right ✕ that closes this panel (back to the reading toolbar). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/highlights_header"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="16dp"
+                android:text="Highlights"
+                android:textColor="@android:color/black"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/highlights_close"
+                style="@style/PanelClose"
+                android:contentDescription="Close highlights" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="@android:color/black" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/highlights_list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="vertical" />
+
+        <TextView
+            android:id="@+id/highlights_empty"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="No highlights yet"
             android:textColor="@android:color/black"
             android:textSize="16sp"
             android:visibility="gone" />

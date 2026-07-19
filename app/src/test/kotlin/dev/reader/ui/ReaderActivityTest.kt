@@ -5,13 +5,16 @@ import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
 import com.google.common.truth.Truth.assertThat
 import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
+import dev.reader.data.HighlightEntity
 import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.TocEntry
+import dev.reader.engine.snapToWords
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
 import kotlinx.coroutines.runBlocking
@@ -401,6 +404,33 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `each panel's close button hides that panel and leaves the reading toolbar up`() {
+        // The device has no hardware Back, so every panel/sheet must be dismissible on-screen. Each
+        // top-right ✕ peels its own layer back to the bare overlay (not out of the chrome).
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+
+        data class CloseCase(val openId: Int, val closeId: Int, val panelId: Int)
+        val cases = listOf(
+            CloseCase(R.id.contents_button, R.id.toc_close, R.id.toc_panel),
+            CloseCase(R.id.bookmarks_button, R.id.bookmarks_close, R.id.bookmarks_panel),
+            CloseCase(R.id.highlights_button, R.id.highlights_close, R.id.highlights_panel),
+            CloseCase(R.id.settings_button, R.id.settings_close, R.id.settings_sheet),
+        )
+        for (c in cases) {
+            activity.findViewById<View>(c.openId).performClick()
+            assertThat(activity.findViewById<View>(c.panelId).visibility).isEqualTo(View.VISIBLE)
+
+            activity.findViewById<View>(c.closeId).performClick()
+            assertThat(activity.findViewById<View>(c.panelId).visibility).isEqualTo(View.GONE)
+            // Closing a panel returns to the reading toolbar, it does not dismiss the whole overlay.
+            assertThat(overlayOf(activity).visibility).isEqualTo(View.VISIBLE)
+        }
+    }
+
+    @Test
     fun `bumping the text size writes the pref, re-paginates, and keeps the reader on a valid page`() {
         clearReaderPrefs()
         val controller = openedMultiPage()
@@ -736,6 +766,199 @@ class ReaderActivityTest {
         assertThat(runBlocking { app.database.bookmarkDao().bookmarksFor(book.path) }).isEmpty()
     }
 
+    // -- Highlights: gesture state machine, chapter cache, panel ------------------------------
+
+    @Test
+    fun `a stylus commit inserts one word-snapped highlight with the selected text`() {
+        val (controller, path) = openedMultiPageInLibrary()
+        val activity = controller.get()
+
+        // The raw span [4,20) is word-snapped by the engine before it is stored; drive the commit
+        // through the handler with explicit offsets so the assertion does not depend on Robolectric's
+        // coarse pixel measurement, and compare against snapToWords over the same chapter text.
+        val text = activity.currentChapterTextForTest()!!
+        val expected = snapToWords(text, 4, 20)!!
+        activity.commitHighlight(4, 20)
+
+        idleUntil { highlightsOf(path).isNotEmpty() }
+        val stored = highlightsOf(path)
+        assertThat(stored).hasSize(1)
+        assertThat(stored[0].spineIndex).isEqualTo(0)
+        assertThat(stored[0].startOffset).isEqualTo(expected.start)
+        assertThat(stored[0].endOffset).isEqualTo(expected.end)
+        // The captured text is exactly the snapped substring (a whole-word span, never a mid-word cut).
+        assertThat(stored[0].text).isEqualTo(text.substring(expected.start, expected.end))
+    }
+
+    @Test
+    fun `a commit overlapping an existing highlight merges into a single row`() {
+        val (controller, path) = openedMultiPageInLibrary()
+        val activity = controller.get()
+
+        activity.commitHighlight(0, 10)
+        idleUntil { highlightsOf(path).size == 1 }
+        val first = highlightsOf(path)[0]
+
+        // A second span that starts inside the first and reaches well past its end must union with it
+        // — one row out, not two, with the merged range covering both.
+        activity.commitHighlight(first.startOffset, first.endOffset + 40)
+        idleUntil { highlightsOf(path).firstOrNull()?.let { it.endOffset > first.endOffset } == true }
+
+        val merged = highlightsOf(path)
+        assertThat(merged).hasSize(1)
+        assertThat(merged[0].startOffset).isAtMost(first.startOffset)
+        assertThat(merged[0].endOffset).isAtLeast(first.endOffset)
+    }
+
+    @Test
+    fun `a pen tap inside a highlight reveals the delete chip and tapping it deletes`() {
+        val (controller, path) = openedMultiPageInLibrary()
+        val activity = controller.get()
+
+        activity.commitHighlight(0, 12)
+        idleUntil { highlightsOf(path).size == 1 }
+        // onStylusTap consults the in-memory chapter cache, which reloads off-main after the write;
+        // wait for the cache to reflect the new highlight before tapping into it.
+        idleUntil { activity.chapterHighlightsForTest.isNotEmpty() }
+        val hl = highlightsOf(path)[0]
+
+        // A tap at the highlight's start offset falls inside its half-open range -> reveal the chip.
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.GONE)
+        activity.onStylusTap(hl.startOffset)
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.VISIBLE)
+
+        // Tapping the chip removes the highlight and hides the chip again.
+        activity.deleteChipForTest.performClick()
+        idleUntil { highlightsOf(path).isEmpty() }
+        assertThat(highlightsOf(path)).isEmpty()
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `opening a panel from the toolbar dismisses a floating delete chip`() {
+        val (controller, path) = openedMultiPageInLibrary()
+        val activity = controller.get()
+
+        activity.commitHighlight(0, 12)
+        idleUntil { highlightsOf(path).size == 1 }
+        idleUntil { activity.chapterHighlightsForTest.isNotEmpty() }
+        val hl = highlightsOf(path)[0]
+
+        activity.onStylusTap(hl.startOffset)
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.VISIBLE)
+
+        // A toolbar tap is NOT routed through PageView, so opening a panel must itself hide the chip —
+        // otherwise it floats over the panel pointing at a now-hidden highlight.
+        activity.findViewById<View>(R.id.highlights_button).performClick()
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `tapping a highlight to remove it also abandons a pending bracket anchor`() {
+        val (controller, path) = openedMultiPageInLibrary()
+        val activity = controller.get()
+
+        activity.commitHighlight(0, 12)
+        idleUntil { highlightsOf(path).size == 1 }
+        idleUntil { activity.chapterHighlightsForTest.isNotEmpty() }
+        val hl = highlightsOf(path)[0]
+
+        // Arm a bracket-start just past the highlight's end -> outside its half-open range, so this
+        // tap finds no existing highlight and arms the anchor instead of revealing the chip.
+        val anchorOffset = hl.endOffset
+        activity.onStylusTap(anchorOffset)
+        assertThat(activity.bracketAnchorForTest).isEqualTo(anchorOffset)
+
+        // A tap inside the existing highlight reveals the delete chip AND must clear that stale anchor
+        // — otherwise the reader's next tap would silently commit an unexpected span.
+        activity.onStylusTap(hl.startOffset)
+        assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.bracketAnchorForTest).isNull()
+    }
+
+    @Test
+    fun `arming a bracket then changing chapter clears the anchor and messages`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        // First pen tap on empty text arms a bracket-start anchor (no highlight there to remove).
+        activity.onStylusTap(3)
+        assertThat(activity.bracketAnchorForTest).isEqualTo(3)
+
+        // Finger-turn to the last page of chapter 0, then one more turn crosses into chapter 1. The
+        // chapter change (not a same-chapter page turn) is what drops the anchor, with a message.
+        val pages = pageCountOf(scrubberTextOf(activity))
+        repeat(pages) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
+
+        idleUntil { activity.bracketAnchorForTest == null }
+        assertThat(activity.bracketAnchorForTest).isNull()
+        assertThat(ShadowToast.getTextOfLatestToast()).contains("another chapter")
+    }
+
+    @Test
+    fun `the Highlights panel lists highlights, jumps on tap, and deletes with the empty state`() {
+        val (controller, path) = openedMultiPageInLibrary()
+        val activity = controller.get()
+        val panel = activity.findViewById<View>(R.id.highlights_panel)
+        val empty = activity.findViewById<View>(R.id.highlights_empty)
+        val list = activity.findViewById<RecyclerView>(R.id.highlights_list)
+
+        // Open the panel with nothing highlighted -> the empty state, list hidden.
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.highlights_button).performClick()
+        idleUntil { empty.visibility == View.VISIBLE }
+        assertThat(panel.visibility).isEqualTo(View.VISIBLE)
+        assertThat(list.adapter!!.itemCount).isEqualTo(0)
+
+        // Add a highlight on the page, then reopen the panel (no standing observer -> a close/open
+        // reload) so it lists the new row.
+        activity.commitHighlight(0, 12)
+        idleUntil { highlightsOf(path).size == 1 }
+        activity.findViewById<View>(R.id.highlights_button).performClick() // close
+        activity.findViewById<View>(R.id.highlights_button).performClick() // reopen + refresh
+        idleUntil { list.adapter!!.itemCount == 1 }
+        assertThat(empty.visibility).isEqualTo(View.GONE)
+
+        // Tapping the row jumps to its page and closes the chrome down to the page.
+        clickHighlightBody(activity, position = 0)
+        idleUntil { overlayOf(activity).visibility == View.GONE }
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+        assertThat(panel.visibility).isEqualTo(View.GONE)
+
+        // Reopen and delete via the row's ✕: the store empties and the empty state returns.
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.highlights_button).performClick()
+        idleUntil { list.adapter!!.itemCount == 1 }
+        clickHighlightDelete(activity, position = 0)
+        idleUntil { highlightsOf(path).isEmpty() }
+        assertThat(highlightsOf(path)).isEmpty()
+        idleUntil { empty.visibility == View.VISIBLE }
+        assertThat(empty.visibility).isEqualTo(View.VISIBLE)
+    }
+
+    @Test
+    fun `committing a highlight for a book not in the library writes nothing and says why`() {
+        // The standalone-launch path: no books row, so the highlights FK cannot be satisfied. The
+        // commit must bail with a message instead of throwing SQLiteConstraintException.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        // No bookDao().upsertAll(...) — that is the point of this test.
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        activity.commitHighlight(0, 12)
+        idleUntil { ShadowToast.getTextOfLatestToast() != null }
+        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("This book isn't in your library yet.")
+        assertThat(highlightsOf(book.path)).isEmpty()
+    }
+
     // -- Plan 4 Task 6b: adjacent-chapter prefetch --------------------------------------------
 
     @Test
@@ -902,6 +1125,52 @@ class ReaderActivityTest {
         launchAndLayOut(controller)
         idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
         return controller
+    }
+
+    /**
+     * A reader opened on a real multi-page book that IS in the library, so the highlights FK
+     * (`highlights.bookPath -> books.path`) is satisfied and a commit can write. Returns the
+     * controller and the book path, driven until its first page is shown.
+     */
+    private fun openedMultiPageInLibrary(): Pair<ActivityController<TestableReaderActivity>, String> {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+        return controller to book.path
+    }
+
+    /** This book's stored highlights in reading order, read off the main thread (Room forbids it). */
+    private fun highlightsOf(path: String): List<HighlightEntity> {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        return runBlocking { app.database.highlightDao().highlightsForBook(path) }
+    }
+
+    /** Lays out the Highlights RecyclerView and clicks the tap-to-jump body of the row at [position]. */
+    private fun clickHighlightBody(activity: ReaderActivity, position: Int) {
+        layOutHighlightRow(activity, position).findViewById<View>(R.id.highlight_body).performClick()
+    }
+
+    /** Lays out the Highlights RecyclerView and clicks the ✕ (delete) of the row at [position]. */
+    private fun clickHighlightDelete(activity: ReaderActivity, position: Int) {
+        layOutHighlightRow(activity, position).findViewById<View>(R.id.highlight_delete).performClick()
+    }
+
+    /** Measures/lays out the Highlights list (Robolectric does not on its own) and returns the row's
+     *  itemView, so a child click lands on a real holder. */
+    private fun layOutHighlightRow(activity: ReaderActivity, position: Int): View {
+        val list = activity.findViewById<RecyclerView>(R.id.highlights_list)
+        list.measure(
+            View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+        )
+        list.layout(0, 0, 800, 600)
+        return (
+            list.findViewHolderForAdapterPosition(position)
+                ?: error("no highlight row at position $position after layout")
+            ).itemView
     }
 
     /** A reader opened on a real multi-chapter book carrying a nav TOC, driven until its first page

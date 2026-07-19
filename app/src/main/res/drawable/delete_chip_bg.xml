@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The on-page delete chip's background: solid white so the label stays legible over highlighted
+     text, a crisp black border, slightly rounded. Static (no state list) — nothing animates, per the
+     e-ink constraint. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@android:color/white" />
+    <stroke
+        android:width="1.5dp"
+        android:color="@android:color/black" />
+    <corners android:radius="6dp" />
+</shape>

@@ -46,4 +46,23 @@
         <item name="android:textColor">@android:color/black</item>
         <item name="android:textSize">16sp</item>
     </style>
+
+    <!-- The on-screen dismiss for every reader panel/sheet: a ✕ pinned to the top-right of the
+         header, in one shared style so its glyph, size, and 48dp tap target are identical across the
+         Contents, Bookmarks, Highlights, and Aa surfaces. The device has no hardware Back, so this is
+         the only guaranteed way to close a panel; consistent placement lets the reader learn it once.
+         Monochrome, no ripple/animation (the e-ink constraint). -->
+    <style name="PanelClose">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:minWidth">48dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingHorizontal">16dp</item>
+        <item name="android:text">✕</item>
+        <item name="android:textColor">@android:color/black</item>
+        <item name="android:textSize">20sp</item>
+    </style>
 </resources>
