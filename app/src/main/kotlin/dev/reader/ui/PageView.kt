@@ -155,8 +155,9 @@ class PageView(context: Context) : View(context) {
         private set
 
     /**
-     * Forces a full-panel redraw to clear accumulated e-ink ghosting, driven by [ReaderActivity]
-     * every `REFRESH_CADENCE` page turns. Drives the real hardware clean refresh via [EpdRefresher]
+     * Forces a full-panel redraw to clear accumulated e-ink ghosting, driven by [ReaderActivity] on
+     * the prefs-driven refresh cadence (every turn by default; every Nth turn in Faster page turns
+     * mode — see [shouldFullRefresh]). Drives the real hardware clean refresh via [EpdRefresher]
      * when available, falling back to a plain [invalidate] when the panel API is unavailable or has
      * degraded — the reader never depends on the hidden EinkManager. Counter-driven, never time-driven,
      * so it adds no steady-state cost.
