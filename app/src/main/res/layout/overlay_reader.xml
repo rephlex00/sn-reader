@@ -397,6 +397,35 @@
                     android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
 
+            <LinearLayout
+                android:id="@+id/toggle_faster_turns"
+                style="@style/AaToggleRow">
+                <TextView style="@style/AaToggleLabel" android:text="Faster page turns" />
+                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_faster_turns_switch"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <!-- Shown only when Faster page turns is ON: how many pages between full clean refreshes. -->
+            <LinearLayout
+                android:id="@+id/refresh_frequency_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="120dp"
+                    android:layout_height="wrap_content"
+                    android:text="Full refresh every"
+                    android:textColor="@android:color/black"
+                    android:textSize="16sp" />
+
+                <TextView android:id="@+id/refresh_freq_3" style="@style/AaOption" android:text="3" />
+                <TextView android:id="@+id/refresh_freq_6" style="@style/AaOption" android:text="6" />
+                <TextView android:id="@+id/refresh_freq_10" style="@style/AaOption" android:text="10" />
+            </LinearLayout>
+
         </LinearLayout>
 
     </ScrollView>
