@@ -3,6 +3,10 @@ package dev.reader.ui
 import android.content.Context
 import dev.reader.engine.RenderConfig
 
+/** The full-refresh cadence choices offered in the Aa sheet (pages between clean refreshes in
+ *  "Faster page turns" mode). The single source of truth for both the pref clamp and the UI cells. */
+val REFRESH_FREQUENCY_OPTIONS: List<Int> = listOf(3, 6, 10)
+
 /**
  * The reader's persisted typography, a thin typed wrapper over one
  * `SharedPreferences("reader_prefs")` — a separate file from [LibraryPrefs] so the two stores
@@ -63,6 +67,20 @@ class ReaderPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_SHOW_PROGRESS_BAR, DEFAULT_SHOW_PROGRESS_BAR)
         set(value) = prefs.edit().putBoolean(KEY_SHOW_PROGRESS_BAR, value).apply()
 
+    /** Whether page turns use the fast path with a full clean refresh only every [fullRefreshEveryN]
+     *  turns. Off by default → every turn is a full clean refresh. A pure display/refresh toggle, NOT
+     *  part of [renderConfig] (it never re-paginates). */
+    var fasterPageTurns: Boolean
+        get() = prefs.getBoolean(KEY_FASTER_PAGE_TURNS, DEFAULT_FASTER_PAGE_TURNS)
+        set(value) = prefs.edit().putBoolean(KEY_FASTER_PAGE_TURNS, value).apply()
+
+    /** Pages between full clean refreshes when [fasterPageTurns] is on. Clamped to
+     *  [REFRESH_FREQUENCY_OPTIONS] on read so a legacy/corrupt value can never set a nonsense cadence. */
+    var fullRefreshEveryN: Int
+        get() = prefs.getInt(KEY_FULL_REFRESH_EVERY_N, DEFAULT_FULL_REFRESH_EVERY_N)
+            .let { if (it in REFRESH_FREQUENCY_OPTIONS) it else DEFAULT_FULL_REFRESH_EVERY_N }
+        set(value) = prefs.edit().putInt(KEY_FULL_REFRESH_EVERY_N, value).apply()
+
     /**
      * Builds the [RenderConfig] for one open: the stored typography plus the viewport the view
      * just measured. The pure prefs+viewport→config mapping, factored out so its no-op equivalence
@@ -97,6 +115,8 @@ class ReaderPrefs(context: Context) {
         const val KEY_INFER_HEADINGS = "infer_headings"
         const val KEY_PUBLISHER_STYLING = "publisher_styling"
         const val KEY_SHOW_PROGRESS_BAR = "show_progress_bar"
+        const val KEY_FASTER_PAGE_TURNS = "faster_page_turns"
+        const val KEY_FULL_REFRESH_EVERY_N = "full_refresh_every_n"
 
         // The reader's standing typography baseline. All but the font matched openFirstBook's old
         // hardcoded literals; the font default became "literata" when bundled fonts shipped.
@@ -109,5 +129,7 @@ class ReaderPrefs(context: Context) {
         const val DEFAULT_INFER_HEADINGS = true
         const val DEFAULT_PUBLISHER_STYLING = true
         const val DEFAULT_SHOW_PROGRESS_BAR = true
+        const val DEFAULT_FASTER_PAGE_TURNS = false
+        const val DEFAULT_FULL_REFRESH_EVERY_N = 6
     }
 }
