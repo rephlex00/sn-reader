@@ -689,6 +689,25 @@ class SpannedChapterBuilderTest {
         val titleStart = ct.text.toString().indexOf("Chapter One")
         val aligns = ct.text.getSpans(titleStart, titleStart + "Chapter One".length, AlignmentSpan::class.java)
         assertThat(aligns).hasLength(1)
+        assertThat(aligns.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    @Test
+    fun `a page break before the opening heading still centers it as the chapter title`() {
+        val ct = builder.build(
+            listOf(
+                Block.PageBreak,
+                Block.Heading(level = 1, text = StyledText("Chapter One")),
+                Block.Paragraph(StyledText("Body.")),
+            ),
+            config.copy(publisherStyling = false),
+        )
+        // The heading is still the first EMITTED block (the page break contributes no text),
+        // so it should be centered and given headroom.
+        val titleStart = ct.text.toString().indexOf("Chapter One")
+        val aligns = ct.text.getSpans(titleStart, titleStart + "Chapter One".length, AlignmentSpan::class.java)
+        assertThat(aligns).hasLength(1)
+        assertThat(aligns.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
     }
 
     @Test
