@@ -51,9 +51,6 @@ This dependency is not yet present in the source tree. It arrives with comics
 support. This notice is written ahead of it deliberately: the decision was made
 with the trade-off understood rather than discovered later, and it should be
 equally visible to anyone who packages, forks, or redistributes this project.
-
-See docs/superpowers/specs/2026-07-15-supernote-reader-design.md, section
-"Licensing", for the full reasoning.
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
