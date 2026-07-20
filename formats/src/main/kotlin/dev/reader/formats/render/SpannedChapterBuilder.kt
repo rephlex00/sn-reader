@@ -66,6 +66,13 @@ class SpannedChapterBuilder {
         val breaks = mutableSetOf<Int>()
         var pendingBreak = false
         var prev: Block? = null
+        // Whether any block has emitted text yet — true once `prev` is first set below.
+        // Used to detect the chapter-OPENING heading (the chapter title): only the FIRST
+        // emitted block, if it's a Block.Heading, gets the extra headroom + forced centering.
+        // A leading PageBreak or a non-emitting image (null/undecodable bytes) before the
+        // heading doesn't count as "first emitted" — this flag only flips once something
+        // actually contributes text, exactly mirroring the `prev` update below.
+        var hasEmitted = false
 
         for (block in blocks) {
             if (block is Block.PageBreak) {
@@ -79,7 +86,23 @@ class SpannedChapterBuilder {
             // (pendingBreak still true here — an explicit PageBreak occurred since the last
             // emitted block, even though the break itself contributed no text of its own).
             val indentParagraph = !pendingBreak && !isBreakLike(prev)
+            // The chapter-opening title: the first block to actually emit text is a Heading.
+            // Prepended BEFORE the heading's own text so the title itself (not the blank
+            // lines) is what a search for its text finds at the front of the chapter.
+            val isOpeningHeading = !hasEmitted && block is Block.Heading
+            if (isOpeningHeading) sb.append(BLOCK_SEPARATOR)
+            val headingStart = sb.length
             appendBlock(sb, block, config, indentParagraph)
+            if (isOpeningHeading) {
+                // Reader baseline, unconditional (regardless of config.publisherStyling): the
+                // chapter title is centered — this is IN ADDITION to the existing heading
+                // bold+scale, which appendBlock's own Heading branch already applied above.
+                sb.setSpan(
+                    AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+                    headingStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+            if (sb.length > start) hasEmitted = true
             // The break offset is recorded only once a block actually contributes text,
             // and pins to that block's own first character — after the separator, and
             // past any text-free block sitting between the break and the text. A block is

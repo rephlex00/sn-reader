@@ -60,7 +60,10 @@ class SpannedChapterBuilderTest {
     @Test
     fun `a heading followed by a paragraph keeps the blank line`() {
         val chapter = builder.build(listOf(Block.Heading(1, StyledText("Title")), para("Body.")), config)
-        assertThat(chapter.text.toString()).isEqualTo("Title\n\nBody.")
+        // Task 4: the chapter opens with a heading (the chapter title), so it now gets a
+        // prepended blank line of headroom ("\n\n") before "Title" in addition to the
+        // existing blank line before "Body.".
+        assertThat(chapter.text.toString()).isEqualTo("\n\nTitle\n\nBody.")
     }
 
     @Test
@@ -447,11 +450,13 @@ class SpannedChapterBuilderTest {
         ).text
         val sizes = text.getSpans(0, text.length, RelativeSizeSpan::class.java)
         assertThat(sizes).hasLength(2)
-        // The publisher-sized run "One" [8,11) at 1.29.
-        val onOne = text.getSpans(8, 11, RelativeSizeSpan::class.java).map { it.sizeChange }
+        // Task 4: this heading opens the chapter, so a prepended "\n\n" (2 chars) shifts the
+        // heading's own text to start at offset 2 rather than 0.
+        // The publisher-sized run "One" [8,11) within the heading -> [10,13) in the chapter text, at 1.29.
+        val onOne = text.getSpans(10, 13, RelativeSizeSpan::class.java).map { it.sizeChange }
         assertThat(onOne).containsExactly(1.29f)
-        // "Chapter " [0,8) at the level-1 semantic scale.
-        val onChapter = text.getSpans(0, 8, RelativeSizeSpan::class.java).map { it.sizeChange }
+        // "Chapter " [0,8) within the heading -> [2,10) in the chapter text, at the level-1 semantic scale.
+        val onChapter = text.getSpans(2, 10, RelativeSizeSpan::class.java).map { it.sizeChange }
         assertThat(onChapter).containsExactly(1.6f)
     }
 
@@ -662,5 +667,55 @@ class SpannedChapterBuilderTest {
         val alignments = chapter.text.getSpans(0, chapter.text.length, AlignmentSpan.Standard::class.java)
         assertThat(alignments).hasLength(1)
         assertThat(alignments.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    // --- Chapter opening (Task 4): a chapter whose first EMITTED block is a heading (the
+    // chapter title) gets extra headroom above it and a forced center AlignmentSpan —
+    // unconditionally, regardless of config.publisherStyling. A chapter opening with a
+    // paragraph (or any other block) gets neither. ---
+
+    @Test
+    fun `a chapter that opens with a heading centers the title and gives it space above`() {
+        val ct = builder.build(
+            listOf(
+                Block.Heading(level = 1, text = StyledText("Chapter One")),
+                Block.Paragraph(StyledText("Body.")),
+            ),
+            config.copy(publisherStyling = false),
+        )
+        // Space above: the text begins with blank line(s) before the title.
+        assertThat(ct.text.toString()).startsWith("\n")
+        // The title's range carries a center AlignmentSpan.
+        val titleStart = ct.text.toString().indexOf("Chapter One")
+        val aligns = ct.text.getSpans(titleStart, titleStart + "Chapter One".length, AlignmentSpan::class.java)
+        assertThat(aligns).hasLength(1)
+    }
+
+    @Test
+    fun `a chapter that opens with a paragraph gets no chapter-title space or centering`() {
+        val ct = builder.build(
+            listOf(Block.Paragraph(StyledText("Body."))),
+            config.copy(publisherStyling = false),
+        )
+        assertThat(ct.text.toString()).doesNotContain("\n\nBody") // no prepended headroom
+        assertThat(ct.text.getSpans(0, ct.text.length, AlignmentSpan::class.java)).isEmpty()
+    }
+
+    @Test
+    fun `a mid-chapter heading is not force-centered or given extra headroom`() {
+        // Only the chapter-OPENING heading (the first emitted block) gets the Task 4
+        // treatment; a heading that shows up after other content has already been emitted
+        // is unaffected — it keeps only its existing bold+scale.
+        val ct = builder.build(
+            listOf(
+                Block.Paragraph(StyledText("Intro.")),
+                Block.Heading(level = 2, text = StyledText("Section Two")),
+            ),
+            config.copy(publisherStyling = false),
+        )
+        assertThat(ct.text.toString()).startsWith("Intro.") // no prepended headroom before the paragraph
+        val headingStart = ct.text.toString().indexOf("Section Two")
+        val aligns = ct.text.getSpans(headingStart, headingStart + "Section Two".length, AlignmentSpan::class.java)
+        assertThat(aligns).isEmpty()
     }
 }
