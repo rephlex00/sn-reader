@@ -833,8 +833,8 @@ class SpannedChapterBuilderTest {
     fun `the drop cap reserves a left margin over its band of lines`() {
         val ct = builder.build(listOf(para("Hello world.")), config)
         val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
-        // Spans three lines; reserves a positive margin on those, none afterwards.
-        assertThat(cap.leadingMarginLineCount).isEqualTo(3)
+        // Spans two lines; reserves a positive margin on those, none afterwards.
+        assertThat(cap.leadingMarginLineCount).isEqualTo(2)
         assertThat(cap.getLeadingMargin(true)).isGreaterThan(0)
         assertThat(cap.getLeadingMargin(false)).isEqualTo(0)
     }
@@ -856,7 +856,7 @@ class SpannedChapterBuilderTest {
         // at least run: a DropCapSpan drawn to a real canvas does not throw.
         val cap = DropCapSpan(
             initial = 'H',
-            linesSpanned = 3,
+            linesSpanned = 2,
             textSizePx = config.textSizePx,
             lineHeightPx = config.textSizePx * config.lineSpacingMultiplier,
             typeface = Typeface.SERIF,

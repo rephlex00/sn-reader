@@ -3,6 +3,7 @@ package dev.reader.formats.render
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.text.Layout
 import android.text.TextPaint
@@ -10,32 +11,30 @@ import android.text.style.LeadingMarginSpan
 import kotlin.math.roundToInt
 
 /**
- * Draws a chapter's opening [initial] as an enlarged drop cap spanning [linesSpanned] lines, with
- * the following lines flowed to its right — the "book-like" chapter opener.
+ * Draws a chapter's opening [initial] as a two-line drop cap: the glyph's top aligns with the top of
+ * the FIRST line's letters and its baseline sits on the SECOND line's baseline, with the first two
+ * lines of body text flowed to its right — the classic book chapter opener.
  *
- * It is a [LeadingMarginSpan.LeadingMarginSpan2]: `LeadingMarginSpan2` is the one that reserves the
- * margin for the *first N lines* (plain [LeadingMarginSpan] only ever affects the first line), which
- * is exactly the drop-cap band. For the first [linesSpanned] lines [getLeadingMargin] reserves the
- * cap's width so the body text wraps to its right; afterwards it returns 0 and the text runs full
- * width.
+ * It is a [LeadingMarginSpan.LeadingMarginSpan2]: that is the variant that reserves the margin for
+ * the *first N lines* (plain [LeadingMarginSpan] only ever affects the first line), which is exactly
+ * the drop-cap band. For the first [linesSpanned] lines [getLeadingMargin] reserves the cap's width
+ * so body text wraps to its right; afterwards it returns 0 and text runs full width.
  *
  * The initial STAYS a normal character in the chapter text — the caller applies this span over just
- * `[first, first + 1)` plus a [ZeroWidthSpan] so the covered character consumes no inline advance
- * and draws nothing; only the big glyph (drawn here) shows. Nothing is inserted or removed, so
- * character offsets, locators, highlights, and page-break math are all unchanged.
+ * `[first, first + 1)` plus a [ZeroWidthSpan] so the covered character consumes no inline advance and
+ * draws nothing; only the big glyph (drawn here) shows. Nothing is inserted or removed, so character
+ * offsets, locators, highlights, and page-break math are all unchanged. Because the covered character
+ * has ZERO advance, the reserved margin is the FULL `capAdvance + gutter` uniformly on every band line.
  *
- * Because the covered character has ZERO advance (not just invisible color), the leading margin
- * this span reserves must be the FULL `capAdvance + gutter` on every band line, uniformly — there is
- * no per-line character advance left for a single [LeadingMarginSpan.LeadingMarginSpan2] margin to
- * compensate for. (An earlier version reserved `capAdvance + gutter − normalAdvance`, correct only
- * on line 1 where the covered character still contributed its normal advance; lines 2..N have no
- * such character, so that margin under-reserved and body text overlapped the cap. Zero-advance +
- * uniform full margin fixes both lines at once.)
- *
- * The cap is painted from [capPaint] (the reader's [typeface] and [color]/gray), NOT from the `p`
- * handed to [drawLeadingMargin] — that paint belongs to the covered run, which the caller's
- * [ZeroWidthSpan] has already made draw nothing. Pixel placement (cap-height alignment to the first
- * line's top, baseline in the band) is device-tuned; this class pins the geometry the layout needs.
+ * **Geometry (why it aligns to the letters, not to line boxes).** The cap's point size is derived from
+ * real font metrics rather than a line-count × line-height guess: the target height (glyph top → glyph
+ * baseline) is [`actualLineSpacingPx`][actualLineSpacingPx] (line-1 baseline → line-2 baseline) plus
+ * the body font's cap-height (line-1 letter-top → line-1 baseline). [capPaint]'s size is then scaled
+ * so the initial's measured cap-height equals that target. Drawn with its baseline on the second
+ * line's baseline, the glyph's top therefore lands on the first line's letter-tops and its bottom on
+ * the second line's baseline — both edges aligned to the text, independent of the font's internal
+ * leading. Line spacing uses the paint's own `fontSpacing` (× the reader's multiplier), not the
+ * nominal text size, so the two baselines it assumes match the ones [Layout] actually produces.
  */
 class DropCapSpan(
     private val initial: Char,
@@ -46,34 +45,53 @@ class DropCapSpan(
     private val color: Int = Color.BLACK,
 ) : LeadingMarginSpan.LeadingMarginSpan2 {
 
-    /** The enlarged initial's paint: reader typeface + gray, sized to roughly fill the band. */
+    private val glyph = initial.toString()
+
+    /** The enlarged initial's paint: reader typeface + gray, sized in [init] to the two-line height. */
     private val capPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = this@DropCapSpan.typeface
-        textSize = linesSpanned * lineHeightPx
         color = this@DropCapSpan.color
     }
 
-    /** The enlarged glyph's advance — also the minimum leading margin needed so wrapped body text
-     *  on any band line clears the cap (the caller's [ZeroWidthSpan] makes the covered character
-     *  contribute nothing, so this is not reduced by any per-line character advance). */
-    internal val capAdvance = capPaint.measureText(initial.toString())
+    /** Baseline-to-baseline distance the [Layout] will use: the font's recommended line spacing at the
+     *  body size × the reader's line-spacing multiplier ([lineHeightPx] / [textSizePx]). Using the real
+     *  `fontSpacing` (not the nominal text size) is what makes the cap's assumed line-2 baseline match
+     *  where the layout actually puts it, so the cap bottom lands on the letters, not near them. */
+    private val actualLineSpacingPx: Float
 
-    /** A small breathing gap between the cap and the text that wraps beside it. */
+    /** The enlarged glyph's advance — also the minimum leading margin so wrapped body text clears it. */
+    internal val capAdvance: Float
+
     private val gutterPx = textSizePx * GUTTER_EM
 
-    /**
-     * Width reserved on EVERY one of the first [linesSpanned] lines, uniformly. The covered initial
-     * character has zero advance (see [ZeroWidthSpan]), so there is no per-line character width to
-     * net out here — the full `capAdvance + gutter` must be reserved on lines 2..N exactly as on
-     * line 1, or wrapped text would sit inside the drop-cap glyph on those lines.
-     */
-    private val marginWidth = (capAdvance + gutterPx).roundToInt().coerceAtLeast(0)
+    /** Width reserved on every band line, uniformly (the covered initial is zero-advance). */
+    private val marginWidth: Int
 
-    // The framework calls this with [first] == true for every one of the [linesSpanned] band
-    // lines (not just the paragraph's literal first line) and [first] == false for lines beyond
-    // the band — see getLeadingMarginLineCount's KDoc. So `if (first) marginWidth else 0` already
-    // reserves marginWidth UNIFORMLY across the whole band; the earlier bug was entirely in
-    // marginWidth's own formula (it subtracted a per-line character advance that only line 1 had).
+    init {
+        val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = this@DropCapSpan.typeface
+            textSize = textSizePx
+        }
+        val multiplier = if (textSizePx > 0f) lineHeightPx / textSizePx else 1f
+        actualLineSpacingPx = bodyPaint.fontSpacing * multiplier
+
+        val bounds = Rect()
+        bodyPaint.getTextBounds(glyph, 0, 1, bounds)
+        val bodyCapHeight = (-bounds.top).toFloat().coerceAtLeast(1f) // top is negative (above baseline)
+
+        // Target cap-height = (line-1 letter-top → line-1 baseline) + (line-1 baseline → line-2 baseline).
+        val targetCapHeight = bodyCapHeight + (linesSpanned - 1) * actualLineSpacingPx
+
+        // Scale the cap point size so the initial's own measured cap-height equals the target.
+        capPaint.textSize = textSizePx
+        capPaint.getTextBounds(glyph, 0, 1, bounds)
+        val refCapHeight = (-bounds.top).toFloat().coerceAtLeast(1f)
+        capPaint.textSize = textSizePx * (targetCapHeight / refCapHeight)
+
+        capAdvance = capPaint.measureText(glyph)
+        marginWidth = (capAdvance + gutterPx).roundToInt().coerceAtLeast(0)
+    }
+
     override fun getLeadingMarginLineCount(): Int = linesSpanned
 
     override fun getLeadingMargin(first: Boolean): Int = if (first) marginWidth else 0
@@ -92,16 +110,21 @@ class DropCapSpan(
         first: Boolean,
         layout: Layout,
     ) {
-        // Only the first line of the paragraph carries the actual glyph; the margin is reserved on
-        // the following band lines too, but the letter is drawn once, here.
+        // The margin is reserved on every band line, but the glyph is drawn once, on the first line.
         if (!first) return
-        val glyph = initial.toString()
-        val fm = capPaint.fontMetrics
-        // Sit the glyph's top near the first text line's top (ascent is negative). Device-tuned.
-        val capBaseline = top - fm.ascent
+        val line = layout.getLineForOffset(start)
+        // Sit the glyph's baseline on the LAST band line's baseline (line-2 for a two-line cap), so its
+        // sized cap-height carries the top up to the first line's letter-tops. Fall back to the metric
+        // estimate if the paragraph is shorter than the band (a rare one-line opening paragraph).
+        val lastBandLine = line + linesSpanned - 1
+        val capBaselineY = if (lastBandLine < layout.lineCount) {
+            layout.getLineBaseline(lastBandLine).toFloat()
+        } else {
+            baseline + (linesSpanned - 1) * actualLineSpacingPx
+        }
         // dir is +1 for LTR, -1 for RTL; anchor the glyph at the leading edge either way.
         val left = if (dir >= 0) x.toFloat() else x - capAdvance
-        c.drawText(glyph, left, capBaseline, capPaint)
+        c.drawText(glyph, left, capBaselineY, capPaint)
     }
 
     private companion object {

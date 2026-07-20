@@ -64,7 +64,7 @@ private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 
 private const val IMAGE_PLACEHOLDER = "￼"
 
 /** How many lines the chapter-opening drop cap spans — the enlarged initial's height. */
-private const val DROP_CAP_LINES = 3
+private const val DROP_CAP_LINES = 2
 
 /**
  * Flattens [Block]s into one Spanned per chapter. One string per chapter (rather than
