@@ -41,9 +41,13 @@ fun snapToWords(text: CharSequence, start: Int, end: Int): HighlightRange? {
     var tokEnd = bi.next()
     while (tokEnd != BreakIterator.DONE) {
         val isWord = !text.subSequence(tokStart, tokEnd).isBlank()
-        // A range grabs word tokens it strictly overlaps; a zero-width point grabs the word token(s)
-        // it touches (inclusive), so a tap on a word's boundary or at end-of-text still snaps.
-        val intersects = if (lo == hi) tokStart <= lo && lo <= tokEnd else tokStart < hi && lo < tokEnd
+        // A range grabs word tokens it reaches; a zero-width point grabs the word token(s) it touches.
+        // The END is inclusive (`tokStart <= hi`): a drag that lifts with the pen at a word's left edge
+        // (hi == that word's start) still grabs it, so the highlight reaches the word under the pen tip
+        // instead of stopping one word short. The START stays `lo < tokEnd` — already inclusive at a
+        // word's start, so a right-to-left lift on a word's left edge grabs it too; and a selection that
+        // lies entirely in the whitespace between two words still snaps to nothing.
+        val intersects = if (lo == hi) tokStart <= lo && lo <= tokEnd else tokStart <= hi && lo < tokEnd
         if (isWord && intersects) {
             if (wordStart == -1) wordStart = tokStart
             wordEnd = tokEnd
