@@ -373,7 +373,13 @@ open class LibraryActivity : AppCompatActivity() {
             emptyStateView.visibility = View.VISIBLE
             return
         }
-        emptyStateView.visibility = View.GONE
+        // Reflect the current state instead of hardcoding GONE: render() is the second writer to
+        // emptyStateView (a zero-match search/status filter shows "No books match." — see its own
+        // KDoc), and a stale library's sync() below does no DB writes when nothing changed, so
+        // observeAllSorted never re-emits and render() never reruns on its own. Without this,
+        // backgrounding and reopening the app with a zero-match filter active would wipe that
+        // message to GONE here and leave a blank grid until the next unrelated interaction.
+        render()
 
         // A root change made in Settings while this Activity stayed alive: Task 8a already nulled
         // lastFolderPath (a folder under the old root is meaningless under the new one), so reset
@@ -616,7 +622,12 @@ open class LibraryActivity : AppCompatActivity() {
             folderListing(latestBooks, root, currentFolder, prefs.flatten)
         }
         adapter.render(rows, prefs.viewMode)
-        toolbar.title = titleFor(currentFolder, root)
+        // While a filter is active the grid is flat results across the whole library, not a
+        // listing of currentFolder — showing the folder's name in the toolbar would misleadingly
+        // imply the results are scoped to it. Fall back to the root title (titleFor(root, root),
+        // i.e. "Library") for as long as the filter stays active; clearing it restores the folder
+        // name via the same call on the next render().
+        toolbar.title = if (filterActive) titleFor(root, root) else titleFor(currentFolder, root)
         if (filterActive && rows.isEmpty()) {
             emptyStateView.text = "No books match."
             emptyStateView.visibility = View.VISIBLE

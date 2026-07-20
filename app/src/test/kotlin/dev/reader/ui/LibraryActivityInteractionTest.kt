@@ -254,6 +254,55 @@ class LibraryActivityInteractionTest {
         assertThat(activity.emptyStateText).contains("No books match")
     }
 
+    @Test
+    fun `backgrounding and reopening with a zero-match filter keeps the empty-state message`() {
+        // Regression for onStart unconditionally forcing emptyStateView GONE: render() is now the
+        // second writer to that view (a zero-match filter shows "No books match."), and an
+        // unchanged library's sync() does no DB writes, so observeAllSorted never re-emits and
+        // render() never reruns on its own. Before the fix, stop/start here wiped the message to
+        // GONE and left a blank grid until the next unrelated interaction.
+        seed(book("$ROOT/Fiction/a.epub", title = "A"))
+        val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
+        controller.create().start().resume()
+        val activity = controller.get()
+        idleUntil { activity.rows.isNotEmpty() }
+
+        activity.setSearchQuery("nothing-matches-this")
+        idleUntil { activity.rows.isEmpty() }
+        assertThat(activity.emptyStateVisibility).isEqualTo(View.VISIBLE)
+
+        // Background the app and reopen it — same Activity instance, stop/start pair — with the
+        // zero-match filter still active.
+        controller.pause().stop().start().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertThat(activity.emptyStateVisibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.emptyStateText).contains("No books match")
+    }
+
+    // -- toolbar title reflects the filter, not the folder, while one is active ---------------
+
+    @Test
+    fun `toolbar title falls back to Library while a filter is active and restores the folder name when cleared`() {
+        seed(
+            book("$ROOT/Fiction/a.epub", title = "A"),
+            book("$ROOT/Science/c.epub", title = "C"),
+        )
+        val activity = launch()
+        idleUntil { activity.rows.isNotEmpty() }
+        activity.tapFolder("$ROOT/Fiction")
+        idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
+        assertThat(activity.toolbarTitle).isEqualTo("Fiction")
+
+        activity.setSearchQuery("cosmos-does-not-exist")
+        idleUntil { activity.rows.isEmpty() }
+        assertThat(activity.toolbarTitle).isEqualTo("Library")
+
+        activity.setSearchQuery("")
+        idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
+        assertThat(activity.toolbarTitle).isEqualTo("Fiction")
+    }
+
     /** [LibraryActivity] subclass whose test seams are set per-test via mutable fields. */
     private class TestableLibraryActivity : LibraryActivity() {
         var accessGranted = true
@@ -271,6 +320,7 @@ class LibraryActivityInteractionTest {
 
         val rows: List<LibraryRow> get() = adapter.currentList
         val currentFolderPath: String get() = currentFolder
+        val toolbarTitle: String get() = toolbar.title.toString()
 
         fun tapFolder(path: String) = openFolder(path)
         fun back() = onBackPressedDispatcher.onBackPressed()
