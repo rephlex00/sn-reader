@@ -1,5 +1,6 @@
 package dev.reader.formats.render
 
+import android.text.Layout
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.Block
 import dev.reader.engine.InlineStyle
@@ -110,5 +111,14 @@ class AndroidTextMeasurerTest {
         val measured = measurer.measure(emptyList(), config)
         assertThat(measured.lineCount).isEqualTo(1) // StaticLayout always reports one line
         assertThat(measured.lineEndOffset(0)).isEqualTo(0)
+    }
+
+    @Test
+    fun `justified text uses the high-quality break strategy so it hyphenates and tightens`() {
+        val measured = measurer.measure(
+            listOf(para("word ".repeat(80).trim())),
+            config.copy(justified = true, hyphenated = true),
+        ) as AndroidMeasuredChapter
+        assertThat(measured.layout.breakStrategy).isEqualTo(Layout.BREAK_STRATEGY_HIGH_QUALITY)
     }
 }

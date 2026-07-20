@@ -38,6 +38,7 @@ class AndroidTextMeasurer(
                 if (config.hyphenated) Layout.HYPHENATION_FREQUENCY_NORMAL
                 else Layout.HYPHENATION_FREQUENCY_NONE
             )
+            .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
             .setIncludePad(false)
             .build()
 
