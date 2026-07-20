@@ -50,9 +50,20 @@ class SpannedChapterBuilderTest {
         Block.Paragraph(StyledText(text, spans))
 
     @Test
-    fun `joins blocks with a blank line between them`() {
+    fun `joins two consecutive body paragraphs with a single newline`() {
+        // Fix 1: two flowing body paragraphs are joined by a single newline (paragraph gap
+        // equals line spacing) rather than a blank line.
         val chapter = builder.build(listOf(para("One."), para("Two.")), config)
-        assertThat(chapter.text.toString()).isEqualTo("One.\n\nTwo.")
+        assertThat(chapter.text.toString()).isEqualTo("One.\nTwo.")
+    }
+
+    @Test
+    fun `a heading followed by a paragraph keeps the blank line`() {
+        val chapter = builder.build(listOf(Block.Heading(1, StyledText("Title")), para("Body.")), config)
+        // Task 4: the chapter opens with a heading (the chapter title), so it now gets a
+        // prepended blank line of headroom ("\n\n") before "Title" in addition to the
+        // existing blank line before "Body.".
+        assertThat(chapter.text.toString()).isEqualTo("\n\nTitle\n\nBody.")
     }
 
     @Test
@@ -77,17 +88,20 @@ class SpannedChapterBuilderTest {
         )
         val span = chapter.text.getSpans(0, chapter.text.length, AndroidStyleSpan::class.java).single()
 
-        // "One." + "\n\n" = 6 characters precede the second block.
-        assertThat(chapter.text.getSpanStart(span)).isEqualTo(8)
-        assertThat(chapter.text.getSpanEnd(span)).isEqualTo(12)
+        // "One." + "\n" (two consecutive body paragraphs join with a single newline) = 5
+        // characters precede the second block.
+        assertThat(chapter.text.getSpanStart(span)).isEqualTo(7)
+        assertThat(chapter.text.getSpanEnd(span)).isEqualTo(11)
     }
 
     @Test
     fun `records page break offsets rather than emitting text`() {
         val chapter = builder.build(listOf(para("One."), Block.PageBreak, para("Two.")), config)
 
-        assertThat(chapter.text.toString()).isEqualTo("One.\n\nTwo.")
-        assertThat(chapter.breakOffsets).containsExactly(6)
+        // Both are flowing body paragraphs, so the separator is a single newline even across
+        // the page break — the break offset still pins to "Two."'s own first character.
+        assertThat(chapter.text.toString()).isEqualTo("One.\nTwo.")
+        assertThat(chapter.breakOffsets).containsExactly(5)
     }
 
     // --- Fix wave A, M4: a PageBreak followed by a text-free block (an Image, which
@@ -102,8 +116,11 @@ class SpannedChapterBuilderTest {
             config,
         )
 
-        // "One." + "\n\n" (image's separator) + "\n\n" (Two's separator) = offset 8.
-        assertThat(chapter.breakOffsets).containsExactly(8)
+        // "One." + "\n\n" (image's separator; the image is not a paragraph) + "" (the
+        // image's null bytes append no text) + "\n" (both "One." and "Two." are flowing
+        // body paragraphs, so they still join with a single newline across the text-free
+        // image) = offset 7.
+        assertThat(chapter.breakOffsets).containsExactly(7)
         val offset = chapter.breakOffsets.single()
         assertThat(chapter.text.subSequence(offset, chapter.text.length).toString()).isEqualTo("Two.")
     }
@@ -270,14 +287,16 @@ class SpannedChapterBuilderTest {
 
     @Test
     fun `populated publisher fields produce no spans when styling is off`() {
+        // Opens on a quote so no reader-baseline drop cap is placed either — this test pins that
+        // publisher fields produce no spans when off, isolated from the drop-cap feature.
         val chapter = builder.build(
             listOf(
                 Block.Paragraph(
                     StyledText(
-                        "Word here now.",
+                        "“Word here now.",
                         listOf(
                             StyleSpan(
-                                0, 4,
+                                1, 5,
                                 InlineStyle(
                                     sizeRatio = 2f, underline = true, strikethrough = true,
                                     letterSpacingEm = 0.2f, grayLevel = 0.3f,
@@ -295,8 +314,10 @@ class SpannedChapterBuilderTest {
 
     // --- Publisher styling on: inline fields each map to their span ---
 
+    // Opens on a quote (not a letter) so no chapter-opening drop cap is placed — these tests
+    // isolate a single publisher inline span, not the orthogonal drop-cap feature.
     private fun paraSpan(style: InlineStyle) =
-        builder.build(listOf(para("Word.", listOf(StyleSpan(0, 4, style)))), config).text
+        builder.build(listOf(para("“Word", listOf(StyleSpan(1, 5, style)))), config).text
 
     @Test
     fun `sizeRatio maps to a relative size span when on`() {
@@ -333,15 +354,18 @@ class SpannedChapterBuilderTest {
 
     @Test
     fun `a multi-property run yields one span per property over the same range`() {
-        // Task 3 emits one single-field span per property; all three must apply.
+        // Task 3 emits one single-field span per property; all three must apply. Opens on a quote
+        // so no drop cap is placed — keeps this test isolated from the orthogonal drop-cap
+        // feature (whose initial-hiding span is a ZeroWidthSpan, not a ForegroundColorSpan, so it
+        // would no longer collide with the gray-count assertion below regardless).
         val text = builder.build(
             listOf(
                 para(
-                    "Word.",
+                    "“Word",
                     listOf(
-                        StyleSpan(0, 4, InlineStyle(bold = true)),
-                        StyleSpan(0, 4, InlineStyle(underline = true)),
-                        StyleSpan(0, 4, InlineStyle(grayLevel = 0.2f)),
+                        StyleSpan(1, 5, InlineStyle(bold = true)),
+                        StyleSpan(1, 5, InlineStyle(underline = true)),
+                        StyleSpan(1, 5, InlineStyle(grayLevel = 0.2f)),
                     ),
                 ),
             ),
@@ -433,11 +457,13 @@ class SpannedChapterBuilderTest {
         ).text
         val sizes = text.getSpans(0, text.length, RelativeSizeSpan::class.java)
         assertThat(sizes).hasLength(2)
-        // The publisher-sized run "One" [8,11) at 1.29.
-        val onOne = text.getSpans(8, 11, RelativeSizeSpan::class.java).map { it.sizeChange }
+        // Task 4: this heading opens the chapter, so a prepended "\n\n" (2 chars) shifts the
+        // heading's own text to start at offset 2 rather than 0.
+        // The publisher-sized run "One" [8,11) within the heading -> [10,13) in the chapter text, at 1.29.
+        val onOne = text.getSpans(10, 13, RelativeSizeSpan::class.java).map { it.sizeChange }
         assertThat(onOne).containsExactly(1.29f)
-        // "Chapter " [0,8) at the level-1 semantic scale.
-        val onChapter = text.getSpans(0, 8, RelativeSizeSpan::class.java).map { it.sizeChange }
+        // "Chapter " [0,8) within the heading -> [2,10) in the chapter text, at the level-1 semantic scale.
+        val onChapter = text.getSpans(2, 10, RelativeSizeSpan::class.java).map { it.sizeChange }
         assertThat(onChapter).containsExactly(1.6f)
     }
 
@@ -554,5 +580,314 @@ class SpannedChapterBuilderTest {
         )
         // "One." (4) + "\n\n" (2) = 6, where the image's placeholder begins.
         assertThat(chapter.breakOffsets).containsExactly(6)
+    }
+
+    // --- Reading typography fixes: reader first-line indent (skipping the first
+    // paragraph after a heading/scene-break/image/page-break, and never doubling a
+    // publisher indent), scene-break centering, and image centering. All reader-baseline:
+    // applied regardless of config.publisherStyling. ---
+
+    @Test
+    fun `a body paragraph not first after a break gets the reader's first-line indent`() {
+        val chapter = builder.build(listOf(para("One."), para("Two.")), config)
+        val span = chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java)
+            .single()
+
+        // "One." + "\n" = 5 precedes "Two.", the second (non-first-after-break) paragraph.
+        assertThat(chapter.text.getSpanStart(span)).isEqualTo(5)
+        assertThat(chapter.text.getSpanEnd(span)).isEqualTo(9)
+        assertThat(span.getLeadingMargin(true)).isGreaterThan(0)
+        assertThat(span.getLeadingMargin(false)).isEqualTo(0)
+    }
+
+    @Test
+    fun `the first paragraph after a heading has no reader indent`() {
+        val chapter = builder.build(listOf(Block.Heading(1, StyledText("Title")), para("Body.")), config)
+        assertThat(chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java))
+            .isEmpty()
+    }
+
+    @Test
+    fun `the first paragraph after an image has no reader indent`() {
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(10, 10)), para("Body.")),
+            config,
+        )
+        assertThat(chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java))
+            .isEmpty()
+    }
+
+    @Test
+    fun `the first paragraph after a page break has no reader indent`() {
+        val chapter = builder.build(listOf(para("One."), Block.PageBreak, para("Two.")), config)
+        assertThat(chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java))
+            .isEmpty()
+    }
+
+    @Test
+    fun `a scene break renders as blank space with no visible glyphs`() {
+        val ct = builder.build(
+            listOf(
+                Block.Paragraph(StyledText("Before.")),
+                Block.Paragraph(StyledText("***")),
+                Block.Paragraph(StyledText("After.")),
+            ),
+            config,
+        )
+        // No asterisks survive in the text...
+        assertThat(ct.text.toString()).doesNotContain("*")
+        // ...and no AlignmentSpan was applied for the scene break.
+        val aligns = ct.text.getSpans(0, ct.text.length, AlignmentSpan::class.java)
+        assertThat(aligns).isEmpty()
+        // The two real paragraphs are still both present and separated by blank space.
+        assertThat(ct.text.toString()).contains("Before.")
+        assertThat(ct.text.toString()).contains("After.")
+    }
+
+    @Test
+    fun `a paragraph after a scene break has no reader indent`() {
+        val chapter = builder.build(listOf(para("One."), para("***"), para("Two.")), config)
+        val twoStart = chapter.text.toString().lastIndexOf("Two.")
+        assertThat(
+            chapter.text.getSpans(twoStart, chapter.text.length, LeadingMarginSpan.Standard::class.java),
+        ).isEmpty()
+    }
+
+    @Test
+    fun `a publisher indent is not doubled by the reader's own indent`() {
+        val chapter = builder.build(
+            listOf(para("One."), Block.Paragraph(StyledText("Two."), style = BlockStyle(textIndentEm = 2f))),
+            config, // publisherStyling defaults to true
+        )
+        val spans = chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java)
+        // Exactly one indent span over "Two." — the publisher's, not doubled by the reader's.
+        assertThat(spans).hasLength(1)
+        assertThat(spans.single().getLeadingMargin(true)).isEqualTo(64) // round(2 * 32)
+    }
+
+    @Test
+    fun `an image placeholder is centered`() {
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(10, 10))),
+            config,
+        )
+        val alignments = chapter.text.getSpans(0, chapter.text.length, AlignmentSpan.Standard::class.java)
+        assertThat(alignments).hasLength(1)
+        assertThat(alignments.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    // --- Chapter opening (Task 4): a chapter whose first EMITTED block is a heading (the
+    // chapter title) gets extra headroom above it and a forced center AlignmentSpan —
+    // unconditionally, regardless of config.publisherStyling. A chapter opening with a
+    // paragraph (or any other block) gets neither. ---
+
+    @Test
+    fun `a chapter that opens with a heading centers the title and gives it space above`() {
+        val ct = builder.build(
+            listOf(
+                Block.Heading(level = 1, text = StyledText("Chapter One")),
+                Block.Paragraph(StyledText("Body.")),
+            ),
+            config.copy(publisherStyling = false),
+        )
+        // Space above: the text begins with blank line(s) before the title.
+        assertThat(ct.text.toString()).startsWith("\n")
+        // The title's range carries a center AlignmentSpan.
+        val titleStart = ct.text.toString().indexOf("Chapter One")
+        val aligns = ct.text.getSpans(titleStart, titleStart + "Chapter One".length, AlignmentSpan::class.java)
+        assertThat(aligns).hasLength(1)
+        assertThat(aligns.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    @Test
+    fun `a page break before the opening heading still centers it as the chapter title`() {
+        val ct = builder.build(
+            listOf(
+                Block.PageBreak,
+                Block.Heading(level = 1, text = StyledText("Chapter One")),
+                Block.Paragraph(StyledText("Body.")),
+            ),
+            config.copy(publisherStyling = false),
+        )
+        // The heading is still the first EMITTED block (the page break contributes no text),
+        // so it should be centered and given headroom.
+        val titleStart = ct.text.toString().indexOf("Chapter One")
+        val aligns = ct.text.getSpans(titleStart, titleStart + "Chapter One".length, AlignmentSpan::class.java)
+        assertThat(aligns).hasLength(1)
+        assertThat(aligns.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    @Test
+    fun `a chapter that opens with a paragraph gets no chapter-title space or centering`() {
+        val ct = builder.build(
+            listOf(Block.Paragraph(StyledText("Body."))),
+            config.copy(publisherStyling = false),
+        )
+        assertThat(ct.text.toString()).doesNotContain("\n\nBody") // no prepended headroom
+        assertThat(ct.text.getSpans(0, ct.text.length, AlignmentSpan::class.java)).isEmpty()
+    }
+
+    @Test
+    fun `a mid-chapter heading is not force-centered or given extra headroom`() {
+        // Only the chapter-OPENING heading (the first emitted block) gets the Task 4
+        // treatment; a heading that shows up after other content has already been emitted
+        // is unaffected — it keeps only its existing bold+scale.
+        val ct = builder.build(
+            listOf(
+                Block.Paragraph(StyledText("Intro.")),
+                Block.Heading(level = 2, text = StyledText("Section Two")),
+            ),
+            config.copy(publisherStyling = false),
+        )
+        assertThat(ct.text.toString()).startsWith("Intro.") // no prepended headroom before the paragraph
+        val headingStart = ct.text.toString().indexOf("Section Two")
+        val aligns = ct.text.getSpans(headingStart, headingStart + "Section Two".length, AlignmentSpan::class.java)
+        assertThat(aligns).isEmpty()
+    }
+
+    // --- Drop cap (Task 5): the chapter's first body paragraph gets an enlarged initial when it
+    // opens on a letter. Reader baseline, applied regardless of config.publisherStyling. The
+    // initial stays a normal character (drawn large), so offsets never move. ---
+
+    @Test
+    fun `the first paragraph of a chapter gets a drop cap on its opening letter`() {
+        val ct = builder.build(
+            listOf(Block.Heading(1, StyledText("Ch. 1")), para("Hello world.")),
+            config,
+        )
+        val h = ct.text.toString().indexOf("Hello")
+        assertThat(ct.text.getSpans(h, h + 1, DropCapSpan::class.java)).hasLength(1)
+    }
+
+    @Test
+    fun `a first block paragraph opening the chapter caps its initial`() {
+        val ct = builder.build(listOf(para("Hello world.")), config)
+        assertThat(ct.text.getSpans(0, 1, DropCapSpan::class.java)).hasLength(1)
+    }
+
+    @Test
+    fun `a chapter whose first paragraph starts with a quote gets no drop cap`() {
+        val ct = builder.build(listOf(para("“Hi,” she said.")), config)
+        assertThat(ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)).isEmpty()
+    }
+
+    @Test
+    fun `a chapter whose first paragraph starts with a digit gets no drop cap`() {
+        val ct = builder.build(listOf(para("1984 was a year.")), config)
+        assertThat(ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)).isEmpty()
+    }
+
+    @Test
+    fun `a chapter opening on an image gets no drop cap`() {
+        val ct = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(20, 20)), para("Hello world.")),
+            config,
+        )
+        assertThat(ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)).isEmpty()
+    }
+
+    @Test
+    fun `a chapter opening on a scene break gets no drop cap`() {
+        val ct = builder.build(
+            listOf(Block.Paragraph(StyledText("***")), para("Hello world.")),
+            config,
+        )
+        assertThat(ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)).isEmpty()
+    }
+
+    @Test
+    fun `only the first paragraph of a chapter caps, not later ones`() {
+        val ct = builder.build(listOf(para("Hello world."), para("Second para here.")), config)
+        val caps = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)
+        assertThat(caps).hasLength(1)
+        // The single cap sits on the very first character, not the second paragraph's initial.
+        assertThat(ct.text.getSpanStart(caps.single())).isEqualTo(0)
+        assertThat(ct.text.getSpanEnd(caps.single())).isEqualTo(1)
+    }
+
+    @Test
+    fun `the drop cap covers exactly one character and inserts none`() {
+        val ct = builder.build(listOf(para("Hello world.")), config)
+        // No character inserted or removed: the chapter text is exactly the paragraph text.
+        assertThat(ct.text.toString()).isEqualTo("Hello world.")
+        val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
+        assertThat(ct.text.getSpanStart(cap)).isEqualTo(0)
+        assertThat(ct.text.getSpanEnd(cap)).isEqualTo(1)
+        // The normal-size glyph is hidden AND made zero-advance by a ZeroWidthSpan over the same
+        // one char, so the letter renders exactly once (large, from the leading margin) and
+        // contributes no inline width on any band line.
+        val hides = ct.text.getSpans(0, 1, ZeroWidthSpan::class.java)
+        assertThat(hides).hasLength(1)
+    }
+
+    @Test
+    fun `the drop cap hides its initial with a zero-width span, not a transparent color span`() {
+        val ct = builder.build(listOf(para("Hello world.")), config)
+        // The earlier transparent-ForegroundColorSpan hide is gone: no such span remains over the
+        // covered character, and a ZeroWidthSpan is what owns its rendering instead.
+        assertThat(ct.text.getSpans(0, 1, ForegroundColorSpan::class.java)).isEmpty()
+        assertThat(ct.text.getSpans(0, 1, ZeroWidthSpan::class.java)).hasLength(1)
+    }
+
+    @Test
+    fun `the drop cap reserves a left margin over its band of lines`() {
+        val ct = builder.build(listOf(para("Hello world.")), config)
+        val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
+        // Spans two lines; reserves a positive margin on those, none afterwards.
+        assertThat(cap.leadingMarginLineCount).isEqualTo(2)
+        assertThat(cap.getLeadingMargin(true)).isGreaterThan(0)
+        assertThat(cap.getLeadingMargin(false)).isEqualTo(0)
+    }
+
+    @Test
+    fun `the drop cap's reserved margin is at least the cap glyph's own width`() {
+        // Because the covered initial is now zero-advance (ZeroWidthSpan), DropCapSpan must
+        // reserve the FULL cap width (plus gutter) uniformly on every band line — not a margin
+        // reduced by a per-line character advance that only line 1 used to have. A margin below
+        // capAdvance would let wrapped body text on lines 2..N sit inside the drop-cap glyph.
+        val ct = builder.build(listOf(para("Hello world.")), config)
+        val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
+        assertThat(cap.getLeadingMargin(true)).isAtLeast(cap.capAdvance.toInt())
+    }
+
+    @Test
+    fun `the drop cap draws without crashing`() {
+        // Robolectric can't assert the pixels (device-verified in Task 8), but the draw path must
+        // at least run: a DropCapSpan drawn to a real canvas does not throw.
+        val cap = DropCapSpan(
+            initial = 'H',
+            linesSpanned = 2,
+            textSizePx = config.textSizePx,
+            lineHeightPx = config.textSizePx * config.lineSpacingMultiplier,
+            typeface = Typeface.SERIF,
+        )
+        val bitmap = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = android.text.TextPaint()
+        val layout = android.text.StaticLayout.Builder
+            .obtain("Hello", 0, 5, paint, 200).build()
+        cap.drawLeadingMargin(canvas, paint, 0, 1, 0, 30, 40, "Hello", 0, 1, true, layout)
+    }
+
+    @Test
+    fun `the drop cap is placed regardless of publisher styling`() {
+        val on = builder.build(listOf(para("Hello.")), config)
+        val off = builder.build(listOf(para("Hello.")), config.copy(publisherStyling = false))
+        assertThat(on.text.getSpans(0, on.text.length, DropCapSpan::class.java)).hasLength(1)
+        assertThat(off.text.getSpans(0, off.text.length, DropCapSpan::class.java)).hasLength(1)
+    }
+
+    @Test
+    fun `the drop cap does not move page-break offsets`() {
+        // The capped chapter inserts no characters, so the break still pins exactly to plain
+        // character math: "Hello." (6) + "\n" (1) = offset 7, where "Next." begins.
+        val capped = builder.build(
+            listOf(para("Hello."), Block.PageBreak, para("Next.")),
+            config,
+        )
+        assertThat(capped.text.toString()).isEqualTo("Hello.\nNext.")
+        assertThat(capped.breakOffsets).containsExactly(7)
+        // And the cap really was placed (this is a letter-opening chapter).
+        assertThat(capped.text.getSpans(0, 1, DropCapSpan::class.java)).hasLength(1)
     }
 }

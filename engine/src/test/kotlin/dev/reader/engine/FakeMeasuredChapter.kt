@@ -18,6 +18,7 @@ class FakeMeasuredChapter(
     private val heights: List<Int>,
     private val charsPerLine: List<Int>,
     private val hardBreaks: Set<Int> = emptySet(),
+    private val headingLines: Set<Int> = emptySet(),
 ) : MeasuredChapter {
 
     init {
@@ -38,6 +39,7 @@ class FakeMeasuredChapter(
     override fun lineStartOffset(line: Int): Int = lineStarts[checked(line)]
     override fun lineEndOffset(line: Int): Int = checked(line).let { lineStarts[it] + charsPerLine[it] }
     override fun isBreakBefore(line: Int): Boolean = checked(line) in hardBreaks
+    override fun isHeadingLine(line: Int): Boolean = checked(line) in headingLines
 
     private fun checked(line: Int): Int {
         require(line in 0 until lineCount) { "line $line out of range 0 until $lineCount" }
@@ -57,10 +59,12 @@ class FakeMeasuredChapter(
             lineHeightPx: Int = 20,
             charsPerLine: Int = 40,
             hardBreaks: Set<Int> = emptySet(),
+            headingLines: Set<Int> = emptySet(),
         ) = FakeMeasuredChapter(
             heights = List(lineCount) { lineHeightPx },
             charsPerLine = List(lineCount) { charsPerLine },
             hardBreaks = hardBreaks,
+            headingLines = headingLines,
         )
     }
 }

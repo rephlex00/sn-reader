@@ -34,8 +34,36 @@ class Paginator {
                 measured.lineBottomPx(line) - measured.lineTopPx(startLine) > pageHeightPx
 
             if (atEnd || hardBreak || overflows) {
-                pages += pageOf(pages.size, measured, startLine, line - 1)
-                startLine = line
+                var lastLine = line - 1
+                // Keep-heading: when the page fills up (overflow) right after a heading — the
+                // heading is the page's trailing line and its body would open the NEXT page —
+                // pull the heading down to sit with its body instead of stranding it at the
+                // foot. Only on a natural fill (`overflows`, i.e. not `atEnd`/`hardBreak`), so
+                // an explicit publisher break is never second-guessed and the last page's
+                // trailing heading (no body to follow) is left alone.
+                //   - Walk back over a multi-line heading to its first line.
+                //   - Guard (never empties a page / never loops): if the heading starts at the
+                //     page's own `startLine`, there is no non-heading content to keep here, so
+                //     leave it in place. A heading taller than a whole page still lands here and
+                //     the existing overflow rule places it alone; this rule does not fight that.
+                if (overflows && !hardBreak && measured.isHeadingLine(lastLine) && !measured.isHeadingLine(lastLine + 1)) {
+                    var headingStart = lastLine
+                    while (headingStart > startLine && measured.isHeadingLine(headingStart - 1)) {
+                        headingStart--
+                    }
+                    // Move only when (a) there is non-heading content to keep on this page —
+                    // the heading does not start at `startLine`, else the page would empty and
+                    // the loop could stall — and (b) the heading plus the body line that just
+                    // overflowed still fit on a fresh page measured from the heading's top. The
+                    // scan resumes at the next line and never re-checks the moved span, so
+                    // without (b) an over-tall heading+body could land on one page. When either
+                    // fails, leave the heading in place; the greedy/overflow rules stay correct.
+                    val movedFits =
+                        measured.lineBottomPx(line) - measured.lineTopPx(headingStart) <= pageHeightPx
+                    if (headingStart > startLine && movedFits) lastLine = headingStart - 1
+                }
+                pages += pageOf(pages.size, measured, startLine, lastLine)
+                startLine = lastLine + 1
             }
         }
         return pages

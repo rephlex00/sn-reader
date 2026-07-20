@@ -1225,7 +1225,7 @@ class ReaderActivityTest {
         fontFamily = "serif",
         textSizePx = 34f,
         lineSpacingMultiplier = 1.4f,
-        marginPx = 48,
+        marginPx = 72,
         justified = true,
         hyphenated = true,
         viewportWidthPx = 800,

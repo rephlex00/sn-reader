@@ -24,14 +24,36 @@ import dev.reader.engine.BlockStyle
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.StyledText
 import dev.reader.engine.TextAlign
+import dev.reader.engine.dropCapLength
+import dev.reader.engine.isSeparatorLine
 import dev.reader.formats.epub.sampleSizeFor
 import kotlin.math.roundToInt
 import android.text.style.StyleSpan as AndroidStyleSpan
 
-/** A chapter as a single styled string, plus the offsets where a hard page break falls. */
-data class ChapterText(val text: Spanned, val breakOffsets: Set<Int>)
+/**
+ * A chapter as a single styled string, plus the offsets where a hard page break falls and the
+ * character ranges (`start until end`) each heading block occupies. [headingRanges] feed
+ * [AndroidMeasuredChapter.isHeadingLine] so the paginator can keep a heading with its body.
+ */
+data class ChapterText(
+    val text: Spanned,
+    val breakOffsets: Set<Int>,
+    val headingRanges: List<IntRange> = emptyList(),
+)
 
 private const val BLOCK_SEPARATOR = "\n\n"
+
+/**
+ * The separator joining two consecutive flowing body paragraphs — a single newline, so the
+ * paragraph gap equals line spacing instead of a full blank line. Everything else (headings,
+ * images, quotes, list items, and scene-break paragraphs) still gets [BLOCK_SEPARATOR]'s
+ * breathing room; see [separatorBetween].
+ */
+private const val PARAGRAPH_JOIN = "\n"
+
+/** The reader's own first-line indent for a body paragraph, in ems of the reader's text size. */
+private const val PARAGRAPH_INDENT_EM = 1.5f
+
 private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 5 to 1.1f, 6 to 1.05f)
 
 /**
@@ -41,26 +63,93 @@ private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 
  */
 private const val IMAGE_PLACEHOLDER = "￼"
 
+/** How many lines the chapter-opening drop cap spans — the enlarged initial's height. */
+private const val DROP_CAP_LINES = 2
+
 /**
  * Flattens [Block]s into one Spanned per chapter. One string per chapter (rather than
  * per block) is what lets a single StaticLayout do all the shaping, and what makes a
  * character offset a meaningful locator.
+ *
+ * [typefaces] resolves [RenderConfig.fontFamily] to the reader's [Typeface] — needed only so the
+ * chapter-opening drop cap ([DropCapSpan]) is painted in the same face as the body text. Defaults
+ * to [TypefaceProvider.Platform] so non-rendering callers (metadata/cover extraction, tests) keep
+ * working unchanged; production passes the bundled provider so the cap matches the chosen font.
  */
-class SpannedChapterBuilder {
+class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefaceProvider.Platform) {
 
     fun build(blocks: List<Block>, config: RenderConfig): ChapterText {
         val sb = SpannableStringBuilder()
         val breaks = mutableSetOf<Int>()
+        val headingRanges = mutableListOf<IntRange>()
         var pendingBreak = false
+        var prev: Block? = null
+        // Whether any block has emitted text yet — true once `prev` is first set below.
+        // Used to detect the chapter-OPENING heading (the chapter title): only the FIRST
+        // emitted block, if it's a Block.Heading, gets the extra headroom + forced centering.
+        // A leading PageBreak or a non-emitting image (null/undecodable bytes) before the
+        // heading doesn't count as "first emitted" — this flag only flips once something
+        // actually contributes text, exactly mirroring the `prev` update below.
+        var hasEmitted = false
+        // Whether a chapter-opening drop cap may still be placed. The enlarged initial goes on the
+        // chapter's FIRST body paragraph, provided only the opening title(s) precede it. The first
+        // other emitted block — an image, a scene-break line, a quote, a list item — means the
+        // chapter doesn't open on prose, so no cap. Decided exactly once (see the drop-cap block
+        // below), then this stays false for the rest of the chapter.
+        var dropCapEligible = true
 
         for (block in blocks) {
             if (block is Block.PageBreak) {
                 pendingBreak = true
                 continue
             }
-            if (sb.isNotEmpty()) sb.append(BLOCK_SEPARATOR)
+            if (sb.isNotEmpty()) sb.append(separatorBetween(prev, block))
             val start = sb.length
-            appendBlock(sb, block, config)
+            // A body paragraph gets the reader's own first-line indent UNLESS it opens a
+            // section: chapter start, or right after a heading/image/scene-break/page-break
+            // (pendingBreak still true here — an explicit PageBreak occurred since the last
+            // emitted block, even though the break itself contributed no text of its own).
+            val indentParagraph = !pendingBreak && !isBreakLike(prev)
+            // The chapter-opening title: the first block to actually emit text is a Heading.
+            // Prepended BEFORE the heading's own text so the title itself (not the blank
+            // lines) is what a search for its text finds at the front of the chapter.
+            val isOpeningHeading = !hasEmitted && block is Block.Heading
+            if (isOpeningHeading) sb.append(BLOCK_SEPARATOR)
+            val headingStart = sb.length
+            appendBlock(sb, block, config, indentParagraph)
+            // Record the heading's own char range (past any opening-title headroom, from the
+            // first heading character to sb.length) so AndroidMeasuredChapter can map it to the
+            // heading's lines for the paginator's keep-heading rule. Only when the heading
+            // actually emitted text — an empty heading contributes no line to keep.
+            if (block is Block.Heading && sb.length > headingStart) {
+                headingRanges += headingStart until sb.length
+            }
+            if (isOpeningHeading) {
+                // Reader baseline, unconditional (regardless of config.publisherStyling): the
+                // chapter title is centered — this is IN ADDITION to the existing heading
+                // bold+scale, which appendBlock's own Heading branch already applied above.
+                sb.setSpan(
+                    AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+                    headingStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+            if (sb.length > start) hasEmitted = true
+            // Drop cap: reader baseline, applied regardless of config.publisherStyling (like the
+            // centered opening title and scene breaks). Once a block actually emits text and we
+            // haven't yet decided, classify the opener: an opening heading (the title) is
+            // transparent — stay eligible for the paragraph that follows; a body paragraph is the
+            // target — cap its initial when it's a letter (dropCapLength == 1), then done; anything
+            // else opening the chapter (image, scene-break line, quote, list item) means no cap.
+            if (dropCapEligible && sb.length > start) {
+                when {
+                    block is Block.Heading -> Unit // the opening title; the next prose still caps
+                    block is Block.Paragraph && !isSeparatorLine(block.text.text) -> {
+                        if (dropCapLength(block.text.text) == 1) applyDropCap(sb, start, config)
+                        dropCapEligible = false
+                    }
+                    else -> dropCapEligible = false // image / scene break / quote / list opener
+                }
+            }
             // The break offset is recorded only once a block actually contributes text,
             // and pins to that block's own first character — after the separator, and
             // past any text-free block sitting between the break and the text. A block is
@@ -76,16 +165,101 @@ class SpannedChapterBuilder {
                 breaks += start
                 pendingBreak = false
             }
+            if (sb.length > start) prev = block
         }
-        return ChapterText(sb, breaks)
+        return ChapterText(sb, breaks, headingRanges)
     }
 
-    private fun appendBlock(sb: SpannableStringBuilder, block: Block, config: RenderConfig) {
+    /**
+     * Enlarges the initial at [textStart] into a chapter-opening drop cap. Two spans over exactly
+     * `[textStart, textStart + 1)`, inserting/removing nothing so every offset is preserved:
+     *  - a [DropCapSpan] that reserves the left margin over the first [DROP_CAP_LINES] lines and
+     *    draws the big glyph once, in the reader's face (resolved via [typefaces]) and gray;
+     *  - a [ZeroWidthSpan] so the ordinary-size glyph the layout would otherwise paint is both
+     *    invisible AND zero-advance — the covered character contributes no inline width, so
+     *    [DropCapSpan]'s margin can reserve one uniform width for every band line rather than
+     *    special-casing the line that still contains the character. Applied last so it owns the
+     *    character's rendering outright — a publisher colour/gray span on that same character no
+     *    longer matters, since [ZeroWidthSpan] is what Android calls to draw the run, not it.
+     *
+     * The cap's size derives from the reader's typography: body size ([RenderConfig.textSizePx])
+     * and line height (`textSizePx * lineSpacingMultiplier`), so it scales with the Aa settings.
+     */
+    private fun applyDropCap(sb: SpannableStringBuilder, textStart: Int, config: RenderConfig) {
+        val lineHeightPx = config.textSizePx * config.lineSpacingMultiplier
+        val span = DropCapSpan(
+            initial = sb[textStart],
+            linesSpanned = DROP_CAP_LINES,
+            textSizePx = config.textSizePx,
+            lineHeightPx = lineHeightPx,
+            typeface = typefaces.get(config.fontFamily),
+        )
+        sb.setSpan(span, textStart, textStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        sb.setSpan(
+            ZeroWidthSpan(),
+            textStart, textStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+    }
+
+    /**
+     * The separator between the previously-EMITTED block [prev] (null at chapter start) and
+     * the block about to be appended, [cur]. A single [PARAGRAPH_JOIN] newline when both are
+     * flowing body paragraphs — neither a scene-break line — so the gap between them equals
+     * line spacing; [BLOCK_SEPARATOR]'s blank line otherwise (headings, images, quotes, list
+     * items, and scene-break paragraphs all keep their breathing room).
+     */
+    private fun separatorBetween(prev: Block?, cur: Block): String {
+        val bothFlowingParagraphs = prev is Block.Paragraph && cur is Block.Paragraph &&
+            !isSeparatorLine(prev.text.text) && !isSeparatorLine(cur.text.text)
+        return if (bothFlowingParagraphs) PARAGRAPH_JOIN else BLOCK_SEPARATOR
+    }
+
+    /**
+     * Whether [prev] is a section-opening block — the reason a paragraph right after it stays
+     * flush rather than getting the reader's first-line indent (see [PARAGRAPH_INDENT_EM]'s use
+     * in the `Paragraph` branch of [appendBlock]). True for chapter start (`null`), a heading,
+     * an image, or a scene-break paragraph. False for a quote or list item: those don't open a
+     * new section, so the body paragraph following one still indents.
+     */
+    private fun isBreakLike(prev: Block?): Boolean = when (prev) {
+        null -> true
+        is Block.Heading -> true
+        is Block.Image -> true
+        is Block.Paragraph -> isSeparatorLine(prev.text.text)
+        else -> false
+    }
+
+    private fun appendBlock(
+        sb: SpannableStringBuilder,
+        block: Block,
+        config: RenderConfig,
+        indentParagraph: Boolean,
+    ) {
         when (block) {
             is Block.Paragraph -> {
-                val start = sb.length
-                appendStyled(sb, block.text, config)
-                applyBlockStyle(sb, start, sb.length, block.style, config)
+                // A scene-break line ("***" etc.) renders as a band of blank vertical space,
+                // not centered glyphs: no visible text, no AlignmentSpan. It still counts as
+                // an emitted block — the appended "\n" advances sb.length, so the break-offset
+                // / prev-emission logic in build() still sees it, and separatorBetween /
+                // isBreakLike still classify it as a separator paragraph (not a body paragraph)
+                // for the block-join and first-after-break-indent rules above.
+                if (isSeparatorLine(block.text.text)) {
+                    sb.append("\n")
+                } else {
+                    val start = sb.length
+                    appendStyled(sb, block.text, config)
+                    applyBlockStyle(sb, start, sb.length, block.style, config)
+
+                    // Reader baseline, applied regardless of config.publisherStyling: a body
+                    // paragraph gets the reader's own first-line indent, unless it opens a
+                    // section (indentParagraph false) or the publisher already indented it.
+                    if (indentParagraph && !(config.publisherStyling && block.style.textIndentEm != null)) {
+                        sb.setSpan(
+                            LeadingMarginSpan.Standard((PARAGRAPH_INDENT_EM * config.textSizePx).roundToInt(), 0),
+                            start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                        )
+                    }
+                }
             }
 
             is Block.Heading -> {
@@ -171,6 +345,12 @@ class SpannedChapterBuilder {
         val start = sb.length
         sb.append(IMAGE_PLACEHOLDER)
         sb.setSpan(ImageSpan(drawable, ImageSpan.ALIGN_BASELINE), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        // Reader baseline, regardless of config.publisherStyling: the image centers on its
+        // own line rather than sitting flush left.
+        sb.setSpan(
+            AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+            start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
     }
 
     private fun decodeGrayscaleDrawable(bytes: ByteArray, maxWidthPx: Int, maxHeightPx: Int): BitmapDrawable? {
@@ -289,9 +469,12 @@ class SpannedChapterBuilder {
      * reader). It is still resolved into the model; the renderer simply ignores it.
      *
      * Margins ([BlockStyle.marginTopEm]/[marginBottomEm]) are deliberately NOT applied here:
-     * inter-block spacing would mean a style-driven separator, and the page-break offset
-     * logic in [build] is pinned to the fixed "\n\n" separator length — that invariant was
-     * hardware-tuned and is not worth risking for margin spacing. Deferred; see the plan.
+     * inter-block spacing would mean a per-block, style-driven separator on top of the
+     * reader's own two ([BLOCK_SEPARATOR] / [PARAGRAPH_JOIN]) — a third, publisher-sized
+     * gap the hardware-tuned page-break offset logic in [build] has never been proven
+     * against. [build]'s break-offset recording itself is fine with a variable-length
+     * separator (it pins to the dynamic `sb.length`, not a fixed width) — margins are
+     * deferred on their own terms, not because of that invariant. See the plan.
      */
     private fun applyBlockStyle(
         sb: SpannableStringBuilder,

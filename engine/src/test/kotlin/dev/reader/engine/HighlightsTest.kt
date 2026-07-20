@@ -20,6 +20,13 @@ class HighlightsTest {
     }
 
     @Test
+    fun `a drag lifting at a word's left edge reaches that word, not one short`() {
+        // "brown" is [10,15); ending the drag exactly at its start (the pen tip on its left edge) must
+        // include "brown" — the old strict rule stopped at "quick", the shortened-highlight bug.
+        assertThat(snapToWords(text, 4, 10)).isEqualTo(HighlightRange(4, 15))
+    }
+
+    @Test
     fun `snapToWords on a single point returns the enclosing word`() {
         assertThat(snapToWords(text, 12, 12)).isEqualTo(HighlightRange(10, 15))
     }

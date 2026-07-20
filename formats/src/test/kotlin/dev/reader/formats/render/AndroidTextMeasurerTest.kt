@@ -1,5 +1,6 @@
 package dev.reader.formats.render
 
+import android.text.Layout
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.Block
 import dev.reader.engine.InlineStyle
@@ -110,5 +111,41 @@ class AndroidTextMeasurerTest {
         val measured = measurer.measure(emptyList(), config)
         assertThat(measured.lineCount).isEqualTo(1) // StaticLayout always reports one line
         assertThat(measured.lineEndOffset(0)).isEqualTo(0)
+    }
+
+    @Test
+    fun `a heading's lines are reported as heading lines and body lines are not`() {
+        // The keep-heading rule's metadata, end to end: the heading block's char range maps to
+        // the layout line(s) the heading occupies, and the surrounding body lines do not.
+        val measured = measurer.measure(
+            listOf(
+                para("An introductory paragraph that sits before the heading."),
+                Block.Heading(2, StyledText("A Section Heading")),
+                para("Body text that follows the heading and should stay with it."),
+            ),
+            config,
+        ) as AndroidMeasuredChapter
+
+        val headingOffset = measured.layout.text.indexOf("A Section Heading")
+        val headingLine = measured.layout.getLineForOffset(headingOffset)
+
+        assertThat(measured.isHeadingLine(headingLine)).isTrue()
+        assertThat(measured.isHeadingLine(0)).isFalse() // intro paragraph
+        assertThat(measured.isHeadingLine(measured.lineCount - 1)).isFalse() // body after
+    }
+
+    @Test
+    fun `a chapter with no heading reports no heading lines`() {
+        val measured = measurer.measure(listOf(para("Just a plain paragraph.")), config)
+        assertThat((0 until measured.lineCount).none { measured.isHeadingLine(it) }).isTrue()
+    }
+
+    @Test
+    fun `justified text uses the high-quality break strategy so it hyphenates and tightens`() {
+        val measured = measurer.measure(
+            listOf(para("word ".repeat(80).trim())),
+            config.copy(justified = true, hyphenated = true),
+        ) as AndroidMeasuredChapter
+        assertThat(measured.layout.breakStrategy).isEqualTo(Layout.BREAK_STRATEGY_HIGH_QUALITY)
     }
 }

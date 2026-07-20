@@ -28,7 +28,7 @@ class ReaderPrefsTest {
         assertThat(prefs.fontFamily).isEqualTo("literata")
         assertThat(prefs.textSizePx).isEqualTo(34f)
         assertThat(prefs.lineSpacingMultiplier).isEqualTo(1.4f)
-        assertThat(prefs.marginPx).isEqualTo(48)
+        assertThat(prefs.marginPx).isEqualTo(72)
         assertThat(prefs.justified).isTrue()
         assertThat(prefs.hyphenated).isTrue()
         assertThat(prefs.inferHeadings).isTrue()
@@ -80,7 +80,7 @@ class ReaderPrefsTest {
             fontFamily = "literata",
             textSizePx = 34f,
             lineSpacingMultiplier = 1.4f,
-            marginPx = 48,
+            marginPx = 72,
             justified = true,
             hyphenated = true,
             viewportWidthPx = 1404,
@@ -91,14 +91,14 @@ class ReaderPrefsTest {
 
     @Test
     fun `the widest margin preset builds a valid RenderConfig on the device viewport`() {
-        // The Aa sheet's widest preset (80px) must never hand RenderConfig.init a non-positive
+        // The Aa sheet's widest preset (120px) must never hand RenderConfig.init a non-positive
         // content width or height on the real ~1404x1872 panel. This pins that the config builds
         // (init would throw otherwise) and that both content dimensions stay positive.
         val prefs = ReaderPrefs(context)
-        prefs.marginPx = 80
+        prefs.marginPx = 120
 
         val built = prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
-        assertThat(built.marginPx).isEqualTo(80)
+        assertThat(built.marginPx).isEqualTo(120)
         assertThat(built.contentWidthPx).isGreaterThan(0)
         assertThat(built.contentHeightPx).isGreaterThan(0)
     }
@@ -129,5 +129,10 @@ class ReaderPrefsTest {
         val configAfter = prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
 
         assertThat(configAfter).isEqualTo(configBefore)
+    }
+
+    @Test
+    fun `the default margin is the medium preset`() {
+        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).marginPx).isEqualTo(72)
     }
 }
