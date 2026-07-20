@@ -206,6 +206,11 @@ open class ReaderActivity : AppCompatActivity() {
      *  [toggleProgressBar] — so the hot [showPage] path never constructs [ReaderPrefs] itself. */
     private var showProgressBar: Boolean = true
 
+    /** Mirrors [ReaderPrefs.fasterPageTurns] / [ReaderPrefs.fullRefreshEveryN], read once at open and
+     *  kept current by the Aa toggle — so the hot page-turn path never constructs [ReaderPrefs]. */
+    private var fasterPageTurns: Boolean = false
+    private var fullRefreshEveryN: Int = 6
+
     /** Whole-book progress `[0,1]` of the page [showPage] last drew — captured there (independently
      *  of [showProgressBar]) so [persistPosition] can store it for the library's percentage. */
     private var currentBookProgress: Float = 0f
@@ -235,7 +240,7 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private var prefetchJob: Job? = null
 
-    /** Page turns since the last full-panel refresh; drives the [REFRESH_CADENCE] ghost-clear. */
+    /** Page turns since the last full-panel refresh; drives the [shouldFullRefresh] ghost-clear. */
     private var turnsSinceRefresh = 0
 
     /** Whether the Aa font options have been given their preview typefaces yet (loaded once, on
@@ -272,6 +277,7 @@ open class ReaderActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pageView = PageView(this)
+        pageView.epd = EinkController.forContext(this)
 
         // Wrap the page in a container so the overlay can draw ABOVE it. The overlay is added after
         // pageView, so it sits on top; it is not clickable itself, so page-area taps fall through to
@@ -910,6 +916,10 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.toggle_publisher).setOnClickListener { applySettingsChange { p -> p.publisherStyling = !p.publisherStyling } }
         overlay.findViewById<View>(R.id.toggle_headings).setOnClickListener { applySettingsChange { p -> p.inferHeadings = !p.inferHeadings } }
         overlay.findViewById<View>(R.id.toggle_progress).setOnClickListener { toggleProgressBar() }
+        overlay.findViewById<View>(R.id.toggle_faster_turns).setOnClickListener { toggleFasterTurns() }
+        overlay.findViewById<View>(R.id.refresh_freq_3).setOnClickListener { applyRefreshFrequency(3) }
+        overlay.findViewById<View>(R.id.refresh_freq_6).setOnClickListener { applyRefreshFrequency(6) }
+        overlay.findViewById<View>(R.id.refresh_freq_10).setOnClickListener { applyRefreshFrequency(10) }
     }
 
     /** Bumps the persisted text size by [deltaPx], clamped to the sane range, then re-paginates. A
@@ -1017,6 +1027,27 @@ open class ReaderActivity : AppCompatActivity() {
         refreshSheet()
     }
 
+    /** Flips [ReaderPrefs.fasterPageTurns] and resets the turn counter so the new cadence (every
+     *  turn, or every [ReaderPrefs.fullRefreshEveryN]th) starts fresh rather than firing on a count
+     *  accumulated under the old mode. */
+    private fun toggleFasterTurns() {
+        val prefs = ReaderPrefs(this)
+        prefs.fasterPageTurns = !prefs.fasterPageTurns
+        fasterPageTurns = prefs.fasterPageTurns
+        turnsSinceRefresh = 0 // start the new cadence fresh so the next full refresh lands correctly
+        refreshSheet()
+    }
+
+    /** Persists a new [ReaderPrefs.fullRefreshEveryN] and resets the turn counter for the same
+     *  reason [toggleFasterTurns] does. */
+    private fun applyRefreshFrequency(pages: Int) {
+        val prefs = ReaderPrefs(this)
+        prefs.fullRefreshEveryN = pages
+        fullRefreshEveryN = prefs.fullRefreshEveryN
+        turnsSinceRefresh = 0
+        refreshSheet()
+    }
+
     /** Syncs the sheet's controls to the current [ReaderPrefs]: the selected option in each group is
      * marked with a boxed outline (see [setOptionSelected]), the size readout shows the current px,
      * and each [ToggleSwitchView] reflects its boolean. Pure View work. */
@@ -1042,6 +1073,13 @@ open class ReaderActivity : AppCompatActivity() {
         setToggle(R.id.toggle_publisher_switch, prefs.publisherStyling)
         setToggle(R.id.toggle_headings_switch, prefs.inferHeadings)
         setToggle(R.id.toggle_progress_switch, prefs.showProgressBar)
+
+        setToggle(R.id.toggle_faster_turns_switch, prefs.fasterPageTurns)
+        overlay.findViewById<View>(R.id.refresh_frequency_row).visibility =
+            if (prefs.fasterPageTurns) View.VISIBLE else View.GONE
+        setOptionSelected(R.id.refresh_freq_3, prefs.fullRefreshEveryN == 3)
+        setOptionSelected(R.id.refresh_freq_6, prefs.fullRefreshEveryN == 6)
+        setOptionSelected(R.id.refresh_freq_10, prefs.fullRefreshEveryN == 10)
     }
 
     private fun setOptionSelected(id: Int, selected: Boolean) {
@@ -1224,6 +1262,8 @@ open class ReaderActivity : AppCompatActivity() {
                 // toggle mirrors ReaderPrefs so showPage — the hot path — never constructs it itself.
                 chapterWeights = doc.chapterWeights
                 showProgressBar = ReaderPrefs(this@ReaderActivity).showProgressBar
+                fasterPageTurns = ReaderPrefs(this@ReaderActivity).fasterPageTurns
+                fullRefreshEveryN = ReaderPrefs(this@ReaderActivity).fullRefreshEveryN
                 bookPath = file.path
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
@@ -1396,12 +1436,15 @@ open class ReaderActivity : AppCompatActivity() {
                 // turned to even across a battery pull. showPage recorded it; this writes it, off
                 // the main thread and serialized (see flushPosition / positionWriteScope).
                 flushPosition()
-                // Refresh cadence: every REFRESH_CADENCE actual page turns, force a full-panel
-                // redraw to clear accumulated e-ink ghosting. Counter-driven, not time-driven, so
-                // it holds no steady state. Only genuine turns count — an overlay toggle (which
-                // yields null above and never reaches here), a settings re-paginate, or a TOC jump
-                // do not, matching "every N turns" rather than "every N redraws".
-                if (++turnsSinceRefresh >= REFRESH_CADENCE) {
+                // Refresh cadence: a full-panel redraw to clear accumulated e-ink ghosting, paced by
+                // the prefs-driven cadence (see shouldFullRefresh) — by default every turn is a full
+                // refresh; with Faster page turns on, only every fullRefreshEveryN'th turn is.
+                // Counter-driven, not time-driven, so it holds no steady state. Only genuine turns
+                // count — an overlay toggle (which yields null above and never reaches here), a
+                // settings re-paginate, or a TOC jump do not, matching "every N turns" rather than
+                // "every N redraws".
+                turnsSinceRefresh++
+                if (shouldFullRefresh(fasterPageTurns, fullRefreshEveryN, turnsSinceRefresh)) {
                     pageView.fullRefresh()
                     turnsSinceRefresh = 0
                 }
@@ -1568,9 +1611,6 @@ open class ReaderActivity : AppCompatActivity() {
     companion object {
         /** String extra: an absolute book path, set by [LibraryActivity] when opening a tap. */
         const val EXTRA_BOOK_PATH = "dev.reader.ui.EXTRA_BOOK_PATH"
-
-        /** Full-panel refresh cadence (spec default): a ghost-clearing redraw every N page turns. */
-        private const val REFRESH_CADENCE = 8
 
         // The Aa sheet's bounded value sets. Text size is a stepper over [MIN, MAX] by STEP; the
         // others are presets. All chosen so the resulting RenderConfig stays valid on the device

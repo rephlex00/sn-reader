@@ -132,6 +132,34 @@ class ReaderPrefsTest {
     }
 
     @Test
+    fun `faster page turns defaults off and round-trips`() {
+        val prefs = ReaderPrefs(context)
+        assertThat(prefs.fasterPageTurns).isFalse()
+        prefs.fasterPageTurns = true
+        assertThat(ReaderPrefs(context).fasterPageTurns).isTrue()
+    }
+
+    @Test
+    fun `full refresh frequency defaults to 6 and round-trips an offered value`() {
+        val prefs = ReaderPrefs(context)
+        assertThat(prefs.fullRefreshEveryN).isEqualTo(6)
+        prefs.fullRefreshEveryN = 10
+        assertThat(ReaderPrefs(context).fullRefreshEveryN).isEqualTo(10)
+    }
+
+    @Test
+    fun `an out-of-set stored frequency falls back to the default on read`() {
+        val prefs = ReaderPrefs(context)
+        prefs.fullRefreshEveryN = 999 // not in REFRESH_FREQUENCY_OPTIONS
+        assertThat(ReaderPrefs(context).fullRefreshEveryN).isEqualTo(6)
+    }
+
+    @Test
+    fun `the offered frequencies are 3 6 10`() {
+        assertThat(REFRESH_FREQUENCY_OPTIONS).containsExactly(3, 6, 10).inOrder()
+    }
+
+    @Test
     fun `the default margin is the medium preset`() {
         assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).marginPx).isEqualTo(72)
     }

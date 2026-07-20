@@ -283,22 +283,43 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `a full-panel refresh fires every REFRESH_CADENCE page turns`() {
+    fun `by default every page turn triggers a clean refresh`() {
+        clearReaderPrefs()
         val controller = openedMultiPage()
         val activity = controller.get()
-        val pv = pageViewOf(activity)
-        assertThat(pv.fullRefreshCount).isEqualTo(0)
+        val calls = intArrayOf(0)
+        pageViewOf(activity).epd = object : EpdRefresher {
+            override val available = true
+            override fun cleanRefresh(): Boolean { calls[0]++; return true }
+        }
+        // Three genuine page turns (NEXT within the multi-page chapter — multiPageEpub's 60
+        // paragraphs paginate to well more than 3 pages, so none of these run off the end).
+        repeat(3) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
+        assertThat(calls[0]).isEqualTo(3)
+    }
 
-        // Alternate NEXT/PREVIOUS on a 2-page book: each is a genuine turn (there is always
-        // somewhere to go between pages 0 and 1), so 8 of them reaches the cadence exactly once.
-        repeat(8) { i -> pv.onTap!!.invoke(if (i % 2 == 0) TapZone.NEXT else TapZone.PREVIOUS) }
-        assertThat(pv.fullRefreshCount).isEqualTo(1)
+    @Test
+    fun `faster mode refreshes only every N turns and the frequency row toggles with it`() {
+        clearReaderPrefs()
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.settings_button).performClick()
 
-        // The counter reset: the next 8 turns fire it again, the 7 in between do not.
-        repeat(7) { i -> pv.onTap!!.invoke(if (i % 2 == 0) TapZone.NEXT else TapZone.PREVIOUS) }
-        assertThat(pv.fullRefreshCount).isEqualTo(1)
-        pv.onTap!!.invoke(TapZone.NEXT)
-        assertThat(pv.fullRefreshCount).isEqualTo(2)
+        // Frequency row hidden until faster mode is on.
+        assertThat(activity.findViewById<View>(R.id.refresh_frequency_row).visibility).isEqualTo(View.GONE)
+        activity.findViewById<View>(R.id.toggle_faster_turns).performClick()
+        assertThat(activity.findViewById<View>(R.id.refresh_frequency_row).visibility).isEqualTo(View.VISIBLE)
+        activity.findViewById<View>(R.id.refresh_freq_3).performClick() // N = 3
+
+        val calls = intArrayOf(0)
+        pageViewOf(activity).epd = object : EpdRefresher {
+            override val available = true
+            override fun cleanRefresh(): Boolean { calls[0]++; return true }
+        }
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY) // hide overlay so taps turn pages
+        repeat(3) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
+        assertThat(calls[0]).isEqualTo(1) // one clean refresh across 3 turns at N=3
     }
 
     @Test

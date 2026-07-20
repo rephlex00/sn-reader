@@ -234,6 +234,32 @@ class PageViewTest {
         assertThat(view.pendingSelectionForTest).isNull()
     }
 
+    @Test
+    fun `fullRefresh uses the EPD clean refresh when available and still counts`() {
+        val view = laidOutPageView()
+        val calls = intArrayOf(0)
+        view.epd = object : EpdRefresher {
+            override val available = true
+            override fun cleanRefresh(): Boolean { calls[0]++; return true }
+        }
+        val before = view.fullRefreshCount
+        view.fullRefresh()
+        assertThat(calls[0]).isEqualTo(1)
+        assertThat(view.fullRefreshCount).isEqualTo(before + 1)
+    }
+
+    @Test
+    fun `fullRefresh falls back without throwing when the EPD refresh is unavailable`() {
+        val view = laidOutPageView()
+        view.epd = object : EpdRefresher {
+            override val available = false
+            override fun cleanRefresh(): Boolean = false
+        }
+        val before = view.fullRefreshCount
+        view.fullRefresh() // must not throw; falls back to invalidate()
+        assertThat(view.fullRefreshCount).isEqualTo(before + 1)
+    }
+
     private fun dispatch(
         view: PageView, toolType: Int,
         downX: Float, downY: Float, upX: Float, upY: Float,
