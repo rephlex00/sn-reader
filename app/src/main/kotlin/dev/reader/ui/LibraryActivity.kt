@@ -12,6 +12,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SearchView
 import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -52,6 +53,27 @@ fun menuItemIdForSortOrder(order: SortOrder): Int = when (order) {
     SortOrder.AUTHOR -> R.id.sort_author
     SortOrder.RECENTLY_ADDED -> R.id.sort_recently_added
     SortOrder.RECENTLY_OPENED -> R.id.sort_recently_opened
+}
+
+/** [MenuItem.getItemId] -> the [StatusFilter] it selects, or null for an item this menu doesn't own. */
+fun statusFilterForMenuItemId(itemId: Int): StatusFilter? = when (itemId) {
+    R.id.filter_all -> StatusFilter.ALL
+    R.id.filter_not_started -> StatusFilter.NOT_STARTED
+    R.id.filter_in_progress -> StatusFilter.IN_PROGRESS
+    R.id.filter_finished -> StatusFilter.FINISHED
+    else -> null
+}
+
+/**
+ * The inverse of [statusFilterForMenuItemId]: which menu item's `checkable` state should reflect
+ * [status] being the active filter. The mirror of [menuItemIdForSortOrder] for the filter group,
+ * used the same way — to restore the check-mark after a rotation rebuilds the toolbar's menu.
+ */
+fun menuItemIdForStatusFilter(status: StatusFilter): Int = when (status) {
+    StatusFilter.ALL -> R.id.filter_all
+    StatusFilter.NOT_STARTED -> R.id.filter_not_started
+    StatusFilter.IN_PROGRESS -> R.id.filter_in_progress
+    StatusFilter.FINISHED -> R.id.filter_finished
 }
 
 /**
@@ -172,6 +194,15 @@ open class LibraryActivity : AppCompatActivity() {
     private var latestBooks: List<BookEntity> = emptyList()
 
     /**
+     * The live search query and reading-status filter, both transient — neither is persisted to
+     * [LibraryPrefs] (unlike sort/view/flatten), so a fresh Activity always starts unfiltered.
+     * [render] branches to [findBooks] over [latestBooks] whenever [isFilterActive] is true;
+     * see [render]'s KDoc.
+     */
+    private var searchQuery: String = ""
+    private var statusFilter: StatusFilter = StatusFilter.ALL
+
+    /**
      * The [rootPath][LibraryPrefs.rootPath] this Activity last rendered against, so [onStart] can
      * detect a root change made in Settings and reset [currentFolder] accordingly before the sync
      * repopulates (Task 8a already nulls `lastFolderPath` on a root change).
@@ -238,20 +269,58 @@ open class LibraryActivity : AppCompatActivity() {
         toolbar = Toolbar(this).apply {
             title = titleFor(currentFolder, lastRoot)
             inflateMenu(R.menu.menu_library)
-            // Every checkableBehavior="single" group (sort, view mode) and the standalone flatten
-            // toggle start unchecked on a freshly inflated menu (every rotation gets a new one),
-            // regardless of the persisted state. Restore all three marks here so the active
-            // choices stay visible after a restore, not just correct.
+            // Every checkableBehavior="single" group (sort, view mode, filter) and the standalone
+            // flatten toggle start unchecked on a freshly inflated menu (every rotation gets a new
+            // one), regardless of the persisted/current state. Restore all four marks here so the
+            // active choices stay visible after a restore, not just correct. statusFilter is
+            // transient (always ALL on a fresh Activity), but this still has to run: a rotation
+            // rebuilds the menu from scratch even mid-session.
             menu.findItem(menuItemIdForSortOrder(currentSort))?.isChecked = true
             menu.findItem(menuItemIdForViewMode(prefs.viewMode))?.isChecked = true
             menu.findItem(R.id.action_flatten)?.isChecked = prefs.flatten
+            menu.findItem(menuItemIdForStatusFilter(statusFilter))?.isChecked = true
             setOnMenuItemClickListener(::onMenuItemClicked)
+
+            // Title/author search: a live filter over latestBooks, not a new query. Collapsing the
+            // action view (the user tapping away, or the Back handler below) clears the query the
+            // same way an empty typed query would.
+            val searchItem = menu.findItem(R.id.action_search)
+            (searchItem.actionView as SearchView).setOnQueryTextListener(object : SearchView.OnQueryTextListener {
+                override fun onQueryTextSubmit(query: String?): Boolean = false
+                override fun onQueryTextChange(newText: String?): Boolean {
+                    searchQuery = newText.orEmpty()
+                    render()
+                    return true
+                }
+            })
+            searchItem.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
+                override fun onMenuItemActionExpand(item: MenuItem): Boolean = true
+                override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
+                    searchQuery = ""
+                    render()
+                    return true
+                }
+            })
         }
 
         // System Back walks up the folder tree one level at a time, clamped to the root; only at
         // the root does it fall through to the default finish. An OnBackPressedCallback, not the
         // deprecated onBackPressed override, per the AndroidX guidance.
         onBackPressedDispatcher.addCallback(this) {
+            // An active search/filter is dismissed by Back before folder-ascend/finish even runs:
+            // the user's mental model is "Back gets me out of what I just did", and what they just
+            // did was narrow the grid, not navigate. Clearing returns to currentFolder exactly as
+            // it was (untouched by the filtered branch), so this never touches folder state.
+            if (isFilterActive(searchQuery, statusFilter)) {
+                searchQuery = ""
+                statusFilter = StatusFilter.ALL
+                toolbar.menu.findItem(R.id.filter_all)?.isChecked = true
+                toolbar.menu.findItem(R.id.action_search)
+                    ?.takeIf { it.isActionViewExpanded }
+                    ?.collapseActionView() // also fires onMenuItemActionCollapse -> render(); harmless if redundant
+                render()
+                return@addCallback
+            }
             val root = clampToRoot(prefs.rootPath, prefs.rootPath)
             if (currentFolder != root) {
                 val parent = File(currentFolder).parent ?: root
@@ -366,6 +435,13 @@ open class LibraryActivity : AppCompatActivity() {
                 render()
                 return true
             }
+        }
+        val status = statusFilterForMenuItemId(item.itemId)
+        if (status != null) {
+            statusFilter = status
+            item.isChecked = true // radio group: also unchecks the sibling
+            render()
+            return true
         }
         return onSortMenuItemClicked(item)
     }
@@ -517,17 +593,36 @@ open class LibraryActivity : AppCompatActivity() {
     /**
      * Project [latestBooks] through [folderListing] for the current folder, view mode, and flatten
      * setting, and hand the rows to the adapter — the one render path every trigger (a Room
-     * emission, a folder descent/ascent, a toggle, a root change) funnels through. Pure and cheap
-     * at library scale: no new queries, no watchers. [currentFolder] is re-clamped here so it stays
-     * an invariant even if the root shifted underneath it, keeping the toolbar title and Back in
-     * step with what folderListing actually scopes to.
+     * emission, a folder descent/ascent, a toggle, a root change, a search/filter edit) funnels
+     * through. Pure and cheap at library scale: no new queries, no watchers. [currentFolder] is
+     * re-clamped here so it stays an invariant even if the root shifted underneath it, keeping the
+     * toolbar title and Back in step with what folderListing actually scopes to.
+     *
+     * When [isFilterActive] (a non-blank [searchQuery] or a non-ALL [statusFilter]), the folder
+     * tree is bypassed entirely: [findBooks] runs flat over all of [latestBooks], regardless of
+     * [currentFolder], and the result is every matching [LibraryRow.Book] with no folder rows.
+     * [currentFolder] itself is never touched by this branch, so clearing the filter always
+     * restores the same folder the user was in. A filtered-and-empty result shows "No books
+     * match." in [emptyStateView] instead of a silent blank grid — the same reasoning [onStart]'s
+     * permission-denied message already applies to a different empty case.
      */
     private fun render() {
         val root = prefs.rootPath
         currentFolder = clampToRoot(currentFolder, root)
-        val rows = folderListing(latestBooks, root, currentFolder, prefs.flatten)
+        val filterActive = isFilterActive(searchQuery, statusFilter)
+        val rows: List<LibraryRow> = if (filterActive) {
+            findBooks(latestBooks, searchQuery, statusFilter).map { LibraryRow.Book(it) }
+        } else {
+            folderListing(latestBooks, root, currentFolder, prefs.flatten)
+        }
         adapter.render(rows, prefs.viewMode)
         toolbar.title = titleFor(currentFolder, root)
+        if (filterActive && rows.isEmpty()) {
+            emptyStateView.text = "No books match."
+            emptyStateView.visibility = View.VISIBLE
+        } else {
+            emptyStateView.visibility = View.GONE
+        }
     }
 
     /** "Library" at the root, otherwise the current folder's own name. */

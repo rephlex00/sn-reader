@@ -1,8 +1,11 @@
 package dev.reader.ui
 
+import android.content.Context
 import android.os.Looper
 import android.view.View
+import androidx.appcompat.widget.SearchView
 import com.google.common.truth.Truth.assertThat
+import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
 import dev.reader.data.IndexResult
@@ -29,11 +32,16 @@ class LibraryActivityInteractionTest {
     @Before
     fun setUp() {
         app = RuntimeEnvironment.getApplication() as ReaderApplication
+        // Pinned so the seeded "/Document/..." paths used throughout this file (and the new
+        // search/filter tests below) fall under the root deterministically, regardless of the
+        // device's real external-storage path.
+        LibraryPrefs(app).rootPath = ROOT
     }
 
     @After
     fun tearDown() {
         app.librarySyncJob = null
+        app.getSharedPreferences("library_prefs", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     // -- I3: double-tap debounce ------------------------------------------------------------
@@ -145,6 +153,107 @@ class LibraryActivityInteractionTest {
         assertThat(syncCalls).isEqualTo(1)
     }
 
+    // -- LF Task 2: search + status filter wiring ---------------------------------------------
+    // Exercises the real toolbar menu/SearchView wiring end to end (not an internal seam):
+    // `setQuery` on the actual SearchView action view drives onQueryTextChange exactly as the
+    // framework does for a real keystroke, and filter taps go through the same
+    // toolbar.menu.performIdentifierAction path LibraryActivityNavigationTest already uses for
+    // sort/view/flatten.
+
+    @Test
+    fun `a search query renders only matching book rows and no folder rows`() {
+        seed(
+            book("$ROOT/Fiction/martian.epub", title = "The Martian", author = "Andy Weir"),
+            book("$ROOT/Fiction/hail-mary.epub", title = "Project Hail Mary", author = "Andy Weir"),
+            book("$ROOT/Science/cosmos.epub", title = "Cosmos", author = "Carl Sagan"),
+        )
+        val activity = launch()
+        idleUntil { activity.rows.isNotEmpty() }
+
+        activity.setSearchQuery("martian")
+        idleUntil { bookTitles(activity.rows) == listOf("The Martian") }
+
+        assertThat(bookTitles(activity.rows)).containsExactly("The Martian")
+        assertThat(folderNames(activity.rows)).isEmpty()
+    }
+
+    @Test
+    fun `a non-ALL status filter narrows the flat results`() {
+        seed(
+            book("$ROOT/Fiction/a.epub", title = "A", opened = null),
+            book("$ROOT/Fiction/b.epub", title = "B", opened = 5L),
+            book("$ROOT/Science/c.epub", title = "C", opened = null),
+        )
+        val activity = launch()
+        idleUntil { activity.rows.isNotEmpty() }
+
+        activity.clickMenu(R.id.filter_in_progress)
+        idleUntil { bookTitles(activity.rows) == listOf("B") }
+
+        assertThat(bookTitles(activity.rows)).containsExactly("B")
+        assertThat(folderNames(activity.rows)).isEmpty()
+    }
+
+    @Test
+    fun `clearing the query and status restores the folder listing at currentFolder`() {
+        seed(
+            book("$ROOT/Fiction/a.epub", title = "A"),
+            book("$ROOT/Science/c.epub", title = "C"),
+        )
+        val activity = launch()
+        idleUntil { activity.rows.isNotEmpty() }
+        activity.tapFolder("$ROOT/Fiction")
+        idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
+
+        activity.setSearchQuery("cosmos-does-not-exist")
+        idleUntil { activity.rows.isEmpty() }
+        activity.setSearchQuery("")
+        activity.clickMenu(R.id.filter_all)
+
+        // Back to the folder listing at the same currentFolder ("Fiction"), not the root and not
+        // the flat filtered view.
+        idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
+        assertThat(activity.currentFolderPath).isEqualTo("$ROOT/Fiction")
+        assertThat(activity.emptyStateVisibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `Back with an active filter clears it instead of ascending or finishing`() {
+        seed(
+            book("$ROOT/Fiction/a.epub", title = "A"),
+            book("$ROOT/Science/c.epub", title = "C"),
+        )
+        val activity = launch()
+        idleUntil { activity.rows.isNotEmpty() }
+        activity.tapFolder("$ROOT/Fiction")
+        idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
+
+        activity.setSearchQuery("cosmos")
+        idleUntil { activity.rows.isEmpty() }
+
+        activity.back()
+
+        // Back cleared the filter and re-rendered the folder listing right where the user left
+        // it, rather than ascending a folder level or finishing the Activity.
+        assertThat(activity.isFinishing).isFalse()
+        idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
+        assertThat(activity.currentFolderPath).isEqualTo("$ROOT/Fiction")
+    }
+
+    @Test
+    fun `a query with no matches shows the No books match empty state`() {
+        seed(book("$ROOT/Fiction/a.epub", title = "A"))
+        val activity = launch()
+        idleUntil { activity.rows.isNotEmpty() }
+
+        activity.setSearchQuery("nothing-matches-this")
+        idleUntil { activity.rows.isEmpty() }
+
+        assertThat(activity.rows).isEmpty()
+        assertThat(activity.emptyStateVisibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.emptyStateText).contains("No books match")
+    }
+
     /** [LibraryActivity] subclass whose test seams are set per-test via mutable fields. */
     private class TestableLibraryActivity : LibraryActivity() {
         var accessGranted = true
@@ -159,6 +268,23 @@ class LibraryActivityInteractionTest {
 
         val emptyStateVisibility: Int get() = emptyStateView.visibility
         val emptyStateText: String get() = emptyStateView.text.toString()
+
+        val rows: List<LibraryRow> get() = adapter.currentList
+        val currentFolderPath: String get() = currentFolder
+
+        fun tapFolder(path: String) = openFolder(path)
+        fun back() = onBackPressedDispatcher.onBackPressed()
+        fun clickMenu(id: Int) = toolbar.menu.performIdentifierAction(id, 0)
+
+        /**
+         * Drives the query through the real SearchView action view rather than an internal seam:
+         * `setQuery` sets the EditText's text, which fires the same `onQueryTextChange` the
+         * framework calls for a real keystroke.
+         */
+        fun setSearchQuery(query: String) {
+            val searchView = toolbar.menu.findItem(R.id.action_search).actionView as SearchView
+            searchView.setQuery(query, false)
+        }
     }
 
     /** Same looper/background-thread bridge as [LibraryActivityRecreationTest]'s idleUntil. */
@@ -184,4 +310,49 @@ class LibraryActivityInteractionTest {
         addedAtMs = 1_700_000_000_000L,
         lastOpenedAtMs = null,
     )
+
+    // -- shared with the LF Task 2 tests above -------------------------------------------------
+
+    private fun launch(): TestableLibraryActivity {
+        val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
+        controller.create().start().resume()
+        return controller.get()
+    }
+
+    private fun seed(vararg books: BookEntity) {
+        runBlocking { app.database.bookDao().upsertAll(books.toList()) }
+    }
+
+    private fun book(
+        path: String,
+        title: String = path.substringAfterLast('/'),
+        author: String? = null,
+        opened: Long? = null,
+    ) = BookEntity(
+        path = path,
+        sizeBytes = 1_000L,
+        modifiedAtMs = 1_700_000_000_000L,
+        title = title,
+        author = author,
+        coverPath = null,
+        spineIndex = 0,
+        charOffset = 0,
+        unreadable = false,
+        unreadableReason = null,
+        addedAtMs = 1_700_000_000_000L,
+        lastOpenedAtMs = opened,
+    )
+
+    private fun folderNames(rows: List<LibraryRow>) =
+        rows.filterIsInstance<LibraryRow.Folder>().map { it.name }
+
+    private fun bookPaths(rows: List<LibraryRow>) =
+        rows.filterIsInstance<LibraryRow.Book>().map { it.entity.path }
+
+    private fun bookTitles(rows: List<LibraryRow>) =
+        rows.filterIsInstance<LibraryRow.Book>().map { it.entity.title }
+
+    private companion object {
+        const val ROOT = "/Document"
+    }
 }

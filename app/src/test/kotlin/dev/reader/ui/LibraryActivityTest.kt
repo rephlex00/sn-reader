@@ -69,4 +69,28 @@ class LibraryActivityTest {
             assertThat(sortOrderForMenuItemId(menuItemIdForSortOrder(order))).isEqualTo(order)
         }
     }
+
+    // -- statusFilterForMenuItemId -----------------------------------------------------------
+
+    @Test
+    fun `each filter menu item maps to its StatusFilter`() {
+        assertThat(statusFilterForMenuItemId(R.id.filter_all)).isEqualTo(StatusFilter.ALL)
+        assertThat(statusFilterForMenuItemId(R.id.filter_not_started)).isEqualTo(StatusFilter.NOT_STARTED)
+        assertThat(statusFilterForMenuItemId(R.id.filter_in_progress)).isEqualTo(StatusFilter.IN_PROGRESS)
+        assertThat(statusFilterForMenuItemId(R.id.filter_finished)).isEqualTo(StatusFilter.FINISHED)
+    }
+
+    @Test
+    fun `an unrelated menu item id maps to no status filter`() {
+        assertThat(statusFilterForMenuItemId(-1)).isNull()
+    }
+
+    // -- menuItemIdForStatusFilter (the checkmark inverse) -------------------------------------
+
+    @Test
+    fun `every StatusFilter maps to the menu item that selects it`() {
+        for (status in StatusFilter.entries) {
+            assertThat(statusFilterForMenuItemId(menuItemIdForStatusFilter(status))).isEqualTo(status)
+        }
+    }
 }
