@@ -613,15 +613,23 @@ class SpannedChapterBuilderTest {
     }
 
     @Test
-    fun `a scene-break paragraph is centered and not indented`() {
-        val chapter = builder.build(listOf(para("One."), para("***")), config)
-        val start = chapter.text.toString().indexOf("***")
-        val end = start + 3
-
-        val alignments = chapter.text.getSpans(start, end, AlignmentSpan.Standard::class.java)
-        assertThat(alignments).hasLength(1)
-        assertThat(alignments.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
-        assertThat(chapter.text.getSpans(start, end, LeadingMarginSpan.Standard::class.java)).isEmpty()
+    fun `a scene break renders as blank space with no visible glyphs`() {
+        val ct = builder.build(
+            listOf(
+                Block.Paragraph(StyledText("Before.")),
+                Block.Paragraph(StyledText("***")),
+                Block.Paragraph(StyledText("After.")),
+            ),
+            config,
+        )
+        // No asterisks survive in the text...
+        assertThat(ct.text.toString()).doesNotContain("*")
+        // ...and no AlignmentSpan was applied for the scene break.
+        val aligns = ct.text.getSpans(0, ct.text.length, AlignmentSpan::class.java)
+        assertThat(aligns).isEmpty()
+        // The two real paragraphs are still both present and separated by blank space.
+        assertThat(ct.text.toString()).contains("Before.")
+        assertThat(ct.text.toString()).contains("After.")
     }
 
     @Test

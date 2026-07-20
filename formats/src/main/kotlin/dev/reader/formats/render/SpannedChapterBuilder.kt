@@ -136,24 +136,28 @@ class SpannedChapterBuilder {
     ) {
         when (block) {
             is Block.Paragraph -> {
-                val start = sb.length
-                appendStyled(sb, block.text, config)
-                applyBlockStyle(sb, start, sb.length, block.style, config)
-
-                // Reader baseline, applied regardless of config.publisherStyling:
-                // a scene-break line ("***" etc.) is centered, never indented; otherwise a
-                // body paragraph gets the reader's own first-line indent, unless it opens a
-                // section (indentParagraph false) or the publisher already indented it.
+                // A scene-break line ("***" etc.) renders as a band of blank vertical space,
+                // not centered glyphs: no visible text, no AlignmentSpan. It still counts as
+                // an emitted block — the appended "\n" advances sb.length, so the break-offset
+                // / prev-emission logic in build() still sees it, and separatorBetween /
+                // isBreakLike still classify it as a separator paragraph (not a body paragraph)
+                // for the block-join and first-after-break-indent rules above.
                 if (isSeparatorLine(block.text.text)) {
-                    sb.setSpan(
-                        AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
-                        start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                    )
-                } else if (indentParagraph && !(config.publisherStyling && block.style.textIndentEm != null)) {
-                    sb.setSpan(
-                        LeadingMarginSpan.Standard((PARAGRAPH_INDENT_EM * config.textSizePx).roundToInt(), 0),
-                        start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                    )
+                    sb.append("\n")
+                } else {
+                    val start = sb.length
+                    appendStyled(sb, block.text, config)
+                    applyBlockStyle(sb, start, sb.length, block.style, config)
+
+                    // Reader baseline, applied regardless of config.publisherStyling: a body
+                    // paragraph gets the reader's own first-line indent, unless it opens a
+                    // section (indentParagraph false) or the publisher already indented it.
+                    if (indentParagraph && !(config.publisherStyling && block.style.textIndentEm != null)) {
+                        sb.setSpan(
+                            LeadingMarginSpan.Standard((PARAGRAPH_INDENT_EM * config.textSizePx).roundToInt(), 0),
+                            start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                        )
+                    }
                 }
             }
 
