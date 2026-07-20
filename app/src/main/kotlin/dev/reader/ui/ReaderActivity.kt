@@ -1318,7 +1318,7 @@ open class ReaderActivity : AppCompatActivity() {
      */
     protected open fun openDocument(file: File): EpubDocument = EpubDocument.open(
         file,
-        AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(this)),
+        AndroidTextMeasurer(SpannedChapterBuilder(BundledTypefaceProvider(this)), BundledTypefaceProvider(this)),
     )
 
     /**
