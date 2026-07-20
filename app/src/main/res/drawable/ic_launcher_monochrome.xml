@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M82,24 H82 A3,3 0 0 1 85,27 V81 A3,3 0 0 1 82,84 H82 A3,3 0 0 1 79,81 V27 A3,3 0 0 1 82,24 Z"
+        android:fillColor="#FF000000" />
+    <path
+        android:pathData="M30,19 H70 A6,6 0 0 1 76,25 V83 A6,6 0 0 1 70,89 H30 A6,6 0 0 1 24,83 V25 A6,6 0 0 1 30,19 Z M36,19 H38 V89 H36 Z M45.5,31 H67.5 A2.5,2.5 0 0 1 70,33.5 V33.5 A2.5,2.5 0 0 1 67.5,36 H45.5 A2.5,2.5 0 0 1 43,33.5 V33.5 A2.5,2.5 0 0 1 45.5,31 Z M45.5,42 H67.5 A2.5,2.5 0 0 1 70,44.5 V44.5 A2.5,2.5 0 0 1 67.5,47 H45.5 A2.5,2.5 0 0 1 43,44.5 V44.5 A2.5,2.5 0 0 1 45.5,42 Z M45.5,53 H67.5 A2.5,2.5 0 0 1 70,55.5 V55.5 A2.5,2.5 0 0 1 67.5,58 H45.5 A2.5,2.5 0 0 1 43,55.5 V55.5 A2.5,2.5 0 0 1 45.5,53 Z M45.5,64 H67.5 A2.5,2.5 0 0 1 70,66.5 V66.5 A2.5,2.5 0 0 1 67.5,69 H45.5 A2.5,2.5 0 0 1 43,66.5 V66.5 A2.5,2.5 0 0 1 45.5,64 Z M45.5,75 H56.5 A2.5,2.5 0 0 1 59,77.5 V77.5 A2.5,2.5 0 0 1 56.5,80 H45.5 A2.5,2.5 0 0 1 43,77.5 V77.5 A2.5,2.5 0 0 1 45.5,75 Z"
+        android:fillType="evenOdd"
+        android:fillColor="#FF000000" />
+</vector>
