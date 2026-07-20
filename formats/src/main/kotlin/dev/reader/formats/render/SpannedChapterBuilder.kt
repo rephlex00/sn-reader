@@ -175,9 +175,12 @@ class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefacePr
      * `[textStart, textStart + 1)`, inserting/removing nothing so every offset is preserved:
      *  - a [DropCapSpan] that reserves the left margin over the first [DROP_CAP_LINES] lines and
      *    draws the big glyph once, in the reader's face (resolved via [typefaces]) and gray;
-     *  - a transparent [ForegroundColorSpan] so the ordinary-size glyph the layout would otherwise
-     *    paint is invisible — the letter shows exactly once, large, from the margin. Applied last so
-     *    it wins over any publisher colour on that same first character.
+     *  - a [ZeroWidthSpan] so the ordinary-size glyph the layout would otherwise paint is both
+     *    invisible AND zero-advance — the covered character contributes no inline width, so
+     *    [DropCapSpan]'s margin can reserve one uniform width for every band line rather than
+     *    special-casing the line that still contains the character. Applied last so it owns the
+     *    character's rendering outright — a publisher colour/gray span on that same character no
+     *    longer matters, since [ZeroWidthSpan] is what Android calls to draw the run, not it.
      *
      * The cap's size derives from the reader's typography: body size ([RenderConfig.textSizePx])
      * and line height (`textSizePx * lineSpacingMultiplier`), so it scales with the Aa settings.
@@ -193,7 +196,7 @@ class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefacePr
         )
         sb.setSpan(span, textStart, textStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         sb.setSpan(
-            ForegroundColorSpan(Color.TRANSPARENT),
+            ZeroWidthSpan(),
             textStart, textStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
         )
     }

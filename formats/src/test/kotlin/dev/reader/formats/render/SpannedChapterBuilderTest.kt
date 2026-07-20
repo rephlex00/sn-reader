@@ -355,8 +355,9 @@ class SpannedChapterBuilderTest {
     @Test
     fun `a multi-property run yields one span per property over the same range`() {
         // Task 3 emits one single-field span per property; all three must apply. Opens on a quote
-        // so no drop cap is placed — otherwise its transparent foreground would be a second
-        // ForegroundColorSpan and the gray-count assertion below would see two.
+        // so no drop cap is placed — keeps this test isolated from the orthogonal drop-cap
+        // feature (whose initial-hiding span is a ZeroWidthSpan, not a ForegroundColorSpan, so it
+        // would no longer collide with the gray-count assertion below regardless).
         val text = builder.build(
             listOf(
                 para(
@@ -812,11 +813,20 @@ class SpannedChapterBuilderTest {
         val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
         assertThat(ct.text.getSpanStart(cap)).isEqualTo(0)
         assertThat(ct.text.getSpanEnd(cap)).isEqualTo(1)
-        // The normal-size glyph is hidden by a transparent foreground over the same one char, so
-        // the letter renders exactly once (large, from the leading margin).
-        val hides = ct.text.getSpans(0, 1, ForegroundColorSpan::class.java)
+        // The normal-size glyph is hidden AND made zero-advance by a ZeroWidthSpan over the same
+        // one char, so the letter renders exactly once (large, from the leading margin) and
+        // contributes no inline width on any band line.
+        val hides = ct.text.getSpans(0, 1, ZeroWidthSpan::class.java)
         assertThat(hides).hasLength(1)
-        assertThat(hides.single().foregroundColor).isEqualTo(Color.TRANSPARENT)
+    }
+
+    @Test
+    fun `the drop cap hides its initial with a zero-width span, not a transparent color span`() {
+        val ct = builder.build(listOf(para("Hello world.")), config)
+        // The earlier transparent-ForegroundColorSpan hide is gone: no such span remains over the
+        // covered character, and a ZeroWidthSpan is what owns its rendering instead.
+        assertThat(ct.text.getSpans(0, 1, ForegroundColorSpan::class.java)).isEmpty()
+        assertThat(ct.text.getSpans(0, 1, ZeroWidthSpan::class.java)).hasLength(1)
     }
 
     @Test
@@ -827,6 +837,17 @@ class SpannedChapterBuilderTest {
         assertThat(cap.leadingMarginLineCount).isEqualTo(3)
         assertThat(cap.getLeadingMargin(true)).isGreaterThan(0)
         assertThat(cap.getLeadingMargin(false)).isEqualTo(0)
+    }
+
+    @Test
+    fun `the drop cap's reserved margin is at least the cap glyph's own width`() {
+        // Because the covered initial is now zero-advance (ZeroWidthSpan), DropCapSpan must
+        // reserve the FULL cap width (plus gutter) uniformly on every band line — not a margin
+        // reduced by a per-line character advance that only line 1 used to have. A margin below
+        // capAdvance would let wrapped body text on lines 2..N sit inside the drop-cap glyph.
+        val ct = builder.build(listOf(para("Hello world.")), config)
+        val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
+        assertThat(cap.getLeadingMargin(true)).isAtLeast(cap.capAdvance.toInt())
     }
 
     @Test
