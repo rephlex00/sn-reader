@@ -50,9 +50,17 @@ class SpannedChapterBuilderTest {
         Block.Paragraph(StyledText(text, spans))
 
     @Test
-    fun `joins blocks with a blank line between them`() {
+    fun `joins two consecutive body paragraphs with a single newline`() {
+        // Fix 1: two flowing body paragraphs are joined by a single newline (paragraph gap
+        // equals line spacing) rather than a blank line.
         val chapter = builder.build(listOf(para("One."), para("Two.")), config)
-        assertThat(chapter.text.toString()).isEqualTo("One.\n\nTwo.")
+        assertThat(chapter.text.toString()).isEqualTo("One.\nTwo.")
+    }
+
+    @Test
+    fun `a heading followed by a paragraph keeps the blank line`() {
+        val chapter = builder.build(listOf(Block.Heading(1, StyledText("Title")), para("Body.")), config)
+        assertThat(chapter.text.toString()).isEqualTo("Title\n\nBody.")
     }
 
     @Test
@@ -77,17 +85,20 @@ class SpannedChapterBuilderTest {
         )
         val span = chapter.text.getSpans(0, chapter.text.length, AndroidStyleSpan::class.java).single()
 
-        // "One." + "\n\n" = 6 characters precede the second block.
-        assertThat(chapter.text.getSpanStart(span)).isEqualTo(8)
-        assertThat(chapter.text.getSpanEnd(span)).isEqualTo(12)
+        // "One." + "\n" (two consecutive body paragraphs join with a single newline) = 5
+        // characters precede the second block.
+        assertThat(chapter.text.getSpanStart(span)).isEqualTo(7)
+        assertThat(chapter.text.getSpanEnd(span)).isEqualTo(11)
     }
 
     @Test
     fun `records page break offsets rather than emitting text`() {
         val chapter = builder.build(listOf(para("One."), Block.PageBreak, para("Two.")), config)
 
-        assertThat(chapter.text.toString()).isEqualTo("One.\n\nTwo.")
-        assertThat(chapter.breakOffsets).containsExactly(6)
+        // Both are flowing body paragraphs, so the separator is a single newline even across
+        // the page break — the break offset still pins to "Two."'s own first character.
+        assertThat(chapter.text.toString()).isEqualTo("One.\nTwo.")
+        assertThat(chapter.breakOffsets).containsExactly(5)
     }
 
     // --- Fix wave A, M4: a PageBreak followed by a text-free block (an Image, which
@@ -102,8 +113,11 @@ class SpannedChapterBuilderTest {
             config,
         )
 
-        // "One." + "\n\n" (image's separator) + "\n\n" (Two's separator) = offset 8.
-        assertThat(chapter.breakOffsets).containsExactly(8)
+        // "One." + "\n\n" (image's separator; the image is not a paragraph) + "" (the
+        // image's null bytes append no text) + "\n" (both "One." and "Two." are flowing
+        // body paragraphs, so they still join with a single newline across the text-free
+        // image) = offset 7.
+        assertThat(chapter.breakOffsets).containsExactly(7)
         val offset = chapter.breakOffsets.single()
         assertThat(chapter.text.subSequence(offset, chapter.text.length).toString()).isEqualTo("Two.")
     }
@@ -554,5 +568,91 @@ class SpannedChapterBuilderTest {
         )
         // "One." (4) + "\n\n" (2) = 6, where the image's placeholder begins.
         assertThat(chapter.breakOffsets).containsExactly(6)
+    }
+
+    // --- Reading typography fixes: reader first-line indent (skipping the first
+    // paragraph after a heading/scene-break/image/page-break, and never doubling a
+    // publisher indent), scene-break centering, and image centering. All reader-baseline:
+    // applied regardless of config.publisherStyling. ---
+
+    @Test
+    fun `a body paragraph not first after a break gets the reader's first-line indent`() {
+        val chapter = builder.build(listOf(para("One."), para("Two.")), config)
+        val span = chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java)
+            .single()
+
+        // "One." + "\n" = 5 precedes "Two.", the second (non-first-after-break) paragraph.
+        assertThat(chapter.text.getSpanStart(span)).isEqualTo(5)
+        assertThat(chapter.text.getSpanEnd(span)).isEqualTo(9)
+        assertThat(span.getLeadingMargin(true)).isGreaterThan(0)
+        assertThat(span.getLeadingMargin(false)).isEqualTo(0)
+    }
+
+    @Test
+    fun `the first paragraph after a heading has no reader indent`() {
+        val chapter = builder.build(listOf(Block.Heading(1, StyledText("Title")), para("Body.")), config)
+        assertThat(chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java))
+            .isEmpty()
+    }
+
+    @Test
+    fun `the first paragraph after an image has no reader indent`() {
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(10, 10)), para("Body.")),
+            config,
+        )
+        assertThat(chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java))
+            .isEmpty()
+    }
+
+    @Test
+    fun `the first paragraph after a page break has no reader indent`() {
+        val chapter = builder.build(listOf(para("One."), Block.PageBreak, para("Two.")), config)
+        assertThat(chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java))
+            .isEmpty()
+    }
+
+    @Test
+    fun `a scene-break paragraph is centered and not indented`() {
+        val chapter = builder.build(listOf(para("One."), para("***")), config)
+        val start = chapter.text.toString().indexOf("***")
+        val end = start + 3
+
+        val alignments = chapter.text.getSpans(start, end, AlignmentSpan.Standard::class.java)
+        assertThat(alignments).hasLength(1)
+        assertThat(alignments.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
+        assertThat(chapter.text.getSpans(start, end, LeadingMarginSpan.Standard::class.java)).isEmpty()
+    }
+
+    @Test
+    fun `a paragraph after a scene break has no reader indent`() {
+        val chapter = builder.build(listOf(para("One."), para("***"), para("Two.")), config)
+        val twoStart = chapter.text.toString().lastIndexOf("Two.")
+        assertThat(
+            chapter.text.getSpans(twoStart, chapter.text.length, LeadingMarginSpan.Standard::class.java),
+        ).isEmpty()
+    }
+
+    @Test
+    fun `a publisher indent is not doubled by the reader's own indent`() {
+        val chapter = builder.build(
+            listOf(para("One."), Block.Paragraph(StyledText("Two."), style = BlockStyle(textIndentEm = 2f))),
+            config, // publisherStyling defaults to true
+        )
+        val spans = chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java)
+        // Exactly one indent span over "Two." — the publisher's, not doubled by the reader's.
+        assertThat(spans).hasLength(1)
+        assertThat(spans.single().getLeadingMargin(true)).isEqualTo(64) // round(2 * 32)
+    }
+
+    @Test
+    fun `an image placeholder is centered`() {
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(10, 10))),
+            config,
+        )
+        val alignments = chapter.text.getSpans(0, chapter.text.length, AlignmentSpan.Standard::class.java)
+        assertThat(alignments).hasLength(1)
+        assertThat(alignments.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
     }
 }

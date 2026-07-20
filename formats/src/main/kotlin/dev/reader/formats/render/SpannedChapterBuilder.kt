@@ -24,6 +24,7 @@ import dev.reader.engine.BlockStyle
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.StyledText
 import dev.reader.engine.TextAlign
+import dev.reader.engine.isSeparatorLine
 import dev.reader.formats.epub.sampleSizeFor
 import kotlin.math.roundToInt
 import android.text.style.StyleSpan as AndroidStyleSpan
@@ -32,6 +33,18 @@ import android.text.style.StyleSpan as AndroidStyleSpan
 data class ChapterText(val text: Spanned, val breakOffsets: Set<Int>)
 
 private const val BLOCK_SEPARATOR = "\n\n"
+
+/**
+ * The separator joining two consecutive flowing body paragraphs — a single newline, so the
+ * paragraph gap equals line spacing instead of a full blank line. Everything else (headings,
+ * images, quotes, list items, and scene-break paragraphs) still gets [BLOCK_SEPARATOR]'s
+ * breathing room; see [separatorBetween].
+ */
+private const val PARAGRAPH_JOIN = "\n"
+
+/** The reader's own first-line indent for a body paragraph, in ems of the reader's text size. */
+private const val PARAGRAPH_INDENT_EM = 1.5f
+
 private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 5 to 1.1f, 6 to 1.05f)
 
 /**
@@ -52,15 +65,21 @@ class SpannedChapterBuilder {
         val sb = SpannableStringBuilder()
         val breaks = mutableSetOf<Int>()
         var pendingBreak = false
+        var prev: Block? = null
 
         for (block in blocks) {
             if (block is Block.PageBreak) {
                 pendingBreak = true
                 continue
             }
-            if (sb.isNotEmpty()) sb.append(BLOCK_SEPARATOR)
+            if (sb.isNotEmpty()) sb.append(separatorBetween(prev, block))
             val start = sb.length
-            appendBlock(sb, block, config)
+            // A body paragraph gets the reader's own first-line indent UNLESS it opens a
+            // section: chapter start, or right after a heading/image/scene-break/page-break
+            // (pendingBreak still true here — an explicit PageBreak occurred since the last
+            // emitted block, even though the break itself contributed no text of its own).
+            val indentParagraph = !pendingBreak && !isBreakLike(prev)
+            appendBlock(sb, block, config, indentParagraph)
             // The break offset is recorded only once a block actually contributes text,
             // and pins to that block's own first character — after the separator, and
             // past any text-free block sitting between the break and the text. A block is
@@ -76,16 +95,66 @@ class SpannedChapterBuilder {
                 breaks += start
                 pendingBreak = false
             }
+            if (sb.length > start) prev = block
         }
         return ChapterText(sb, breaks)
     }
 
-    private fun appendBlock(sb: SpannableStringBuilder, block: Block, config: RenderConfig) {
+    /**
+     * The separator between the previously-EMITTED block [prev] (null at chapter start) and
+     * the block about to be appended, [cur]. A single [PARAGRAPH_JOIN] newline when both are
+     * flowing body paragraphs — neither a scene-break line — so the gap between them equals
+     * line spacing; [BLOCK_SEPARATOR]'s blank line otherwise (headings, images, quotes, list
+     * items, and scene-break paragraphs all keep their breathing room).
+     */
+    private fun separatorBetween(prev: Block?, cur: Block): String {
+        val bothFlowingParagraphs = prev is Block.Paragraph && cur is Block.Paragraph &&
+            !isSeparatorLine(prev.text.text) && !isSeparatorLine(cur.text.text)
+        return if (bothFlowingParagraphs) PARAGRAPH_JOIN else BLOCK_SEPARATOR
+    }
+
+    /**
+     * Whether [prev] is a section-opening block — the reason a paragraph right after it stays
+     * flush rather than getting the reader's first-line indent (see [PARAGRAPH_INDENT_EM]'s use
+     * in the `Paragraph` branch of [appendBlock]). True for chapter start (`null`), a heading,
+     * an image, or a scene-break paragraph. False for a quote or list item: those don't open a
+     * new section, so the body paragraph following one still indents.
+     */
+    private fun isBreakLike(prev: Block?): Boolean = when (prev) {
+        null -> true
+        is Block.Heading -> true
+        is Block.Image -> true
+        is Block.Paragraph -> isSeparatorLine(prev.text.text)
+        else -> false
+    }
+
+    private fun appendBlock(
+        sb: SpannableStringBuilder,
+        block: Block,
+        config: RenderConfig,
+        indentParagraph: Boolean,
+    ) {
         when (block) {
             is Block.Paragraph -> {
                 val start = sb.length
                 appendStyled(sb, block.text, config)
                 applyBlockStyle(sb, start, sb.length, block.style, config)
+
+                // Reader baseline, applied regardless of config.publisherStyling:
+                // a scene-break line ("***" etc.) is centered, never indented; otherwise a
+                // body paragraph gets the reader's own first-line indent, unless it opens a
+                // section (indentParagraph false) or the publisher already indented it.
+                if (isSeparatorLine(block.text.text)) {
+                    sb.setSpan(
+                        AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+                        start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                } else if (indentParagraph && !(config.publisherStyling && block.style.textIndentEm != null)) {
+                    sb.setSpan(
+                        LeadingMarginSpan.Standard((PARAGRAPH_INDENT_EM * config.textSizePx).roundToInt(), 0),
+                        start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                }
             }
 
             is Block.Heading -> {
@@ -171,6 +240,12 @@ class SpannedChapterBuilder {
         val start = sb.length
         sb.append(IMAGE_PLACEHOLDER)
         sb.setSpan(ImageSpan(drawable, ImageSpan.ALIGN_BASELINE), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        // Reader baseline, regardless of config.publisherStyling: the image centers on its
+        // own line rather than sitting flush left.
+        sb.setSpan(
+            AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+            start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
     }
 
     private fun decodeGrayscaleDrawable(bytes: ByteArray, maxWidthPx: Int, maxHeightPx: Int): BitmapDrawable? {
@@ -289,9 +364,12 @@ class SpannedChapterBuilder {
      * reader). It is still resolved into the model; the renderer simply ignores it.
      *
      * Margins ([BlockStyle.marginTopEm]/[marginBottomEm]) are deliberately NOT applied here:
-     * inter-block spacing would mean a style-driven separator, and the page-break offset
-     * logic in [build] is pinned to the fixed "\n\n" separator length — that invariant was
-     * hardware-tuned and is not worth risking for margin spacing. Deferred; see the plan.
+     * inter-block spacing would mean a per-block, style-driven separator on top of the
+     * reader's own two ([BLOCK_SEPARATOR] / [PARAGRAPH_JOIN]) — a third, publisher-sized
+     * gap the hardware-tuned page-break offset logic in [build] has never been proven
+     * against. [build]'s break-offset recording itself is fine with a variable-length
+     * separator (it pins to the dynamic `sb.length`, not a fixed width) — margins are
+     * deferred on their own terms, not because of that invariant. See the plan.
      */
     private fun applyBlockStyle(
         sb: SpannableStringBuilder,
