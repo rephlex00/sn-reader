@@ -1574,8 +1574,8 @@ open class ReaderActivity : AppCompatActivity() {
         private const val TEXT_SIZE_MIN_PX = 24f
         private const val TEXT_SIZE_MAX_PX = 56f
         private const val TEXT_SIZE_STEP_PX = 2f
-        private const val MARGIN_NARROW_PX = 24
-        private const val MARGIN_MEDIUM_PX = 48
-        private const val MARGIN_WIDE_PX = 80
+        private const val MARGIN_NARROW_PX = 40
+        private const val MARGIN_MEDIUM_PX = 72
+        private const val MARGIN_WIDE_PX = 120
     }
 }

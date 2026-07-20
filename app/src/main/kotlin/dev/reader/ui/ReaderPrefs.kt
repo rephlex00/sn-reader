@@ -103,7 +103,7 @@ class ReaderPrefs(context: Context) {
         const val DEFAULT_FONT_FAMILY = "literata"
         const val DEFAULT_TEXT_SIZE_PX = 34f
         const val DEFAULT_LINE_SPACING = 1.4f
-        const val DEFAULT_MARGIN_PX = 48
+        const val DEFAULT_MARGIN_PX = 72
         const val DEFAULT_JUSTIFIED = true
         const val DEFAULT_HYPHENATED = true
         const val DEFAULT_INFER_HEADINGS = true
