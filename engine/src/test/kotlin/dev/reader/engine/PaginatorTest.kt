@@ -139,6 +139,72 @@ class PaginatorTest {
     }
 
     @Test
+    fun `a heading that would be stranded at the page foot moves to the next page with its body`() {
+        // 5 lines/page. Lines 0-3 body, line 4 heading, line 5 body. Greedy would end page 0 at line 4
+        // (heading) with body on page 1 — strand. Keep-heading must end page 0 at line 3 and start page 1
+        // at the heading.
+        val m = fakeChapter(lineCount = 6, pageLines = 5, headingLines = setOf(4))
+        val pages = paginator.paginate(m, pageHeightPxForLines(5))
+        assertThat(pages[0].endLine).isEqualTo(3)   // heading pushed off page 0
+        assertThat(pages[1].startLine).isEqualTo(4) // heading starts page 1
+    }
+
+    @Test
+    fun `a heading with its body on the same page is not moved`() {
+        val m = fakeChapter(lineCount = 6, pageLines = 5, headingLines = setOf(0)) // heading at page top, body follows
+        val pages = paginator.paginate(m, pageHeightPxForLines(5))
+        assertThat(pages[0].startLine).isEqualTo(0) // unchanged; heading has body after it on the page
+    }
+
+    @Test
+    fun `a heading that alone fills the page is left in place (no empty page, no loop)`() {
+        val m = fakeChapter(lineCount = 6, pageLines = 5, headingLines = (0..4).toSet())
+        val pages = paginator.paginate(m, pageHeightPxForLines(5))
+        assertThat(pages).isNotEmpty() // guard: never empties a page / loops
+    }
+
+    @Test
+    fun `keep-heading walks back over a multi-line heading to move the whole heading`() {
+        // 5 lines/page. Lines 0-2 body, lines 3-4 a two-line heading, line 5 body. Greedy ends page 0
+        // at line 4 (heading foot) with body on page 1 — strand. Keep-heading walks back over both
+        // heading lines and ends page 0 at line 2, starting page 1 at the heading's first line.
+        val m = fakeChapter(lineCount = 6, pageLines = 5, headingLines = setOf(3, 4))
+        val pages = paginator.paginate(m, pageHeightPxForLines(5))
+        assertThat(pages[0].endLine).isEqualTo(2)
+        assertThat(pages[1].startLine).isEqualTo(3)
+    }
+
+    @Test
+    fun `keep-heading keeps pages contiguous and covering every line`() {
+        val m = fakeChapter(lineCount = 6, pageLines = 5, headingLines = setOf(4))
+        val pages = paginator.paginate(m, pageHeightPxForLines(5))
+        assertThat(pages.first().startLine).isEqualTo(0)
+        assertThat(pages.last().endLine).isEqualTo(5)
+        for (i in 1 until pages.size) {
+            assertThat(pages[i].startLine).isEqualTo(pages[i - 1].endLine + 1)
+        }
+    }
+
+    @Test
+    fun `keep-heading does not move a heading when heading plus body would overflow a page`() {
+        // 40px page. Line 0 body (20px), line 1 heading (20px), line 2 body (30px). Greedy ends page 0
+        // at line 1 (heading foot) with body on page 1 — a strand. But moving the heading down would put
+        // heading (20) + body (30) = 50px on one page, over the 40px budget. The fit guard suppresses the
+        // move; the heading stays put and no page exceeds the height budget.
+        val chapter = FakeMeasuredChapter(
+            heights = listOf(20, 20, 30),
+            charsPerLine = listOf(40, 40, 40),
+            headingLines = setOf(1),
+        )
+        val pages = paginator.paginate(chapter, pageHeightPx = 40)
+        assertThat(pages[0].endLine).isEqualTo(1) // heading NOT moved
+        for (page in pages) {
+            val heightPx = chapter.lineBottomPx(page.endLine) - chapter.lineTopPx(page.startLine)
+            assertThat(heightPx).isAtMost(40) // no over-tall page
+        }
+    }
+
+    @Test
     fun `reflowedPageIndex lands on the new page whose range contains the old page-top offset`() {
         // The Aa sheet's headline correctness property, at the pure level: a settings change
         // re-paginates the current chapter to a DIFFERENT page count, and the reader must stay on
@@ -201,4 +267,13 @@ class PaginatorTest {
             assertThat(pageA.startOffset).isLessThan(foundPage.endOffset)
         }
     }
+
+    // A uniform chapter (20px lines) whose [headingLines] are heading lines, for the keep-heading
+    // rule. [pageLines] documents the intended lines-per-page and is the value to pass to
+    // [pageHeightPxForLines] for the matching page height.
+    private fun fakeChapter(lineCount: Int, pageLines: Int, headingLines: Set<Int>) =
+        FakeMeasuredChapter.uniform(lineCount = lineCount, headingLines = headingLines)
+
+    // The page height that fits exactly [lines] of the 20px-per-line uniform fake.
+    private fun pageHeightPxForLines(lines: Int): Int = lines * 20
 }

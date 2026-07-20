@@ -30,8 +30,16 @@ import dev.reader.formats.epub.sampleSizeFor
 import kotlin.math.roundToInt
 import android.text.style.StyleSpan as AndroidStyleSpan
 
-/** A chapter as a single styled string, plus the offsets where a hard page break falls. */
-data class ChapterText(val text: Spanned, val breakOffsets: Set<Int>)
+/**
+ * A chapter as a single styled string, plus the offsets where a hard page break falls and the
+ * character ranges (`start until end`) each heading block occupies. [headingRanges] feed
+ * [AndroidMeasuredChapter.isHeadingLine] so the paginator can keep a heading with its body.
+ */
+data class ChapterText(
+    val text: Spanned,
+    val breakOffsets: Set<Int>,
+    val headingRanges: List<IntRange> = emptyList(),
+)
 
 private const val BLOCK_SEPARATOR = "\n\n"
 
@@ -73,6 +81,7 @@ class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefacePr
     fun build(blocks: List<Block>, config: RenderConfig): ChapterText {
         val sb = SpannableStringBuilder()
         val breaks = mutableSetOf<Int>()
+        val headingRanges = mutableListOf<IntRange>()
         var pendingBreak = false
         var prev: Block? = null
         // Whether any block has emitted text yet — true once `prev` is first set below.
@@ -108,6 +117,13 @@ class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefacePr
             if (isOpeningHeading) sb.append(BLOCK_SEPARATOR)
             val headingStart = sb.length
             appendBlock(sb, block, config, indentParagraph)
+            // Record the heading's own char range (past any opening-title headroom, from the
+            // first heading character to sb.length) so AndroidMeasuredChapter can map it to the
+            // heading's lines for the paginator's keep-heading rule. Only when the heading
+            // actually emitted text — an empty heading contributes no line to keep.
+            if (block is Block.Heading && sb.length > headingStart) {
+                headingRanges += headingStart until sb.length
+            }
             if (isOpeningHeading) {
                 // Reader baseline, unconditional (regardless of config.publisherStyling): the
                 // chapter title is centered — this is IN ADDITION to the existing heading
@@ -151,7 +167,7 @@ class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefacePr
             }
             if (sb.length > start) prev = block
         }
-        return ChapterText(sb, breaks)
+        return ChapterText(sb, breaks, headingRanges)
     }
 
     /**

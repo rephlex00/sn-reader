@@ -42,7 +42,7 @@ class AndroidTextMeasurer(
             .setIncludePad(false)
             .build()
 
-        return AndroidMeasuredChapter(layout, chapter.breakOffsets)
+        return AndroidMeasuredChapter(layout, chapter.breakOffsets, chapter.headingRanges)
     }
 }
 
@@ -53,12 +53,20 @@ class AndroidTextMeasurer(
 class AndroidMeasuredChapter(
     val layout: Layout,
     breakOffsets: Set<Int>,
+    headingRanges: List<IntRange> = emptyList(),
 ) : MeasuredChapter {
 
     // Resolved once: getLineForOffset is a binary search, and pagination asks per line.
     private val breakLines: Set<Int> = breakOffsets
         .map { layout.getLineForOffset(it) }
         .filter { it > 0 }
+        .toSet()
+
+    // Each heading's char range mapped to the layout lines it spans — its first char's line
+    // through its last char's line (end is exclusive, so end - 1). Resolved once for the same
+    // reason as breakLines.
+    private val headingLines: Set<Int> = headingRanges
+        .flatMap { range -> layout.getLineForOffset(range.first)..layout.getLineForOffset(range.last) }
         .toSet()
 
     override val lineCount: Int get() = layout.lineCount
@@ -69,4 +77,5 @@ class AndroidMeasuredChapter(
     override fun lineStartOffset(line: Int) = layout.getLineStart(line)
     override fun lineEndOffset(line: Int) = layout.getLineEnd(line)
     override fun isBreakBefore(line: Int) = line in breakLines
+    override fun isHeadingLine(line: Int) = line in headingLines
 }

@@ -25,4 +25,11 @@ interface MeasuredChapter {
 
     /** True when a hard page break must occur immediately before [line]. */
     fun isBreakBefore(line: Int): Boolean
+
+    /**
+     * True when [line] renders part of a heading block. Lets [Paginator] avoid stranding a
+     * heading alone at a page foot, keeping it with the text it introduces. Defaults to false
+     * so a measurer that carries no heading metadata paginates exactly as before.
+     */
+    fun isHeadingLine(line: Int): Boolean = false
 }
