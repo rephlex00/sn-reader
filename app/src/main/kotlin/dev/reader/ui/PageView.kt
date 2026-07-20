@@ -7,6 +7,8 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.text.Layout
+import android.text.TextPaint
+import android.text.TextUtils
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -28,6 +30,9 @@ fun tapZoneFor(x: Float, width: Int): TapZone {
     }
 }
 
+/** The right-hand half of the running foot: 1-based page-in-chapter of the chapter's page count. */
+fun runningFootLabel(pageInChapter: Int, pageCount: Int): String = "page $pageInChapter of $pageCount"
+
 /**
  * Draws one page by translating a pre-laid-out chapter and clipping to the content box.
  * The Layout is never rebuilt here: a page turn is a translate, a clip and one draw.
@@ -47,6 +52,27 @@ class PageView(context: Context) : View(context) {
     private val progressBarBottomInsetPx = 6f * density
     private val progressTrackPaint = Paint().apply { color = Color.parseColor("#CCCCCC") }
     private val progressFillPaint = Paint().apply { color = Color.BLACK }
+
+    /** The running foot's chapter title (null/blank draws the page label only). Set via [setRunningFoot]. */
+    private var runningFootChapterTitle: String? = null
+
+    /** 1-based page-in-chapter shown by the running foot's right-hand label. Set via [setRunningFoot]. */
+    private var runningFootPageInChapter: Int = 0
+
+    /** The chapter's page count shown by the running foot's right-hand label. Set via [setRunningFoot]. */
+    private var runningFootPageCount: Int = 0
+
+    /** Test-visible readout of what [setRunningFoot] last stored. */
+    internal val chapterTitleForTest: String? get() = runningFootChapterTitle
+    internal val pageInChapterForTest: Int get() = runningFootPageInChapter
+    internal val pageCountForTest: Int get() = runningFootPageCount
+
+    private val runningFootBottomInsetPx = progressBarBottomInsetPx + progressBarThicknessPx + 4f * density
+    private val runningFootPaint = TextPaint().apply {
+        color = Color.parseColor("#999999") // faint gray, fainter than body text, matches the progress bar's restraint
+        textSize = 11f * density
+        isAntiAlias = true
+    }
 
     var onTap: ((TapZone) -> Unit)? = null
 
@@ -113,6 +139,18 @@ class PageView(context: Context) : View(context) {
      */
     fun setProgress(fraction: Float?) {
         this.progress = fraction
+        invalidate()
+    }
+
+    /**
+     * Sets the running foot's chapter title and 1-based page-in-chapter/page-count, and invalidates.
+     * Display-only, computed once per page turn from [ReaderActivity.showPage] — never steady-state
+     * work. A null or blank [chapterTitle] draws the page label alone (see [drawRunningFoot]).
+     */
+    fun setRunningFoot(chapterTitle: String?, pageInChapter: Int, pageCount: Int) {
+        this.runningFootChapterTitle = chapterTitle
+        this.runningFootPageInChapter = pageInChapter
+        this.runningFootPageCount = pageCount
         invalidate()
     }
 
@@ -188,6 +226,11 @@ class PageView(context: Context) : View(context) {
         // sheet) the bar would sit under the final line. One extra draw folded into this same
         // per-turn redraw — no separate pass.
         progress?.let { drawProgressBar(canvas, it) }
+
+        // Same band, same discipline: the running foot is also outside the text clip, drawn once
+        // per turn from values ReaderActivity.showPage already computed, above the progress bar
+        // (see runningFootBottomInsetPx) so the two never overlap.
+        drawRunningFoot(canvas)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -330,5 +373,30 @@ class PageView(context: Context) : View(context) {
         canvas.drawRect(left, top, right, bottom, progressTrackPaint)
         val fillRight = left + (right - left) * fraction.coerceIn(0f, 1f)
         canvas.drawRect(left, top, fillRight, bottom, progressFillPaint)
+    }
+
+    /**
+     * Faint running foot in the bottom margin band, above the progress bar: chapter title at the
+     * left (ellipsized so it can never run into the label), [runningFootLabel] right-aligned. Drawn
+     * unconditionally from whatever [setRunningFoot] last stored — like the progress bar, this is one
+     * extra draw folded into the normal per-turn redraw, not a separate pass.
+     */
+    private fun drawRunningFoot(canvas: Canvas) {
+        val left = marginPx.toFloat()
+        val right = (width - marginPx).toFloat()
+        if (right <= left) return
+
+        val baseline = height - runningFootBottomInsetPx - runningFootPaint.descent()
+        val label = runningFootLabel(runningFootPageInChapter, runningFootPageCount)
+        val labelWidth = runningFootPaint.measureText(label)
+        canvas.drawText(label, right - labelWidth, baseline, runningFootPaint)
+
+        val title = runningFootChapterTitle
+        if (title.isNullOrBlank()) return
+        val gapPx = 12f * density // keeps the ellipsized title from crowding the label even when it fills its space
+        val titleWidth = (right - left - labelWidth - gapPx).coerceAtLeast(0f)
+        if (titleWidth <= 0f) return
+        val ellipsized = TextUtils.ellipsize(title, runningFootPaint, titleWidth, TextUtils.TruncateAt.END)
+        canvas.drawText(ellipsized, 0, ellipsized.length, left, baseline, runningFootPaint)
     }
 }
