@@ -1,8 +1,27 @@
 # Releasing
 
-Publishing a GitHub Release triggers [`workflows/release.yml`](workflows/release.yml), which runs
-the tests, picks a version, builds a signed release APK, tags the commit, and attaches
-`sn-reader-<version>.apk` to the release.
+[`workflows/release.yml`](workflows/release.yml) runs the tests, picks a version, builds a signed
+release APK, tags the commit, and attaches `sn-reader-<version>.apk` to a release. There are two
+ways to start it.
+
+## Cutting a release
+
+**Either** publish a GitHub Release the normal way (**Releases > Draft a new release >** choose or
+create a tag **> Publish**). The workflow runs on the `release: published` event and attaches the
+APK to the release you just made.
+
+**Or** run it by hand from **Actions > Release APK > Run workflow** with the **publish** box
+ticked. That path creates the tag and the release for you, then attaches the APK.
+
+## Dry runs
+
+Running it by hand with **publish** left unticked is a dry run: it builds and signs the APK and
+leaves it as a workflow artifact, creating **no release and no tag**. This is the default for a
+manual run, because "Run workflow" reads like a build button and should not quietly publish
+anything.
+
+Every run writes to its summary which of the two it did, so a dry run and a real release are never
+mistaken for one another.
 
 ## Versioning
 
@@ -39,9 +58,3 @@ Add these under **Settings > Secrets and variables > Actions**:
 The keystore is decoded into the runner's temp directory and deleted afterwards even if the build
 fails; it is never committed. Without these secrets the workflow stops with an explicit error
 rather than publishing an unsigned APK.
-
-## Dry run
-
-You can rehearse the whole pipeline without publishing anything: **Actions > Release APK > Run
-workflow**. That path builds the APK and uploads it as a workflow artifact instead of attaching it
-to a release.
