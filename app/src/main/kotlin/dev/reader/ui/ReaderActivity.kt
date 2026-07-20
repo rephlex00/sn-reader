@@ -27,6 +27,7 @@ import dev.reader.engine.RenderConfig
 import dev.reader.engine.TocEntry
 import dev.reader.engine.advance
 import dev.reader.engine.bookProgress
+import dev.reader.engine.chapterTitleFor
 import dev.reader.engine.highlightContaining
 import dev.reader.engine.mergeHighlights
 import dev.reader.engine.pageIndexFor
@@ -1358,7 +1359,7 @@ open class ReaderActivity : AppCompatActivity() {
      */
     protected open fun openDocument(file: File): EpubDocument = EpubDocument.open(
         file,
-        AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(this)),
+        AndroidTextMeasurer(SpannedChapterBuilder(BundledTypefaceProvider(this)), BundledTypefaceProvider(this)),
     )
 
     /**
@@ -1499,6 +1500,9 @@ open class ReaderActivity : AppCompatActivity() {
         // library's progress.
         currentBookProgress = bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
         pageView.setProgress(if (showProgressBar) currentBookProgress else null)
+        // Same once-per-turn readout as the progress bar and scrubber above — chapterTitleFor is the
+        // same pure TOC lookup the bookmarks/highlights rows already use.
+        pageView.setRunningFoot(chapterTitleFor(doc.toc, next.spineIndex), pageIndex + 1, chapter.pages.size)
 
         // Record the new position: the page's startOffset is the stable char offset a later restore
         // maps back to a page. This only sets an in-memory field; the caller (onTap, or the open
@@ -1614,8 +1618,8 @@ open class ReaderActivity : AppCompatActivity() {
         private const val TEXT_SIZE_MIN_PX = 24f
         private const val TEXT_SIZE_MAX_PX = 56f
         private const val TEXT_SIZE_STEP_PX = 2f
-        private const val MARGIN_NARROW_PX = 24
-        private const val MARGIN_MEDIUM_PX = 48
-        private const val MARGIN_WIDE_PX = 80
+        private const val MARGIN_NARROW_PX = 40
+        private const val MARGIN_MEDIUM_PX = 72
+        private const val MARGIN_WIDE_PX = 120
     }
 }

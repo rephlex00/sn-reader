@@ -13,7 +13,17 @@
      labels they read as one undifferentiated list and the two active radio marks look like one
      group. Disabled items render greyed and inert — LibraryActivity never sees them in
      onOptionsItemSelected — so they act purely as headings. -->
-<menu xmlns:android="http://schemas.android.com/apk/res/android">
+<menu xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <!-- Title/author search. The action view (an AppCompat SearchView, not a dialog) collapses
+         back to just this icon on collapse; LibraryActivity clears searchQuery in both the
+         onQueryTextChange and onMenuItemActionCollapse callbacks. ifRoom: shown as an icon when
+         there's space, otherwise folded into the overflow like every other item here. -->
+    <item
+        android:id="@+id/action_search"
+        android:icon="@android:drawable/ic_menu_search"
+        android:title="Search"
+        app:showAsAction="ifRoom|collapseActionView"
+        app:actionViewClass="androidx.appcompat.widget.SearchView" />
     <item
         android:id="@+id/header_sort"
         android:enabled="false"
@@ -59,6 +69,30 @@
         android:id="@+id/action_flatten"
         android:checkable="true"
         android:title="Flatten folders" />
+    <!-- Reading-status filter, styled exactly like the sort/view groups above: a disabled header
+         label plus a single-choice radio group. Selecting anything but "All" (together with a
+         non-blank search query) switches the library to LibraryActivity's flat filtered-results
+         branch instead of the folder listing; see isFilterActive/findBooks. -->
+    <item
+        android:id="@+id/header_filter"
+        android:enabled="false"
+        android:title="Filter" />
+    <group
+        android:id="@+id/filter_group"
+        android:checkableBehavior="single">
+        <item
+            android:id="@+id/filter_all"
+            android:title="All" />
+        <item
+            android:id="@+id/filter_not_started"
+            android:title="Not started" />
+        <item
+            android:id="@+id/filter_in_progress"
+            android:title="In progress" />
+        <item
+            android:id="@+id/filter_finished"
+            android:title="Finished" />
+    </group>
     <!-- Outside every checkable group: this is an action, not a selection, so it must not carry a
          check mark. Opens SettingsActivity. -->
     <item

@@ -34,6 +34,34 @@ class PageViewTest {
     }
 
     @Test
+    fun `the running foot page label is one-based N of M`() {
+        assertThat(runningFootLabel(pageInChapter = 3, pageCount = 12)).isEqualTo("page 3 of 12")
+    }
+
+    @Test
+    fun `setRunningFoot stores the values and invalidates`() {
+        val view = PageView(context)
+        view.setRunningFoot("Chapter One", pageInChapter = 2, pageCount = 5)
+        assertThat(view.chapterTitleForTest).isEqualTo("Chapter One")
+        assertThat(view.pageInChapterForTest).isEqualTo(2)
+        assertThat(view.pageCountForTest).isEqualTo(5)
+    }
+
+    @Test
+    fun `it draws a page with a running foot, with and without a chapter title, no error`() {
+        // Screencap is black on e-ink, so a Canvas regression must surface here.
+        val view = laidOutPageView()
+        val canvas = Canvas(Bitmap.createBitmap(400, 600, Bitmap.Config.ARGB_8888))
+
+        view.setRunningFoot("A Long Chapter Title That Should Get Ellipsized", pageInChapter = 3, pageCount = 12)
+        view.draw(canvas)
+        view.setRunningFoot(null, pageInChapter = 1, pageCount = 1)
+        view.draw(canvas)
+        view.setRunningFoot("", pageInChapter = 1, pageCount = 1)
+        view.draw(canvas)
+    }
+
+    @Test
     fun `progress defaults to null and is settable`() {
         val view = PageView(context)
         assertThat(view.progress).isNull()
