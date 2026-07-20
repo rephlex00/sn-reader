@@ -151,9 +151,19 @@ class PaginatorTest {
 
     @Test
     fun `a heading with its body on the same page is not moved`() {
-        val m = fakeChapter(lineCount = 6, pageLines = 5, headingLines = setOf(0)) // heading at page top, body follows
+        // Heading is the page's trailing candidate line (line 4, the last of the 5 that fit),
+        // but it starts exactly at the page's own startLine (0) because it's a single line at
+        // the very top with no body before it within this page — the `headingStart > startLine`
+        // guard is what suppresses the move here, not `isHeadingLine(lastLine + 1)`.
+        val m = fakeChapter(lineCount = 6, pageLines = 5, headingLines = setOf(0, 1, 2, 3, 4))
         val pages = paginator.paginate(m, pageHeightPxForLines(5))
-        assertThat(pages[0].startLine).isEqualTo(0) // unchanged; heading has body after it on the page
+        assertThat(pages[0].startLine).isEqualTo(0) // unchanged; guard suppressed the move
+        assertThat(pages[0].endLine).isEqualTo(4)
+        assertThat(pages.first().startLine).isEqualTo(0)
+        assertThat(pages.last().endLine).isEqualTo(5)
+        for (i in 1 until pages.size) {
+            assertThat(pages[i].startLine).isEqualTo(pages[i - 1].endLine + 1)
+        }
     }
 
     @Test
@@ -161,6 +171,30 @@ class PaginatorTest {
         val m = fakeChapter(lineCount = 6, pageLines = 5, headingLines = (0..4).toSet())
         val pages = paginator.paginate(m, pageHeightPxForLines(5))
         assertThat(pages).isNotEmpty() // guard: never empties a page / loops
+        assertThat(pages.first().startLine).isEqualTo(0)
+        assertThat(pages.last().endLine).isEqualTo(5)
+        for (i in 1 until pages.size) {
+            assertThat(pages[i].startLine).isEqualTo(pages[i - 1].endLine + 1)
+        }
+    }
+
+    @Test
+    fun `a hard page break at an overflow boundary is honored, not swallowed by keep-heading`() {
+        // 5 lines/page (100px / 20px). 6 lines total; line 4 is a heading; a publisher hard
+        // break falls right before line 5 — exactly where the natural overflow boundary would
+        // also land. Keep-heading must not engage here: the break is honored and the heading
+        // stays stranded on page 0 rather than the loop skipping past the break line.
+        val m = FakeMeasuredChapter.uniform(
+            lineCount = 6,
+            headingLines = setOf(4),
+            hardBreaks = setOf(5),
+        )
+        val pages = paginator.paginate(m, pageHeightPxForLines(5))
+        assertThat(pages).hasSize(2)
+        assertThat(pages[0].startLine).isEqualTo(0)
+        assertThat(pages[0].endLine).isEqualTo(4)
+        assertThat(pages[1].startLine).isEqualTo(5)
+        assertThat(pages[1].endLine).isEqualTo(5)
     }
 
     @Test

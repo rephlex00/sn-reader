@@ -46,7 +46,7 @@ class Paginator {
                 //     page's own `startLine`, there is no non-heading content to keep here, so
                 //     leave it in place. A heading taller than a whole page still lands here and
                 //     the existing overflow rule places it alone; this rule does not fight that.
-                if (overflows && measured.isHeadingLine(lastLine) && !measured.isHeadingLine(lastLine + 1)) {
+                if (overflows && !hardBreak && measured.isHeadingLine(lastLine) && !measured.isHeadingLine(lastLine + 1)) {
                     var headingStart = lastLine
                     while (headingStart > startLine && measured.isHeadingLine(headingStart - 1)) {
                         headingStart--
