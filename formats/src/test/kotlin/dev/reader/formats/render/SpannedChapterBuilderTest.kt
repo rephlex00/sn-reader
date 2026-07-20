@@ -287,8 +287,6 @@ class SpannedChapterBuilderTest {
 
     @Test
     fun `populated publisher fields produce no spans when styling is off`() {
-        // Opens on a quote so no reader-baseline drop cap is placed either — this test pins that
-        // publisher fields produce no spans when off, isolated from the drop-cap feature.
         val chapter = builder.build(
             listOf(
                 Block.Paragraph(
@@ -314,8 +312,6 @@ class SpannedChapterBuilderTest {
 
     // --- Publisher styling on: inline fields each map to their span ---
 
-    // Opens on a quote (not a letter) so no chapter-opening drop cap is placed — these tests
-    // isolate a single publisher inline span, not the orthogonal drop-cap feature.
     private fun paraSpan(style: InlineStyle) =
         builder.build(listOf(para("“Word", listOf(StyleSpan(1, 5, style)))), config).text
 
@@ -354,10 +350,7 @@ class SpannedChapterBuilderTest {
 
     @Test
     fun `a multi-property run yields one span per property over the same range`() {
-        // Task 3 emits one single-field span per property; all three must apply. Opens on a quote
-        // so no drop cap is placed — keeps this test isolated from the orthogonal drop-cap
-        // feature (whose initial-hiding span is a ZeroWidthSpan, not a ForegroundColorSpan, so it
-        // would no longer collide with the gray-count assertion below regardless).
+        // Task 3 emits one single-field span per property; all three must apply.
         val text = builder.build(
             listOf(
                 para(
@@ -745,149 +738,4 @@ class SpannedChapterBuilderTest {
         assertThat(aligns).isEmpty()
     }
 
-    // --- Drop cap (Task 5): the chapter's first body paragraph gets an enlarged initial when it
-    // opens on a letter. Reader baseline, applied regardless of config.publisherStyling. The
-    // initial stays a normal character (drawn large), so offsets never move. ---
-
-    @Test
-    fun `the first paragraph of a chapter gets a drop cap on its opening letter`() {
-        val ct = builder.build(
-            listOf(Block.Heading(1, StyledText("Ch. 1")), para("Hello world.")),
-            config,
-        )
-        val h = ct.text.toString().indexOf("Hello")
-        assertThat(ct.text.getSpans(h, h + 1, DropCapSpan::class.java)).hasLength(1)
-    }
-
-    @Test
-    fun `a first block paragraph opening the chapter caps its initial`() {
-        val ct = builder.build(listOf(para("Hello world.")), config)
-        assertThat(ct.text.getSpans(0, 1, DropCapSpan::class.java)).hasLength(1)
-    }
-
-    @Test
-    fun `a chapter whose first paragraph starts with a quote gets no drop cap`() {
-        val ct = builder.build(listOf(para("“Hi,” she said.")), config)
-        assertThat(ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)).isEmpty()
-    }
-
-    @Test
-    fun `a chapter whose first paragraph starts with a digit gets no drop cap`() {
-        val ct = builder.build(listOf(para("1984 was a year.")), config)
-        assertThat(ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)).isEmpty()
-    }
-
-    @Test
-    fun `a chapter opening on an image gets no drop cap`() {
-        val ct = builder.build(
-            listOf(Block.Image("img/fig.png", bytes = imageBytes(20, 20)), para("Hello world.")),
-            config,
-        )
-        assertThat(ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)).isEmpty()
-    }
-
-    @Test
-    fun `a chapter opening on a scene break gets no drop cap`() {
-        val ct = builder.build(
-            listOf(Block.Paragraph(StyledText("***")), para("Hello world.")),
-            config,
-        )
-        assertThat(ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)).isEmpty()
-    }
-
-    @Test
-    fun `only the first paragraph of a chapter caps, not later ones`() {
-        val ct = builder.build(listOf(para("Hello world."), para("Second para here.")), config)
-        val caps = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java)
-        assertThat(caps).hasLength(1)
-        // The single cap sits on the very first character, not the second paragraph's initial.
-        assertThat(ct.text.getSpanStart(caps.single())).isEqualTo(0)
-        assertThat(ct.text.getSpanEnd(caps.single())).isEqualTo(1)
-    }
-
-    @Test
-    fun `the drop cap covers exactly one character and inserts none`() {
-        val ct = builder.build(listOf(para("Hello world.")), config)
-        // No character inserted or removed: the chapter text is exactly the paragraph text.
-        assertThat(ct.text.toString()).isEqualTo("Hello world.")
-        val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
-        assertThat(ct.text.getSpanStart(cap)).isEqualTo(0)
-        assertThat(ct.text.getSpanEnd(cap)).isEqualTo(1)
-        // The normal-size glyph is hidden AND made zero-advance by a ZeroWidthSpan over the same
-        // one char, so the letter renders exactly once (large, from the leading margin) and
-        // contributes no inline width on any band line.
-        val hides = ct.text.getSpans(0, 1, ZeroWidthSpan::class.java)
-        assertThat(hides).hasLength(1)
-    }
-
-    @Test
-    fun `the drop cap hides its initial with a zero-width span, not a transparent color span`() {
-        val ct = builder.build(listOf(para("Hello world.")), config)
-        // The earlier transparent-ForegroundColorSpan hide is gone: no such span remains over the
-        // covered character, and a ZeroWidthSpan is what owns its rendering instead.
-        assertThat(ct.text.getSpans(0, 1, ForegroundColorSpan::class.java)).isEmpty()
-        assertThat(ct.text.getSpans(0, 1, ZeroWidthSpan::class.java)).hasLength(1)
-    }
-
-    @Test
-    fun `the drop cap reserves a left margin over its band of lines`() {
-        val ct = builder.build(listOf(para("Hello world.")), config)
-        val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
-        // Spans two lines; reserves a positive margin on those, none afterwards.
-        assertThat(cap.leadingMarginLineCount).isEqualTo(2)
-        assertThat(cap.getLeadingMargin(true)).isGreaterThan(0)
-        assertThat(cap.getLeadingMargin(false)).isEqualTo(0)
-    }
-
-    @Test
-    fun `the drop cap's reserved margin is at least the cap glyph's own width`() {
-        // Because the covered initial is now zero-advance (ZeroWidthSpan), DropCapSpan must
-        // reserve the FULL cap width (plus gutter) uniformly on every band line — not a margin
-        // reduced by a per-line character advance that only line 1 used to have. A margin below
-        // capAdvance would let wrapped body text on lines 2..N sit inside the drop-cap glyph.
-        val ct = builder.build(listOf(para("Hello world.")), config)
-        val cap = ct.text.getSpans(0, ct.text.length, DropCapSpan::class.java).single()
-        assertThat(cap.getLeadingMargin(true)).isAtLeast(cap.capAdvance.toInt())
-    }
-
-    @Test
-    fun `the drop cap draws without crashing`() {
-        // Robolectric can't assert the pixels (device-verified in Task 8), but the draw path must
-        // at least run: a DropCapSpan drawn to a real canvas does not throw.
-        val cap = DropCapSpan(
-            initial = 'H',
-            linesSpanned = 2,
-            textSizePx = config.textSizePx,
-            lineHeightPx = config.textSizePx * config.lineSpacingMultiplier,
-            typeface = Typeface.SERIF,
-        )
-        val bitmap = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val paint = android.text.TextPaint()
-        val layout = android.text.StaticLayout.Builder
-            .obtain("Hello", 0, 5, paint, 200).build()
-        cap.drawLeadingMargin(canvas, paint, 0, 1, 0, 30, 40, "Hello", 0, 1, true, layout)
-    }
-
-    @Test
-    fun `the drop cap is placed regardless of publisher styling`() {
-        val on = builder.build(listOf(para("Hello.")), config)
-        val off = builder.build(listOf(para("Hello.")), config.copy(publisherStyling = false))
-        assertThat(on.text.getSpans(0, on.text.length, DropCapSpan::class.java)).hasLength(1)
-        assertThat(off.text.getSpans(0, off.text.length, DropCapSpan::class.java)).hasLength(1)
-    }
-
-    @Test
-    fun `the drop cap does not move page-break offsets`() {
-        // The capped chapter inserts no characters, so the break still pins exactly to plain
-        // character math: "Hello." (6) + "\n" (1) = offset 7, where "Next." begins.
-        val capped = builder.build(
-            listOf(para("Hello."), Block.PageBreak, para("Next.")),
-            config,
-        )
-        assertThat(capped.text.toString()).isEqualTo("Hello.\nNext.")
-        assertThat(capped.breakOffsets).containsExactly(7)
-        // And the cap really was placed (this is a letter-opening chapter).
-        assertThat(capped.text.getSpans(0, 1, DropCapSpan::class.java)).hasLength(1)
-    }
 }

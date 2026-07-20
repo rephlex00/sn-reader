@@ -9,13 +9,13 @@ turn to the next one. At rest it uses no CPU, because there is no background ser
 and nothing polling for work.
 
 <p align="center">
-  <img src="docs/screenshots/02-reading.png" width="420" alt="A page of Frankenstein with a centered chapter title, a two-line drop cap, and justified text">
+  <img src="docs/screenshots/02-reading.png" width="420" alt="A page of Frankenstein with a centered chapter title and justified text">
 </p>
 
 ## What it does
 
 * Reads EPUB books from your device, with covers, in a library that remembers where you left off
-* Real book typography: justification with hyphenation, generous margins, drop caps, and centered
+* Real book typography: justification with hyphenation, generous margins, and centered
   chapter openings
 * Highlight passages with the pen, and keep them in a per-book list
 * Bookmark pages, jump by chapter, and search your library by title or author

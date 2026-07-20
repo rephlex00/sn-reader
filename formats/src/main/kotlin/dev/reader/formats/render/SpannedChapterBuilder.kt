@@ -24,7 +24,6 @@ import dev.reader.engine.BlockStyle
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.StyledText
 import dev.reader.engine.TextAlign
-import dev.reader.engine.dropCapLength
 import dev.reader.engine.isSeparatorLine
 import dev.reader.formats.epub.sampleSizeFor
 import kotlin.math.roundToInt
@@ -63,20 +62,12 @@ private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 
  */
 private const val IMAGE_PLACEHOLDER = "￼"
 
-/** How many lines the chapter-opening drop cap spans — the enlarged initial's height. */
-private const val DROP_CAP_LINES = 2
-
 /**
  * Flattens [Block]s into one Spanned per chapter. One string per chapter (rather than
  * per block) is what lets a single StaticLayout do all the shaping, and what makes a
  * character offset a meaningful locator.
- *
- * [typefaces] resolves [RenderConfig.fontFamily] to the reader's [Typeface] — needed only so the
- * chapter-opening drop cap ([DropCapSpan]) is painted in the same face as the body text. Defaults
- * to [TypefaceProvider.Platform] so non-rendering callers (metadata/cover extraction, tests) keep
- * working unchanged; production passes the bundled provider so the cap matches the chosen font.
  */
-class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefaceProvider.Platform) {
+class SpannedChapterBuilder {
 
     fun build(blocks: List<Block>, config: RenderConfig): ChapterText {
         val sb = SpannableStringBuilder()
@@ -91,12 +82,6 @@ class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefacePr
         // heading doesn't count as "first emitted" — this flag only flips once something
         // actually contributes text, exactly mirroring the `prev` update below.
         var hasEmitted = false
-        // Whether a chapter-opening drop cap may still be placed. The enlarged initial goes on the
-        // chapter's FIRST body paragraph, provided only the opening title(s) precede it. The first
-        // other emitted block — an image, a scene-break line, a quote, a list item — means the
-        // chapter doesn't open on prose, so no cap. Decided exactly once (see the drop-cap block
-        // below), then this stays false for the rest of the chapter.
-        var dropCapEligible = true
 
         for (block in blocks) {
             if (block is Block.PageBreak) {
@@ -134,22 +119,6 @@ class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefacePr
                 )
             }
             if (sb.length > start) hasEmitted = true
-            // Drop cap: reader baseline, applied regardless of config.publisherStyling (like the
-            // centered opening title and scene breaks). Once a block actually emits text and we
-            // haven't yet decided, classify the opener: an opening heading (the title) is
-            // transparent — stay eligible for the paragraph that follows; a body paragraph is the
-            // target — cap its initial when it's a letter (dropCapLength == 1), then done; anything
-            // else opening the chapter (image, scene-break line, quote, list item) means no cap.
-            if (dropCapEligible && sb.length > start) {
-                when {
-                    block is Block.Heading -> Unit // the opening title; the next prose still caps
-                    block is Block.Paragraph && !isSeparatorLine(block.text.text) -> {
-                        if (dropCapLength(block.text.text) == 1) applyDropCap(sb, start, config)
-                        dropCapEligible = false
-                    }
-                    else -> dropCapEligible = false // image / scene break / quote / list opener
-                }
-            }
             // The break offset is recorded only once a block actually contributes text,
             // and pins to that block's own first character — after the separator, and
             // past any text-free block sitting between the break and the text. A block is
@@ -168,37 +137,6 @@ class SpannedChapterBuilder(private val typefaces: TypefaceProvider = TypefacePr
             if (sb.length > start) prev = block
         }
         return ChapterText(sb, breaks, headingRanges)
-    }
-
-    /**
-     * Enlarges the initial at [textStart] into a chapter-opening drop cap. Two spans over exactly
-     * `[textStart, textStart + 1)`, inserting/removing nothing so every offset is preserved:
-     *  - a [DropCapSpan] that reserves the left margin over the first [DROP_CAP_LINES] lines and
-     *    draws the big glyph once, in the reader's face (resolved via [typefaces]) and gray;
-     *  - a [ZeroWidthSpan] so the ordinary-size glyph the layout would otherwise paint is both
-     *    invisible AND zero-advance — the covered character contributes no inline width, so
-     *    [DropCapSpan]'s margin can reserve one uniform width for every band line rather than
-     *    special-casing the line that still contains the character. Applied last so it owns the
-     *    character's rendering outright — a publisher colour/gray span on that same character no
-     *    longer matters, since [ZeroWidthSpan] is what Android calls to draw the run, not it.
-     *
-     * The cap's size derives from the reader's typography: body size ([RenderConfig.textSizePx])
-     * and line height (`textSizePx * lineSpacingMultiplier`), so it scales with the Aa settings.
-     */
-    private fun applyDropCap(sb: SpannableStringBuilder, textStart: Int, config: RenderConfig) {
-        val lineHeightPx = config.textSizePx * config.lineSpacingMultiplier
-        val span = DropCapSpan(
-            initial = sb[textStart],
-            linesSpanned = DROP_CAP_LINES,
-            textSizePx = config.textSizePx,
-            lineHeightPx = lineHeightPx,
-            typeface = typefaces.get(config.fontFamily),
-        )
-        sb.setSpan(span, textStart, textStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        sb.setSpan(
-            ZeroWidthSpan(),
-            textStart, textStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-        )
     }
 
     /**
