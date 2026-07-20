@@ -2,6 +2,17 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+// Version is stamped by CI (see .github/workflows/release.yml), which passes
+// -PappVersionName=YYYY.MM.build and a monotonic -PappVersionCode. Local builds fall back to a
+// clearly-marked dev version so a hand-built APK is never mistaken for a release artifact.
+val appVersionName: String = (project.findProperty("appVersionName") as String?) ?: "0.0.0-dev"
+val appVersionCode: Int = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 1
+
+// Release signing comes from the environment, never from a committed file. CI decodes the
+// keystore from a secret and exports ANDROID_KEYSTORE_PATH; when it is absent (every local
+// build) no release signingConfig is registered at all and `assembleRelease` stays unsigned.
+val keystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")
+
 android {
     namespace = "dev.reader"
     // 37, not 36: androidx.core:core-ktx:1.19.0's AAR metadata requires
@@ -13,12 +24,28 @@ android {
         applicationId = "dev.reader"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+    }
+
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            // Only wired when CI supplied a keystore; otherwise the block above created no
+            // "release" config and getByName would throw.
+            if (keystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
