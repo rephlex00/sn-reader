@@ -40,9 +40,12 @@ jobs:
             YEAR="${BASH_REMATCH[1]}"; MONTH="${BASH_REMATCH[2]}"; BUILD="${BASH_REMATCH[3]}"
           else
             # Otherwise take the highest build already tagged this month and add one.
+            # `|| true` because grep exits 1 when nothing matches, which under
+            # `set -euo pipefail` would abort the whole step. No matching tag is the
+            # normal case for the first release of any month, not an error.
             YEAR="${PREFIX%.*}"; MONTH="${PREFIX#*.}"
             LAST="$(git tag -l "${PREFIX}.*" \
-                    | grep -E "^${PREFIX}\.[0-9]+$" \
+                    | { grep -E "^${PREFIX}\.[0-9]+$" || true; } \
                     | sed "s/^${PREFIX}\.//" \
                     | sort -n | tail -1)"
             BUILD=$(( ${LAST:-0} + 1 ))
