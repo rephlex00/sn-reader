@@ -25,6 +25,7 @@ import dev.reader.data.BookmarkEntity
 import dev.reader.data.HighlightEntity
 import dev.reader.engine.ExistingHighlight
 import dev.reader.engine.Locator
+import dev.reader.engine.Page
 import dev.reader.engine.PageNavigator
 import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
@@ -169,9 +170,7 @@ open class ReaderActivity : AppCompatActivity() {
      * when the book has no usable TOC. Tapping an entry jumps via [jumpToToc].
      */
     private lateinit var tocPanel: View
-    private lateinit var tocList: RecyclerView
-    private lateinit var tocEmpty: View
-    private lateinit var tocAdapter: TocAdapter
+    private lateinit var toc: TocPanel
 
     /**
      * The Bookmarks panel — a visibility-toggled, full-height layer inside [overlay], opened by the
@@ -322,13 +321,7 @@ open class ReaderActivity : AppCompatActivity() {
         scrubberView = overlay.findViewById(R.id.scrubber)
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
         tocPanel = overlay.findViewById(R.id.toc_panel)
-        tocList = overlay.findViewById(R.id.toc_list)
-        tocEmpty = overlay.findViewById(R.id.toc_empty)
-        tocAdapter = TocAdapter(::jumpToToc)
-        tocList.layoutManager = LinearLayoutManager(this)
-        tocList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
-        tocList.stopScrollAnimations()
-        tocList.adapter = tocAdapter
+        toc = TocPanel(overlay, readerSurface)
         bookmarksPanel = overlay.findViewById(R.id.bookmarks_panel)
         bookmarksList = overlay.findViewById(R.id.bookmarks_list)
         bookmarksEmpty = overlay.findViewById(R.id.bookmarks_empty)
@@ -388,6 +381,67 @@ open class ReaderActivity : AppCompatActivity() {
             return
         }
         pageView.doOnLayout { openFirstBook() }
+    }
+
+    /**
+     * The panels' view of this reader (see [ReaderSurface]). An anonymous implementation rather than
+     * `ReaderActivity : ReaderSurface`, deliberately: the interface exists to NARROW what a panel can
+     * reach, and making the Activity itself the surface would hand every panel the whole Activity
+     * again through an up-cast, which is the coupling being removed.
+     *
+     * The paginating members below can throw [EpubException] — chapter bytes are read lazily, so a
+     * corrupt chapter surfaces the first time a panel reaches it. That is the documented contract;
+     * each panel catches where it can report.
+     */
+    private val readerSurface = object : ReaderSurface {
+
+        override val isBookOpen: Boolean
+            get() = document != null && config != null && navigator != null
+
+        override val toc: List<TocEntry> get() = document?.toc.orEmpty()
+
+        override val currentState: ReadingState get() = state
+
+        override val currentPage: Page?
+            get() {
+                val doc = document ?: return null
+                val cfg = config ?: return null
+                return doc.chapter(state.spineIndex, cfg).pages.getOrNull(state.pageIndex)
+            }
+
+        override val currentProgress: Float get() = currentBookProgress
+
+        override val bookPath: String? get() = this@ReaderActivity.bookPath
+
+        override fun pageCountFor(spineIndex: Int): Int {
+            val doc = document ?: return 0
+            val cfg = config ?: return 0
+            return doc.chapter(spineIndex, cfg).pages.size
+        }
+
+        override fun pageIndexForOffset(spineIndex: Int, charOffset: Int): Int {
+            val doc = document ?: return 0
+            val cfg = config ?: return 0
+            return pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
+        }
+
+        override fun firstNonEmptyFrom(spineIndex: Int): ReadingState? {
+            val nav = navigator ?: return null
+            return advance(nav, ReadingState(spineIndex, 0), ::pageCountFor)
+        }
+
+        override fun currentChapterText(): String? = this@ReaderActivity.currentChapterText()
+
+        override fun goTo(target: ReadingState) {
+            showPage(target)
+            flushPosition()
+        }
+
+        override fun closeOverlay() = hideOverlay()
+
+        override fun message(messageId: Int) = showMessage(messageId)
+
+        override fun error(messageId: Int, cause: Throwable) = showError(messageId, cause)
     }
 
     /** Whether the reading chrome is currently on screen. */
@@ -452,7 +506,7 @@ open class ReaderActivity : AppCompatActivity() {
             settingsSheet.visibility = View.GONE // one panel open at a time
             bookmarksPanel.visibility = View.GONE
             highlightsPanel.visibility = View.GONE
-            refreshToc()
+            toc.refresh()
             tocPanel.visibility = View.VISIBLE
         }
     }
@@ -468,59 +522,6 @@ open class ReaderActivity : AppCompatActivity() {
             highlightsPanel.visibility = View.GONE
             bookmarksPanel.visibility = View.VISIBLE
             refreshBookmarks()
-        }
-    }
-
-    /** Rebuilds the Contents list from the already-parsed [EpubDocument.toc] and the current chapter
-     * (for the bold marker). An empty/malformed TOC shows the "No contents" state with the list
-     * hidden — never an empty clickable void. Pure View work; no re-parse (reads `doc.toc`). */
-    private fun refreshToc() {
-        val rows = tocRows(document?.toc.orEmpty(), state.spineIndex)
-        tocAdapter.submit(rows)
-        val empty = rows.isEmpty()
-        tocEmpty.visibility = if (empty) View.VISIBLE else View.GONE
-        tocList.visibility = if (empty) View.GONE else View.VISIBLE
-    }
-
-    /**
-     * Jumps the reader to a tapped Contents [row], through the SAME restore machinery the open path
-     * and the Aa sheet use: resolve the target page via [tocTarget] (an anchored entry lands on the
-     * page containing its char offset, NOT blindly page 0; an entry at a missing/empty chapter skips
-     * forward to the nearest readable one), then [showPage] + [flushPosition] as a normal navigation,
-     * and close the chrome down to the page.
-     *
-     * The lazy [EpubDocument.chapter] read can throw [EpubException] here for the first time, so this
-     * is wrapped exactly as [onTap]/[applySettingsChange] are: a failure shows a message and leaves
-     * the reader on the page it was already showing ([state] is only reassigned inside [showPage],
-     * after its own `chapter()` call has succeeded).
-     */
-    private fun jumpToToc(row: TocRow) {
-        val doc = document ?: return
-        val cfg = config ?: return
-        val nav = navigator ?: return
-        val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
-        try {
-            val target = tocTarget(
-                spineIndex = row.spineIndex,
-                charOffset = row.charOffset,
-                pageCountFor = pageCountFor,
-                offsetToPageIndex = { spineIndex, charOffset ->
-                    pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
-                },
-                firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
-            )
-            if (target == null) {
-                // The tapped chapter and everything after it paginate to zero pages: nothing to show.
-                showMessage(R.string.error_book_no_text)
-                return
-            }
-            hideOverlay()
-            showPage(target)
-            flushPosition()
-        } catch (e: EpubException) {
-            showError(R.string.error_open_section, e)
-        } catch (e: Exception) {
-            showError(R.string.error_open_section, e)
         }
     }
 
