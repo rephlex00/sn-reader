@@ -87,4 +87,26 @@ class BookProgressTest {
         // Assert we reach completion at the final page.
         assertThat(progressSequence.last()).isEqualTo(1f)
     }
+
+    @Test
+    fun `chapter end fraction is the cumulative weight through the chapter`() {
+        val weights = listOf(10L, 30L, 60L)
+        assertThat(chapterEndFraction(weights, 0)).isWithin(1e-6f).of(0.1f)
+        assertThat(chapterEndFraction(weights, 1)).isWithin(1e-6f).of(0.4f)
+        assertThat(chapterEndFraction(weights, 2)).isWithin(1e-6f).of(1.0f)
+    }
+
+    @Test
+    fun `chapter end fraction survives degenerate weights`() {
+        assertThat(chapterEndFraction(emptyList(), 0)).isEqualTo(0f)
+        assertThat(chapterEndFraction(listOf(0L, 0L), 1)).isEqualTo(0f)
+        assertThat(chapterEndFraction(listOf(-5L, 10L), 1)).isWithin(1e-6f).of(1.0f)
+    }
+
+    @Test
+    fun `chapter end fraction clamps an out of range spine index`() {
+        val weights = listOf(10L, 30L)
+        assertThat(chapterEndFraction(weights, 99)).isWithin(1e-6f).of(1.0f)
+        assertThat(chapterEndFraction(weights, -3)).isWithin(1e-6f).of(0.25f)
+    }
 }

@@ -25,3 +25,23 @@ fun bookProgress(weights: List<Long>, spineIndex: Int, pageIndex: Int, pageCount
 
     return ((before + current) / total).coerceIn(0f, 1f)
 }
+
+/**
+ * The whole-book fraction at which chapter [spineIndex] *ends* — i.e. `bookProgress` for its last
+ * page. Drives the progress bar's chapter-end tick, so the reader can see how much of the chapter
+ * is left without opening the Contents panel.
+ *
+ * Defensive on exactly the same terms as [bookProgress], and for the same reason (a broken book
+ * must not crash a page turn): an empty or zero-total [weights] reads `0f`, negative weights are
+ * floored at zero, [spineIndex] is clamped into range, and the result is clamped to `[0f, 1f]`.
+ * The last chapter always ends at `1f`.
+ */
+fun chapterEndFraction(weights: List<Long>, spineIndex: Int): Float {
+    if (weights.isEmpty()) return 0f
+    val total = weights.sumOf { maxOf(0L, it) }
+    if (total <= 0L) return 0f
+
+    val idx = spineIndex.coerceIn(0, weights.lastIndex)
+    val through = (0..idx).sumOf { maxOf(0L, weights[it]) }
+    return (through.toFloat() / total).coerceIn(0f, 1f)
+}
