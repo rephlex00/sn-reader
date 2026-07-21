@@ -263,9 +263,8 @@ open class ReaderActivity : AppCompatActivity() {
         container.addView(pageView, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         overlay = layoutInflater.inflate(R.layout.overlay_reader, container, false)
         container.addView(overlay)
-        // The on-page delete chip: added last so it draws above the page; hidden until a pen tap lands
-        // inside a highlight. Positioned per-tap. Its own tap consumes the touch (isClickable), so a tap
-        // on the chip deletes while a tap elsewhere falls through to pageView and dismisses it.
+        // The on-page delete chip is added to this container too, by HighlightsController below —
+        // after the overlay, so it draws above both the page and the chrome.
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
@@ -440,8 +439,9 @@ open class ReaderActivity : AppCompatActivity() {
         tocPanel.visibility = View.GONE
         bookmarksPanel.visibility = View.GONE
         highlightsPanel.visibility = View.GONE
-        // Opening the chrome ends any on-page pen selection in progress: a pending bracket-start is
-        // dropped (the marker would otherwise linger under the overlay).
+        // Returning to the page ends any pen selection that was in progress when the chrome went up:
+        // a bracket armed before then is stale, and its marker would otherwise still be sitting on
+        // the page waiting for a second tap the reader has long since moved on from.
         highlights.cancelPendingSelection()
         overlay.visibility = View.GONE
     }

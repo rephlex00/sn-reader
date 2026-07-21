@@ -145,9 +145,9 @@ internal class HighlightsController(
     }
 
     /**
-     * Ends any pen selection in progress — called when the reading chrome opens over the page. A
-     * pending bracket-start marker would otherwise sit under the overlay, still armed, and commit a
-     * span the reader had visually moved on from.
+     * Ends any pen selection in progress — called when the reading chrome is dismissed and the page
+     * comes back. A bracket armed before the chrome went up is stale by then, and leaving it would
+     * put a marker back on the page still waiting for a second tap the reader has moved on from.
      */
     fun cancelPendingSelection() {
         clearBracketAnchor()
