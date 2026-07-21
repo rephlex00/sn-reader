@@ -25,6 +25,7 @@ app uses **no measurable CPU at all**.
 * **Your books, with covers**, scanned from a folder on the device and remembered where you left off
 * **Typography that behaves like a book**: justified text with real hyphenation, generous margins,
   centered chapter openings, three bundled typefaces
+* **Two columns when you turn the tablet sideways**, a spread rather than one very wide column
 * **Pen highlighting** that knows your stylus from your palm
 * **Bookmarks, chapter jumps, and search** by title or author
 * **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for speed
@@ -39,7 +40,7 @@ Reader opens **EPUB files only**. No PDF, no CBR, no CBZ.
 **2. Install it over USB.**
 
 ```
-adb install -r sn-reader-2026.07.1.apk
+adb install -r sn-reader-2026.07.2.apk
 ```
 
 Debug mode needs to be on first. It lives in the Supernote's own Settings under security and
@@ -86,6 +87,24 @@ zones instead:
 | The strip between them | Show or hide the toolbar |
 
 Forward is the largest of the three, so reading is one unhurried tap after another.
+
+### Turning it sideways
+
+Rotate the tablet and the page becomes two columns with a gutter between them. One column across a
+landscape screen would run to about a hundred characters a line, far past what is comfortable, so
+Reader gives you a spread instead, the shape of an open book.
+
+A tap turns both pages at once, and the foot tells you where you are: `pages 3–4 of 12`. A spread
+never runs across a chapter boundary, so a chapter with an odd number of pages ends with a blank
+right-hand column, exactly as a printed one does.
+
+Rotating keeps your place. Not your page *number* — the text reflows into narrower columns, so the
+numbering changes — but the words you were reading stay on screen. The book is not reopened, and it
+costs a single clean refresh.
+
+If you would rather it stayed put, **Lock rotation** in the **Aa** panel pins the reader to whichever
+way it is currently facing, which is what you want when reading on your side. Your shelf and the
+settings screens stay upright either way.
 
 ### The toolbar
 
@@ -145,6 +164,7 @@ light, fast refresh and Reader does a full clean-up flash every few pages instea
 * Tested on a Supernote Nomad. It should work on a Manta, but that has not been confirmed.
 * Sideloaded, not from any app store.
 * Everything stays on your device. No accounts, no sync, and the app never touches the network.
+* What changed between releases is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
