@@ -1,16 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One table-of-contents row: a single monochrome TextView, large tap target, no ripple/animation.
-     The left padding (depth indent) and the bold weight (current chapter) are applied in TocAdapter;
-     everything else is fixed here. Black on white, e-ink-crisp. -->
-<TextView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/toc_title"
+<!-- One contents row, set as a printed book's contents page: title, a dotted leader carrying the
+     eye across the gap, and the entry's whole-book percentage. The left padding (depth indent),
+     the bold weight (current chapter), the italic (nested entry) and the Literata typeface are all
+     applied in TocAdapter; everything else is fixed here.
+
+     e-ink: black on white, no ripple, no selectableItemBackground, no animation. The row itself
+     carries the tap target, not its children. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:baselineAligned="true"
     android:clickable="true"
     android:focusable="true"
-    android:minHeight="48dp"
     android:gravity="center_vertical"
+    android:minHeight="48dp"
+    android:orientation="horizontal"
     android:paddingHorizontal="16dp"
-    android:paddingVertical="12dp"
-    android:textColor="@android:color/black"
-    android:textSize="16sp" />
+    android:paddingVertical="12dp">
+
+    <TextView
+        android:id="@+id/toc_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_weight="0"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@android:color/black"
+        android:textSize="16sp" />
+
+    <dev.reader.ui.LeaderDotsView
+        android:id="@+id/toc_leader"
+        android:layout_width="0dp"
+        android:layout_height="12dp"
+        android:layout_marginHorizontal="6dp"
+        android:layout_weight="1" />
+
+    <TextView
+        android:id="@+id/toc_percent"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@android:color/black"
+        android:textSize="14sp" />
+
+</LinearLayout>

@@ -48,6 +48,11 @@
     <string name="reader_display">Display</string>
     <string name="reader_display_short">Aa</string>
 
+    <!-- A Contents row's whole-book position, at the end of its leader dots. -->
+    <string name="toc_percent">%1$d%%</string>
+    <!-- The Contents panel's head, letterspaced and uppercased by the layout. -->
+    <string name="toc_heading">Contents</string>
+
     <!-- Reader panels -->
     <string name="panel_close_contents">Close contents</string>
     <string name="panel_close_bookmarks">Close bookmarks</string>

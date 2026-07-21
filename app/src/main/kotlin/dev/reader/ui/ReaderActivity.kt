@@ -47,6 +47,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
  * The overlay's read-only page readout, chapter-relative: `page X of Y · N left in chapter`, where
@@ -63,8 +64,9 @@ internal fun scrubberText(pageIndex: Int, pageCount: Int): String {
 /**
  * One row of the Contents panel — the display projection of a [TocEntry] for [TocAdapter]. [depth]
  * drives the indent; [isCurrent] (whether this entry's chapter is the one being read) drives the
- * bold marker; [spineIndex]/[charOffset] are what a tap jumps to. Kept as a flat data class, out of
- * the View, so the list-building rules below are unit-testable without a RecyclerView.
+ * bold marker; [spineIndex]/[charOffset] are what a tap jumps to; [progressPercent] is the
+ * whole-book position the leader dots run to. Kept as a flat data class, out of the View, so the
+ * list-building rules below are unit-testable without a RecyclerView.
  */
 internal data class TocRow(
     val title: String,
@@ -72,15 +74,26 @@ internal data class TocRow(
     val charOffset: Int,
     val depth: Int,
     val isCurrent: Boolean,
+    val progressPercent: Int,
 )
 
 /**
  * Projects the parsed [toc] into [TocRow]s in list (spine) order, marking every entry whose chapter
- * is [currentSpineIndex] as the current one. A pure function of its two arguments — the testable
- * seam behind the Contents list — so order, depth passthrough and current-chapter marking are
- * verifiable without an Activity. An empty [toc] yields an empty list (the "No contents" case).
+ * is [currentSpineIndex] as the current one, and resolving each entry's whole-book percentage
+ * through [progressFor]. A pure function of its arguments — the testable seam behind the Contents
+ * list — so order, depth passthrough, current-chapter marking and percentages are all verifiable
+ * without an Activity. An empty [toc] yields an empty list (the "No contents" case).
+ *
+ * [progressFor] is byte-weighted and paginates nothing (see `ReaderSurface.progressFor`). This is
+ * deliberate: real page numbers would require paginating every preceding chapter, so building this
+ * list would paginate the whole book — the eager work this reader exists to avoid — and would have
+ * to be redone after every font or margin change.
  */
-internal fun tocRows(toc: List<TocEntry>, currentSpineIndex: Int): List<TocRow> =
+internal fun tocRows(
+    toc: List<TocEntry>,
+    currentSpineIndex: Int,
+    progressFor: (Int, Int) -> Float,
+): List<TocRow> =
     toc.map { entry ->
         TocRow(
             title = entry.title,
@@ -88,6 +101,8 @@ internal fun tocRows(toc: List<TocEntry>, currentSpineIndex: Int): List<TocRow> 
             charOffset = entry.charOffset,
             depth = entry.depth,
             isCurrent = entry.spineIndex == currentSpineIndex,
+            progressPercent = (progressFor(entry.spineIndex, entry.charOffset).coerceIn(0f, 1f) * 100)
+                .roundToInt(),
         )
     }
 

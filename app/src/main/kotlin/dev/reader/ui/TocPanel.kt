@@ -38,7 +38,7 @@ internal class TocPanel(
      * never an empty clickable void. Pure View work; nothing is re-parsed.
      */
     fun refresh() {
-        val rows = tocRows(reader.toc, reader.currentState.spineIndex)
+        val rows = tocRows(reader.toc, reader.currentState.spineIndex, reader::progressFor)
         adapter.submit(rows)
         val isEmpty = rows.isEmpty()
         empty.visibility = if (isEmpty) View.VISIBLE else View.GONE

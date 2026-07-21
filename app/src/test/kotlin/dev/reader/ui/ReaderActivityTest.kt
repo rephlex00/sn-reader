@@ -616,7 +616,7 @@ class ReaderActivityTest {
             TocEntry(title = "Two-a", spineIndex = 2, depth = 1),
         )
 
-        val rows = tocRows(toc, currentSpineIndex = 1)
+        val rows = tocRows(toc, currentSpineIndex = 1) { _, _ -> 0f }
 
         // Order and depth are passed through untouched.
         assertThat(rows.map { it.title }).containsExactly("One", "Two", "Two-a").inOrder()
@@ -627,7 +627,21 @@ class ReaderActivityTest {
 
     @Test
     fun `tocRows on an empty toc is empty (the No contents case)`() {
-        assertThat(tocRows(emptyList(), currentSpineIndex = 0)).isEmpty()
+        assertThat(tocRows(emptyList(), currentSpineIndex = 0) { _, _ -> 0f }).isEmpty()
+    }
+
+    @Test
+    fun `rows carry a whole-book percentage from progressFor`() {
+        val toc = listOf(
+            TocEntry(title = "Ashes", spineIndex = 0, charOffset = 0, depth = 0),
+            TocEntry(title = "Winter", spineIndex = 2, charOffset = 40, depth = 0),
+        )
+
+        val rows = tocRows(toc, currentSpineIndex = 0) { spineIndex, _ ->
+            if (spineIndex == 0) 0f else 0.436f
+        }
+
+        assertThat(rows.map { it.progressPercent }).containsExactly(0, 44).inOrder()
     }
 
     @Test
