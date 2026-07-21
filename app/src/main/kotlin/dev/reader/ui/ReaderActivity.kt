@@ -12,7 +12,6 @@ import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
@@ -155,6 +154,7 @@ open class ReaderActivity : AppCompatActivity() {
      * [applySettingsChange], keeping the reader on the same text across the reflow.
      */
     private lateinit var settingsSheet: View
+    private lateinit var settings: SettingsSheet
 
     /**
      * The Contents panel — a visibility-toggled, full-height list inside [overlay], opened by the
@@ -222,7 +222,6 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Whether the Aa font options have been given their preview typefaces yet (loaded once, on
      * the first sheet-open — see [loadFontPreviewsOnce]). */
-    private var fontPreviewsLoaded = false
 
     /** The pure position-memory logic: the restore rules and the in-memory page-turn debounce. */
     private val session = ReadingSession()
@@ -270,6 +269,7 @@ open class ReaderActivity : AppCompatActivity() {
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
+        settings = SettingsSheet(overlay, settingsHost) { ReaderPrefs(this) }
         tocPanel = overlay.findViewById(R.id.toc_panel)
         toc = TocPanel(overlay, readerSurface)
         bookmarksPanel = overlay.findViewById(R.id.bookmarks_panel)
@@ -294,7 +294,7 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.bookmarks_close).setOnClickListener { bookmarksPanel.visibility = View.GONE }
         overlay.findViewById<View>(R.id.highlights_close).setOnClickListener { highlightsPanel.visibility = View.GONE }
         overlay.findViewById<View>(R.id.settings_close).setOnClickListener { settingsSheet.visibility = View.GONE }
-        wireSettingsControls()
+        settings.wire()
         setContentView(container)
 
         // System Back is the reader's other way out (the Nomad's hardware/gesture Back does not
@@ -398,6 +398,28 @@ open class ReaderActivity : AppCompatActivity() {
         return (doc.chapter(state.spineIndex, cfg).measured as? AndroidMeasuredChapter)?.layout?.text?.toString()
     }
 
+    /**
+     * What the Aa sheet is allowed to do (see [SettingsHost]). Typography changes go through
+     * [applySettingsChange], which re-paginates and keeps the reader's place; the display-only
+     * switches deliberately do NOT, since none of them changes how a page is laid out.
+     */
+    private val settingsHost = object : SettingsHost {
+
+        override fun applyTypography(mutate: (ReaderPrefs) -> Unit) = applySettingsChange(mutate)
+
+        override fun stepTextSize(deltaPx: Float) = this@ReaderActivity.stepTextSize(deltaPx)
+
+        override fun applyMarginPreset(presetPx: Int) = applyMargin(presetPx)
+
+        override fun toggleProgressBar() = this@ReaderActivity.toggleProgressBar()
+
+        override fun toggleRotationLock() = this@ReaderActivity.toggleRotationLock()
+
+        override fun toggleFasterTurns() = this@ReaderActivity.toggleFasterTurns()
+
+        override fun applyRefreshFrequency(pages: Int) = this@ReaderActivity.applyRefreshFrequency(pages)
+    }
+
     /** The app's single Room database — the panels take the DAOs they need from it. */
     private val database get() = (application as ReaderApplication).database
 
@@ -434,21 +456,10 @@ open class ReaderActivity : AppCompatActivity() {
             tocPanel.visibility = View.GONE // one panel open at a time
             bookmarksPanel.visibility = View.GONE
             highlightsPanel.visibility = View.GONE
-            loadFontPreviewsOnce() // before refreshSheet: sets each font option's preview face
-            refreshSheet()
+            settings.loadFontPreviewsOnce() // before refresh(): sets each font option's preview face
+            settings.refresh()
             settingsSheet.visibility = View.VISIBLE
         }
-    }
-
-    /** Shows each font option in its own face, so the picker previews the fonts before selection.
-     * Deferred to first sheet-open and done once — loading three font families is real work that a
-     * reader who never opens the Aa sheet should not pay at every book open. */
-    private fun loadFontPreviewsOnce() {
-        if (fontPreviewsLoaded) return
-        fontPreviewsLoaded = true
-        overlay.findViewById<TextView>(R.id.font_literata).typeface = ResourcesCompat.getFont(this, R.font.literata)
-        overlay.findViewById<TextView>(R.id.font_bitter).typeface = ResourcesCompat.getFont(this, R.font.bitter)
-        overlay.findViewById<TextView>(R.id.font_atkinson).typeface = ResourcesCompat.getFont(this, R.font.atkinson)
     }
 
     /** Opens or closes the Contents panel — a visibility flip (one redraw). Opening first rebuilds
@@ -527,46 +538,13 @@ open class ReaderActivity : AppCompatActivity() {
         highlights.onStylusDrag(startOffset, endOffset)
     internal fun commitHighlight(rawStart: Int, rawEnd: Int) = highlights.commit(rawStart, rawEnd)
 
-    /** Wires every Aa-sheet control to its pref write + live re-paginate. Called once from onCreate;
-     * the listeners hold no state and fire only on a deliberate tap, so they cost nothing at rest. */
-    private fun wireSettingsControls() {
-        overlay.findViewById<View>(R.id.font_literata).setOnClickListener { applySettingsChange { p -> p.fontFamily = "literata" } }
-        overlay.findViewById<View>(R.id.font_bitter).setOnClickListener { applySettingsChange { p -> p.fontFamily = "bitter" } }
-        overlay.findViewById<View>(R.id.font_atkinson).setOnClickListener { applySettingsChange { p -> p.fontFamily = "atkinson" } }
-        // The per-option preview typefaces are loaded lazily on first sheet-open, not here — see
-        // loadFontPreviewsOnce. Loading three font families synchronously at every book open (even
-        // for a reader who never touches the Aa sheet) would be cold-open work for nothing.
-
-        overlay.findViewById<View>(R.id.size_minus).setOnClickListener { stepTextSize(-TEXT_SIZE_STEP_PX) }
-        overlay.findViewById<View>(R.id.size_plus).setOnClickListener { stepTextSize(TEXT_SIZE_STEP_PX) }
-
-        overlay.findViewById<View>(R.id.spacing_12).setOnClickListener { applySettingsChange { p -> p.lineSpacingMultiplier = 1.2f } }
-        overlay.findViewById<View>(R.id.spacing_14).setOnClickListener { applySettingsChange { p -> p.lineSpacingMultiplier = 1.4f } }
-        overlay.findViewById<View>(R.id.spacing_16).setOnClickListener { applySettingsChange { p -> p.lineSpacingMultiplier = 1.6f } }
-
-        overlay.findViewById<View>(R.id.margin_narrow).setOnClickListener { applyMargin(MARGIN_NARROW_PX) }
-        overlay.findViewById<View>(R.id.margin_medium).setOnClickListener { applyMargin(MARGIN_MEDIUM_PX) }
-        overlay.findViewById<View>(R.id.margin_wide).setOnClickListener { applyMargin(MARGIN_WIDE_PX) }
-
-        overlay.findViewById<View>(R.id.toggle_justify).setOnClickListener { applySettingsChange { p -> p.justified = !p.justified } }
-        overlay.findViewById<View>(R.id.toggle_hyphen).setOnClickListener { applySettingsChange { p -> p.hyphenated = !p.hyphenated } }
-        overlay.findViewById<View>(R.id.toggle_publisher).setOnClickListener { applySettingsChange { p -> p.publisherStyling = !p.publisherStyling } }
-        overlay.findViewById<View>(R.id.toggle_headings).setOnClickListener { applySettingsChange { p -> p.inferHeadings = !p.inferHeadings } }
-        overlay.findViewById<View>(R.id.toggle_progress).setOnClickListener { toggleProgressBar() }
-        overlay.findViewById<View>(R.id.toggle_rotation_lock).setOnClickListener { toggleRotationLock() }
-        overlay.findViewById<View>(R.id.toggle_faster_turns).setOnClickListener { toggleFasterTurns() }
-        overlay.findViewById<View>(R.id.refresh_freq_3).setOnClickListener { applyRefreshFrequency(3) }
-        overlay.findViewById<View>(R.id.refresh_freq_6).setOnClickListener { applyRefreshFrequency(6) }
-        overlay.findViewById<View>(R.id.refresh_freq_10).setOnClickListener { applyRefreshFrequency(10) }
-    }
-
     /** Bumps the persisted text size by [deltaPx], clamped to the sane range, then re-paginates. A
      * tap already at the bound only refreshes the readout (no reflow to do). */
     private fun stepTextSize(deltaPx: Float) {
         val current = ReaderPrefs(this).textSizePx
         val next = (current + deltaPx).coerceIn(TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX)
         if (next == current) {
-            refreshSheet()
+            settings.refresh()
         } else {
             applySettingsChange { p -> p.textSizePx = next }
         }
@@ -616,7 +594,7 @@ open class ReaderActivity : AppCompatActivity() {
             state = ReadingState(state.spineIndex, newPageIndex)
             showPage(state)
             flushPosition()
-            refreshSheet()
+            settings.refresh()
         } catch (e: EpubException) {
             showError(R.string.error_apply_setting, e)
         } catch (e: Exception) {
@@ -710,7 +688,7 @@ open class ReaderActivity : AppCompatActivity() {
         val prefs = ReaderPrefs(this)
         prefs.rotationLocked = !prefs.rotationLocked
         applyRotationLock(prefs.rotationLocked)
-        refreshSheet()
+        settings.refresh()
     }
 
     /**
@@ -751,7 +729,7 @@ open class ReaderActivity : AppCompatActivity() {
             null
         }
         pageView.setProgress(fraction)
-        refreshSheet()
+        settings.refresh()
     }
 
     /** Flips [ReaderPrefs.fasterPageTurns] and resets the turn counter so the new cadence (every
@@ -762,7 +740,7 @@ open class ReaderActivity : AppCompatActivity() {
         prefs.fasterPageTurns = !prefs.fasterPageTurns
         fasterPageTurns = prefs.fasterPageTurns
         turnsSinceRefresh = 0 // start the new cadence fresh so the next full refresh lands correctly
-        refreshSheet()
+        settings.refresh()
     }
 
     /** Persists a new [ReaderPrefs.fullRefreshEveryN] and resets the turn counter for the same
@@ -772,56 +750,7 @@ open class ReaderActivity : AppCompatActivity() {
         prefs.fullRefreshEveryN = pages
         fullRefreshEveryN = prefs.fullRefreshEveryN
         turnsSinceRefresh = 0
-        refreshSheet()
-    }
-
-    /** Syncs the sheet's controls to the current [ReaderPrefs]: the selected option in each group is
-     * marked with a boxed outline (see [setOptionSelected]), the size readout shows the current px,
-     * and each [ToggleSwitchView] reflects its boolean. Pure View work. */
-    private fun refreshSheet() {
-        val prefs = ReaderPrefs(this)
-
-        setOptionSelected(R.id.font_literata, prefs.fontFamily == "literata")
-        setOptionSelected(R.id.font_bitter, prefs.fontFamily == "bitter")
-        setOptionSelected(R.id.font_atkinson, prefs.fontFamily == "atkinson")
-
-        overlay.findViewById<TextView>(R.id.size_value).text = getString(R.string.text_size_value, prefs.textSizePx.toInt())
-
-        setOptionSelected(R.id.spacing_12, prefs.lineSpacingMultiplier == 1.2f)
-        setOptionSelected(R.id.spacing_14, prefs.lineSpacingMultiplier == 1.4f)
-        setOptionSelected(R.id.spacing_16, prefs.lineSpacingMultiplier == 1.6f)
-
-        setOptionSelected(R.id.margin_narrow, prefs.marginPx == MARGIN_NARROW_PX)
-        setOptionSelected(R.id.margin_medium, prefs.marginPx == MARGIN_MEDIUM_PX)
-        setOptionSelected(R.id.margin_wide, prefs.marginPx == MARGIN_WIDE_PX)
-
-        setToggle(R.id.toggle_justify_switch, prefs.justified)
-        setToggle(R.id.toggle_hyphen_switch, prefs.hyphenated)
-        setToggle(R.id.toggle_publisher_switch, prefs.publisherStyling)
-        setToggle(R.id.toggle_headings_switch, prefs.inferHeadings)
-        setToggle(R.id.toggle_progress_switch, prefs.showProgressBar)
-        setToggle(R.id.toggle_rotation_lock_switch, prefs.rotationLocked)
-
-        setToggle(R.id.toggle_faster_turns_switch, prefs.fasterPageTurns)
-        overlay.findViewById<View>(R.id.refresh_frequency_row).visibility =
-            if (prefs.fasterPageTurns) View.VISIBLE else View.GONE
-        setOptionSelected(R.id.refresh_freq_3, prefs.fullRefreshEveryN == 3)
-        setOptionSelected(R.id.refresh_freq_6, prefs.fullRefreshEveryN == 6)
-        setOptionSelected(R.id.refresh_freq_10, prefs.fullRefreshEveryN == 10)
-    }
-
-    private fun setOptionSelected(id: Int, selected: Boolean) {
-        // A boxed outline (not bold weight) marks the selection. It is typeface-independent, so it
-        // works with the font options that preview their own face without disturbing that face, and
-        // — crucially — it clears cleanly. The old `setTypeface(view.typeface, NORMAL)` could not
-        // strip bold back off a bundled font's already-bold instance, so de-selecting silently
-        // failed and every font eventually rendered as selected. `0` clears the background.
-        overlay.findViewById<TextView>(id)
-            .setBackgroundResource(if (selected) R.drawable.aa_option_selected else 0)
-    }
-
-    private fun setToggle(switchId: Int, on: Boolean) {
-        overlay.findViewById<ToggleSwitchView>(switchId).checked = on
+        settings.refresh()
     }
 
     /**
@@ -1382,15 +1311,5 @@ open class ReaderActivity : AppCompatActivity() {
 
         /** String extra: an absolute book path, set by [LibraryActivity] when opening a tap. */
         const val EXTRA_BOOK_PATH = "dev.reader.ui.EXTRA_BOOK_PATH"
-
-        // The Aa sheet's bounded value sets. Text size is a stepper over [MIN, MAX] by STEP; the
-        // others are presets. All chosen so the resulting RenderConfig stays valid on the device
-        // viewport (margins additionally clamped per-viewport by maxMarginForViewport).
-        private const val TEXT_SIZE_MIN_PX = 24f
-        private const val TEXT_SIZE_MAX_PX = 56f
-        private const val TEXT_SIZE_STEP_PX = 2f
-        private const val MARGIN_NARROW_PX = 40
-        private const val MARGIN_MEDIUM_PX = 72
-        private const val MARGIN_WIDE_PX = 120
     }
 }
