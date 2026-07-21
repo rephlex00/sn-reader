@@ -80,19 +80,22 @@ internal data class TocRow(
 /**
  * Projects the parsed [toc] into [TocRow]s in list (spine) order, marking every entry whose chapter
  * is [currentSpineIndex] as the current one, and resolving each entry's whole-book percentage
- * through [progressFor]. A pure function of its arguments — the testable seam behind the Contents
- * list — so order, depth passthrough, current-chapter marking and percentages are all verifiable
- * without an Activity. An empty [toc] yields an empty list (the "No contents" case).
+ * through [progressForRow]. A pure function of its arguments — the testable seam behind the
+ * Contents list — so order, depth passthrough, current-chapter marking and percentages are all
+ * verifiable without an Activity. An empty [toc] yields an empty list (the "No contents" case).
  *
- * [progressFor] is byte-weighted and paginates nothing (see `ReaderSurface.progressFor`). This is
- * deliberate: real page numbers would require paginating every preceding chapter, so building this
- * list would paginate the whole book — the eager work this reader exists to avoid — and would have
- * to be redone after every font or margin change.
+ * [progressForRow] is called once per TOC entry, so it MUST be byte-weighted and paginate nothing —
+ * [ReaderSurface.chapterStartProgress], never [ReaderSurface.progressFor]. `progressFor` resolves
+ * through the current pagination (a cache-miss chapter read: parse + `StaticLayout` measure), which
+ * is fine for the one anchor a bookmark or highlight asks about, but calling it once per entry here
+ * would paginate every chapter in the book just to open the panel — the eager work this reader
+ * exists to avoid, and worse, would evict the chapter actually being read from the bounded LRU
+ * chapter cache. The real caller ([TocPanel.refresh]) wires this to `chapterStartProgress`.
  */
 internal fun tocRows(
     toc: List<TocEntry>,
     currentSpineIndex: Int,
-    progressFor: (Int, Int) -> Float,
+    progressForRow: (Int, Int) -> Float,
 ): List<TocRow> =
     toc.map { entry ->
         TocRow(
@@ -101,7 +104,7 @@ internal fun tocRows(
             charOffset = entry.charOffset,
             depth = entry.depth,
             isCurrent = entry.spineIndex == currentSpineIndex,
-            progressPercent = (progressFor(entry.spineIndex, entry.charOffset).coerceIn(0f, 1f) * 100)
+            progressPercent = (progressForRow(entry.spineIndex, entry.charOffset).coerceIn(0f, 1f) * 100)
                 .roundToInt(),
         )
     }
@@ -393,6 +396,9 @@ open class ReaderActivity : AppCompatActivity() {
             val pages = doc.chapter(spineIndex, cfg).pages
             return bookProgress(chapterWeights, spineIndex, pageIndexFor(pages, charOffset), pages.size)
         }
+
+        override fun chapterStartProgress(spineIndex: Int): Float =
+            bookProgress(chapterWeights, spineIndex, 0, 1)
 
         override fun goTo(target: ReadingState) {
             showPage(target)

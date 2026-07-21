@@ -63,8 +63,27 @@ internal interface ReaderSurface {
     fun currentChapterText(): String?
 
     /** Whole-book progress in `[0,1]` for an arbitrary anchor — what a bookmark or highlight stores
-     *  so the library can show where in the book it sits. */
+     *  so the library can show where in the book it sits.
+     *
+     *  Resolves through the CURRENT pagination, so it pays a cache-miss chapter read (parse +
+     *  `StaticLayout` measure) the first time a given `(spineIndex, charOffset)` pair is asked for.
+     *  A bookmark or highlight asks for one anchor at a time, so that cost is paid once. Anything
+     *  that would ask for EVERY chapter's anchor at once — a per-chapter Contents list, for
+     *  instance — must use [chapterStartProgress] instead; see that doc for why. */
     fun progressFor(spineIndex: Int, charOffset: Int): Float
+
+    /** Whole-book progress in `[0,1]` at which chapter [spineIndex] STARTS — byte-weighted from
+     *  `EpubDocument.chapterWeights` alone, exactly like [progressFor] but with the page fraction
+     *  fixed at the chapter's first page, so it resolves without reading or paginating that
+     *  chapter (or any other). This is what the Contents list uses: a per-chapter list calling
+     *  [progressFor] once per entry would paginate every chapter in the book just to open the
+     *  panel — precisely the eager work this reader exists to avoid, and worse, on a bounded LRU
+     *  chapter cache it would evict the chapter actually being read. The tradeoff is coarseness:
+     *  two nested entries inside the same chapter report the same percentage, since neither the
+     *  first sub-heading nor a later one changes where the CHAPTER starts. That is deliberate — a
+     *  stable, slightly coarse number beats a precise one that changes depending on which chapters
+     *  happen to be cached when the panel is opened. */
+    fun chapterStartProgress(spineIndex: Int): Float
 
     /** Navigates to [target] and records the new position, the same way a page turn does. */
     fun goTo(target: ReadingState)

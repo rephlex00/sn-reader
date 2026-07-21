@@ -38,7 +38,13 @@ internal class TocPanel(
      * never an empty clickable void. Pure View work; nothing is re-parsed.
      */
     fun refresh() {
-        val rows = tocRows(reader.toc, reader.currentState.spineIndex, reader::progressFor)
+        // chapterStartProgress, NOT progressFor: this runs once per TOC entry, and progressFor
+        // would paginate every one of them just to open the panel (see ReaderSurface's doc on
+        // both). Two nested entries in the same chapter therefore show the same percentage —
+        // deliberate; see chapterStartProgress's doc for why that's the right tradeoff.
+        val rows = tocRows(reader.toc, reader.currentState.spineIndex) { spineIndex, _ ->
+            reader.chapterStartProgress(spineIndex)
+        }
         adapter.submit(rows)
         val isEmpty = rows.isEmpty()
         empty.visibility = if (isEmpty) View.VISIBLE else View.GONE

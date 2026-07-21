@@ -68,7 +68,10 @@ internal class TocAdapter(
 
     class TocViewHolder(
         itemView: View,
-        private val bookFace: Typeface?,
+        // internal, not private: a test reads this to assert the resolve-once cache actually
+        // hands every holder the SAME Typeface instance, rather than merely asserting the suite
+        // stays green (which a regression moving bookTypeface into onBindViewHolder would too).
+        internal val bookFace: Typeface?,
     ) : RecyclerView.ViewHolder(itemView) {
 
         private val title: TextView = itemView.findViewById(R.id.toc_title)
@@ -93,11 +96,20 @@ internal class TocAdapter(
             // selection state would need to animate or ghost: the current chapter is bold, and a
             // nested entry is italic the way a sub-section is set in a printed contents page.
             //
-            // Resolved explicitly through Typeface.create rather than the two-arg
-            // TextView.setTypeface(tf, style): that overload skips Typeface.create entirely when
-            // style is NORMAL and just assigns the family typeface as-is, so a recycled row's title
-            // would carry whatever style int the base Literata typeface reports rather than the
-            // real normal cut.
+            // Resolved through Typeface.create(bookFace, style) rather than the two-arg
+            // TextView.setTypeface(tf, style), to satisfy a Robolectric artifact, not a real
+            // defect: under Robolectric, ResourcesCompat.getFont(R.font.literata)'s base Typeface
+            // reports getStyle() == 400 (a font-weight value the shadow surfaces from the family's
+            // metadata) rather than the expected NORMAL == 0, and the two-arg setter's NORMAL case
+            // assigns that Typeface as-is instead of routing through Typeface.create — failing the
+            // plain-row assertion below on a style Android itself never actually reports. The two
+            // overloads are not otherwise equivalent: setTypeface(tf, style) additionally computes
+            // `need = style & ~tf.getStyle()` and sets synthetic bold/skew (setFakeBoldText /
+            // setTextSkewX) for whichever bit tf's own style doesn't already cover, which
+            // Typeface.create never does. That is harmless here — literata.xml ships real
+            // 400/700 x normal/italic cuts, so every style below resolves to a genuine cut, never a
+            // synthesized one — but a family lacking a true italic would lose the nested-entry
+            // italic here rather than falling back to a faux slant.
             val style = when {
                 row.isCurrent -> Typeface.BOLD
                 row.depth > 0 -> Typeface.ITALIC

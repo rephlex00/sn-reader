@@ -465,15 +465,23 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <!-- Letterspaced, uppercased and set at 14sp — a printed contents page's own head —
+                 rather than the plain 20sp the other panels' headers use: this panel is styled as
+                 the book's own contents page, not as another chrome sheet. One heading, one rule:
+                 there used to be a second letterspaced "CONTENTS" head inserted below this one; it
+                 duplicated this label and pushed a long entry's percentage out of view underneath,
+                 so it was removed rather than kept alongside this one. -->
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:letterSpacing="0.18"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="@dimen/panel_header_padding_v"
                 android:text="@string/reader_contents"
+                android:textAllCaps="true"
                 android:textColor="@android:color/black"
-                android:textSize="20sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -486,27 +494,6 @@
         <View
             android:layout_width="match_parent"
             android:layout_height="2dp"
-            android:background="@android:color/black" />
-
-        <!-- Contents head: letterspaced small caps over a rule, as a printed contents page opens. -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:letterSpacing="0.18"
-            android:paddingHorizontal="16dp"
-            android:paddingTop="16dp"
-            android:paddingBottom="6dp"
-            android:text="@string/toc_heading"
-            android:textAllCaps="true"
-            android:textColor="@android:color/black"
-            android:textSize="13sp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginHorizontal="16dp"
-            android:layout_marginBottom="8dp"
             android:background="@android:color/black" />
 
         <androidx.recyclerview.widget.RecyclerView

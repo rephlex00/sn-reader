@@ -4,6 +4,17 @@
      the bold weight (current chapter), the italic (nested entry) and the Literata typeface are all
      applied in TocAdapter; everything else is fixed here.
 
+     toc_title and toc_leader are nested inside their own weight="1" group, rather than sitting as
+     three flat siblings of toc_percent. A flat LinearLayout hands a weight="0" child (toc_title,
+     wrap_content) its full first-measurement-pass budget before a LATER sibling (toc_percent) has
+     had any width reserved at all — so a title longer than the row would claim the whole row for
+     itself, leaving nothing for the leader OR the percentage. Nesting title+leader in their own
+     weight="1" group means toc_percent (always a short "N%", so cheap and safe to measure first at
+     the outer level) reserves its own width before the nested group ever gets measured; inside that
+     group, toc_title still hugs its own text width when short (leaving the leader real room to run)
+     and still ellipsizes into whatever's left when long, but toc_percent's space is untouchable
+     either way. No ConstraintLayout: this is a plain nested LinearLayout.
+
      e-ink: black on white, no ripple, no selectableItemBackground, no animation. The row itself
      carries the tap target, not its children. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -18,22 +29,31 @@
     android:paddingHorizontal="16dp"
     android:paddingVertical="12dp">
 
-    <TextView
-        android:id="@+id/toc_title"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_weight="0"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@android:color/black"
-        android:textSize="16sp" />
-
-    <dev.reader.ui.LeaderDotsView
-        android:id="@+id/toc_leader"
+    <LinearLayout
         android:layout_width="0dp"
-        android:layout_height="12dp"
-        android:layout_marginHorizontal="6dp"
-        android:layout_weight="1" />
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:baselineAlignedChildIndex="0"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/toc_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@android:color/black"
+            android:textSize="16sp" />
+
+        <dev.reader.ui.LeaderDotsView
+            android:id="@+id/toc_leader"
+            android:layout_width="0dp"
+            android:layout_height="12dp"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1" />
+
+    </LinearLayout>
 
     <TextView
         android:id="@+id/toc_percent"

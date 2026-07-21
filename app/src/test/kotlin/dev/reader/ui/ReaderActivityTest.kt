@@ -713,6 +713,28 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `opening the Contents panel does not paginate a chapter it has not visited`() {
+        // The bug this guards: TocPanel.refresh() used to build each row's percentage through
+        // ReaderSurface.progressFor, which paginates its chapter on a cache miss — so opening a
+        // per-chapter Contents list paginated every chapter in the book just to display, undoing
+        // the whole point of lazy pagination. isChapterCachedForTest is the same read-only cache
+        // peek the prefetch tests use, so this proves it without needing a fake EpubDocument
+        // (which isn't possible: EpubDocument has a private constructor and isn't open).
+        val controller = openedWithToc()
+        val activity = controller.get()
+        // Opening chapter 0 paginates it; settling on it schedules a background prefetch of
+        // chapter 1 (the only forward neighbour). Chapter 2 is never touched by either — it is
+        // the one tocEpub entry the panel could only reach by paginating it itself.
+        assertThat(activity.isChapterCachedForTest(2)).isFalse()
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.VISIBLE)
+
+        assertThat(activity.isChapterCachedForTest(2)).isFalse()
+    }
+
+    @Test
     fun `tapping a Contents entry navigates to that chapter and persists it`() {
         val app = RuntimeEnvironment.getApplication() as ReaderApplication
         val book = tocEpub(tempFolder.newFile("book.epub"))
