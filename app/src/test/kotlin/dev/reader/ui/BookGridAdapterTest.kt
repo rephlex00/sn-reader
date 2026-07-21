@@ -1,6 +1,7 @@
 package dev.reader.ui
 
 import com.google.common.truth.Truth.assertThat
+import dev.reader.R
 import dev.reader.data.BookEntity
 import org.junit.Test
 
@@ -37,12 +38,6 @@ class BookGridAdapterTest {
     }
 
     @Test
-    fun `an opened book at the very start reads Just started`() {
-        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 0, charOffset = 0, progressFraction = 0f))
-            .isEqualTo("Just started")
-    }
-
-    @Test
     fun `an opened book shows the stored whole-book percentage, rounded`() {
         assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 4, charOffset = 0, progressFraction = 0.372f))
             .isEqualTo("37%")
@@ -54,15 +49,20 @@ class BookGridAdapterTest {
     }
 
     @Test
-    fun `a row opened before the percentage column shipped falls back to its spine section`() {
-        // progressFraction null = pre-v2 row. spineIndex is a SPINE index, not a chapter ordinal
-        // (cover/title/nav are often spine items 0-2), so "Section N" reports only what the older
-        // index has, one-based, without claiming a chapter number.
+    fun `an opened book at the very start shows its percentage, not a special phrase`() {
+        // The label vocabulary is percent-or-nothing; position (0,0) is 0%, not "Just started".
+        assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 0, charOffset = 0, progressFraction = 0f))
+            .isEqualTo("0%")
+    }
+
+    @Test
+    fun `a row with no stored percentage shows nothing rather than a spine fallback`() {
+        // progressFraction null = a row opened before that column shipped. Nothing backfills it, so
+        // the old "Section N" label sat beside real percentages forever. Show nothing instead.
         assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 4, charOffset = 0, progressFraction = null))
-            .isEqualTo("Section 5")
-        // spineIndex 0 with a nonzero charOffset is progress, not "just started" — only (0,0) is start.
+            .isNull()
         assertThat(progressLabel(lastOpenedAtMs = 1_000L, spineIndex = 0, charOffset = 50, progressFraction = null))
-            .isEqualTo("Section 1")
+            .isNull()
     }
 
     // -- coverCacheKey ----------------------------------------------------------------------
@@ -109,28 +109,26 @@ class BookGridAdapterTest {
         assertThat(humanReadableSize(3L * 1024 * 1024 * 1024)).isEqualTo("3.0 GB")
     }
 
-    // -- statusText -------------------------------------------------------------------------
+    // -- statusTextRes ----------------------------------------------------------------------
 
     @Test
     fun `a never-opened readable book reads Not started`() {
-        assertThat(statusText(book(lastOpenedAtMs = null))).isEqualTo("Not started")
+        assertThat(statusTextRes(book(lastOpenedAtMs = null))).isEqualTo(R.string.status_not_started)
     }
 
     @Test
     fun `an opened book reads In progress`() {
-        assertThat(statusText(book(lastOpenedAtMs = 5L))).isEqualTo("In progress")
+        assertThat(statusTextRes(book(lastOpenedAtMs = 5L))).isEqualTo(R.string.status_in_progress)
     }
 
     @Test
-    fun `an unreadable book spells out its stored reason`() {
-        assertThat(statusText(book(unreadable = true, unreadableReason = "corrupt zip")))
-            .isEqualTo("Unreadable: corrupt zip")
-    }
-
-    @Test
-    fun `an unreadable book with no stored reason falls back rather than printing null`() {
-        assertThat(statusText(book(unreadable = true, unreadableReason = null)))
-            .isEqualTo("Unreadable: unknown reason")
+    fun `an unreadable book reports only that it cannot be opened, never the stored reason`() {
+        // The reason is a wrapped exception message; it belongs in the log, not on the shelf.
+        // Both a populated and an absent reason yield the same plain-language resource.
+        assertThat(statusTextRes(book(unreadable = true, unreadableReason = "corrupt zip")))
+            .isEqualTo(R.string.status_unreadable)
+        assertThat(statusTextRes(book(unreadable = true, unreadableReason = null)))
+            .isEqualTo(R.string.status_unreadable)
     }
 
     private fun book(

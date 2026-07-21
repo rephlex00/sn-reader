@@ -3,6 +3,7 @@ package dev.reader.ui
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
@@ -69,7 +70,7 @@ class BookmarkAdapter(
 
     class BookmarkViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         private val label: TextView = view.findViewById(R.id.bookmark_label)
-        private val delete: TextView = view.findViewById(R.id.bookmark_delete)
+        private val delete: ImageView = view.findViewById(R.id.bookmark_delete)
 
         fun bind(row: BookmarkRow, onJump: (BookmarkRow) -> Unit, onDelete: (BookmarkRow) -> Unit) {
             label.text = row.label

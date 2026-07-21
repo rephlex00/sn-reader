@@ -43,7 +43,7 @@
                 android:gravity="center"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="12dp"
-                android:text="‹ Back"
+                android:text="@string/reader_back"
                 android:textColor="@android:color/black"
                 android:textSize="18sp"
                 android:textStyle="bold" />
@@ -61,8 +61,11 @@
                 android:textSize="18sp" />
 
             <!-- Opens the Bookmarks panel. Like Back, the only clickable thing in its own footprint,
-                 so it consumes its own tap while page-area taps fall through to dismiss. -->
-            <TextView
+                 so it consumes its own tap while page-area taps fall through to dismiss.
+                 A glyph rather than a word: the label used to read "Marks" while the panel it opens
+                 is titled "Bookmarks" and its action reads "Bookmark this page", so one feature wore
+                 three names. The bookmark shape needs no label to be read. -->
+            <ImageView
                 android:id="@+id/bookmarks_button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -70,13 +73,11 @@
                 android:focusable="true"
                 android:minWidth="48dp"
                 android:minHeight="48dp"
-                android:gravity="center"
                 android:paddingHorizontal="12dp"
                 android:paddingVertical="12dp"
-                android:text="Marks"
-                android:textColor="@android:color/black"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_bookmark"
+                android:contentDescription="@string/reader_bookmarks" />
 
             <!-- Opens the Highlights panel. Like Back, the only clickable thing in its own footprint,
                  so it consumes its own tap while page-area taps fall through to dismiss. -->
@@ -91,7 +92,7 @@
                 android:gravity="center"
                 android:paddingHorizontal="12dp"
                 android:paddingVertical="12dp"
-                android:text="Highlights"
+                android:text="@string/reader_highlights"
                 android:textColor="@android:color/black"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -109,7 +110,7 @@
                 android:gravity="center"
                 android:paddingHorizontal="12dp"
                 android:paddingVertical="12dp"
-                android:text="Contents"
+                android:text="@string/reader_contents"
                 android:textColor="@android:color/black"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -127,7 +128,7 @@
                 android:gravity="center"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="12dp"
-                android:text="Aa"
+                android:text="@string/reader_display_short"
                 android:textColor="@android:color/black"
                 android:textSize="20sp"
                 android:textStyle="bold" />
@@ -181,6 +182,7 @@
         android:background="@android:color/white"
         android:clickable="true"
         android:focusable="true"
+        android:overScrollMode="never"
         android:fillViewport="false"
         android:visibility="gone">
 
@@ -204,7 +206,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:paddingVertical="12dp"
-                    android:text="Display"
+                    android:text="@string/reader_display"
                     android:textColor="@android:color/black"
                     android:textSize="20sp"
                     android:textStyle="bold" />
@@ -212,7 +214,7 @@
                 <TextView
                     android:id="@+id/settings_close"
                     style="@style/PanelClose"
-                    android:contentDescription="Close display settings" />
+                    android:contentDescription="@string/panel_close_display" />
 
             </LinearLayout>
 
@@ -232,7 +234,7 @@
                 <TextView
                     android:layout_width="120dp"
                     android:layout_height="wrap_content"
-                    android:text="Font"
+                    android:text="@string/setting_font"
                     android:textColor="@android:color/black"
                     android:textSize="16sp" />
 
@@ -241,17 +243,17 @@
                 <TextView
                     android:id="@+id/font_literata"
                     style="@style/AaOption"
-                    android:text="Literata" />
+                    android:text="@string/font_literata" />
 
                 <TextView
                     android:id="@+id/font_bitter"
                     style="@style/AaOption"
-                    android:text="Bitter" />
+                    android:text="@string/font_bitter" />
 
                 <TextView
                     android:id="@+id/font_atkinson"
                     style="@style/AaOption"
-                    android:text="Atkinson" />
+                    android:text="@string/font_atkinson" />
             </LinearLayout>
 
             <!-- Text size stepper -->
@@ -264,14 +266,14 @@
                 <TextView
                     android:layout_width="120dp"
                     android:layout_height="wrap_content"
-                    android:text="Text size"
+                    android:text="@string/setting_text_size"
                     android:textColor="@android:color/black"
                     android:textSize="16sp" />
 
                 <TextView
                     android:id="@+id/size_minus"
                     style="@style/AaOption"
-                    android:text="A −" />
+                    android:text="@string/text_size_decrease" />
 
                 <TextView
                     android:id="@+id/size_value"
@@ -286,7 +288,7 @@
                 <TextView
                     android:id="@+id/size_plus"
                     style="@style/AaOption"
-                    android:text="A +" />
+                    android:text="@string/text_size_increase" />
             </LinearLayout>
 
             <!-- Line spacing -->
@@ -299,24 +301,24 @@
                 <TextView
                     android:layout_width="120dp"
                     android:layout_height="wrap_content"
-                    android:text="Line spacing"
+                    android:text="@string/setting_line_spacing"
                     android:textColor="@android:color/black"
                     android:textSize="16sp" />
 
                 <TextView
                     android:id="@+id/spacing_12"
                     style="@style/AaOption"
-                    android:text="1.2" />
+                    android:text="@string/spacing_12" />
 
                 <TextView
                     android:id="@+id/spacing_14"
                     style="@style/AaOption"
-                    android:text="1.4" />
+                    android:text="@string/spacing_14" />
 
                 <TextView
                     android:id="@+id/spacing_16"
                     style="@style/AaOption"
-                    android:text="1.6" />
+                    android:text="@string/spacing_16" />
             </LinearLayout>
 
             <!-- Margins -->
@@ -329,24 +331,24 @@
                 <TextView
                     android:layout_width="120dp"
                     android:layout_height="wrap_content"
-                    android:text="Margins"
+                    android:text="@string/setting_margins"
                     android:textColor="@android:color/black"
                     android:textSize="16sp" />
 
                 <TextView
                     android:id="@+id/margin_narrow"
                     style="@style/AaOption"
-                    android:text="Narrow" />
+                    android:text="@string/margin_narrow" />
 
                 <TextView
                     android:id="@+id/margin_medium"
                     style="@style/AaOption"
-                    android:text="Medium" />
+                    android:text="@string/margin_medium" />
 
                 <TextView
                     android:id="@+id/margin_wide"
                     style="@style/AaOption"
-                    android:text="Wide" />
+                    android:text="@string/margin_wide" />
             </LinearLayout>
 
             <View
@@ -360,7 +362,7 @@
             <LinearLayout
                 android:id="@+id/toggle_justify"
                 style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="Justify" />
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_justify" />
                 <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_justify_switch"
                     android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
@@ -368,7 +370,7 @@
             <LinearLayout
                 android:id="@+id/toggle_hyphen"
                 style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="Hyphenation" />
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_hyphenation" />
                 <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_hyphen_switch"
                     android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
@@ -376,7 +378,7 @@
             <LinearLayout
                 android:id="@+id/toggle_publisher"
                 style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="Publisher styling" />
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_publisher_styling" />
                 <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_publisher_switch"
                     android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
@@ -384,7 +386,7 @@
             <LinearLayout
                 android:id="@+id/toggle_headings"
                 style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="Heading detection" />
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_heading_detection" />
                 <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_headings_switch"
                     android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
@@ -392,7 +394,7 @@
             <LinearLayout
                 android:id="@+id/toggle_progress"
                 style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="Progress bar" />
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_progress_bar" />
                 <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_progress_switch"
                     android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
@@ -400,7 +402,7 @@
             <LinearLayout
                 android:id="@+id/toggle_faster_turns"
                 style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="Faster page turns" />
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_faster_page_turns" />
                 <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_faster_turns_switch"
                     android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
@@ -417,13 +419,13 @@
                 <TextView
                     android:layout_width="120dp"
                     android:layout_height="wrap_content"
-                    android:text="Full refresh every"
+                    android:text="@string/setting_full_refresh_every"
                     android:textColor="@android:color/black"
                     android:textSize="16sp" />
 
-                <TextView android:id="@+id/refresh_freq_3" style="@style/AaOption" android:text="3" />
-                <TextView android:id="@+id/refresh_freq_6" style="@style/AaOption" android:text="6" />
-                <TextView android:id="@+id/refresh_freq_10" style="@style/AaOption" android:text="10" />
+                <TextView android:id="@+id/refresh_freq_3" style="@style/AaOption" android:text="@string/refresh_every_3" />
+                <TextView android:id="@+id/refresh_freq_6" style="@style/AaOption" android:text="@string/refresh_every_6" />
+                <TextView android:id="@+id/refresh_freq_10" style="@style/AaOption" android:text="@string/refresh_every_10" />
             </LinearLayout>
 
         </LinearLayout>
@@ -462,7 +464,7 @@
                 android:layout_weight="1"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="16dp"
-                android:text="Contents"
+                android:text="@string/reader_contents"
                 android:textColor="@android:color/black"
                 android:textSize="20sp"
                 android:textStyle="bold" />
@@ -470,7 +472,7 @@
             <TextView
                 android:id="@+id/toc_close"
                 style="@style/PanelClose"
-                android:contentDescription="Close contents" />
+                android:contentDescription="@string/panel_close_contents" />
 
         </LinearLayout>
 
@@ -496,7 +498,7 @@
             android:layout_weight="1"
             android:gravity="center"
             android:padding="24dp"
-            android:text="No contents"
+            android:text="@string/contents_empty"
             android:textColor="@android:color/black"
             android:textSize="16sp"
             android:visibility="gone" />
@@ -530,7 +532,7 @@
                 android:layout_weight="1"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="16dp"
-                android:text="Bookmarks"
+                android:text="@string/reader_bookmarks"
                 android:textColor="@android:color/black"
                 android:textSize="20sp"
                 android:textStyle="bold" />
@@ -538,7 +540,7 @@
             <TextView
                 android:id="@+id/bookmarks_close"
                 style="@style/PanelClose"
-                android:contentDescription="Close bookmarks" />
+                android:contentDescription="@string/panel_close_bookmarks" />
 
         </LinearLayout>
 
@@ -574,7 +576,7 @@
             android:layout_weight="1"
             android:gravity="center"
             android:padding="24dp"
-            android:text="No bookmarks yet"
+            android:text="@string/bookmarks_empty"
             android:textColor="@android:color/black"
             android:textSize="16sp"
             android:visibility="gone" />
@@ -610,7 +612,7 @@
                 android:layout_weight="1"
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="16dp"
-                android:text="Highlights"
+                android:text="@string/reader_highlights"
                 android:textColor="@android:color/black"
                 android:textSize="20sp"
                 android:textStyle="bold" />
@@ -618,7 +620,7 @@
             <TextView
                 android:id="@+id/highlights_close"
                 style="@style/PanelClose"
-                android:contentDescription="Close highlights" />
+                android:contentDescription="@string/panel_close_highlights" />
 
         </LinearLayout>
 
@@ -641,7 +643,7 @@
             android:layout_weight="1"
             android:gravity="center"
             android:padding="24dp"
-            android:text="No highlights yet"
+            android:text="@string/highlights_empty"
             android:textColor="@android:color/black"
             android:textSize="16sp"
             android:visibility="gone" />

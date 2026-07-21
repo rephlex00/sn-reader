@@ -1,9 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- No animations: every transition is a single e-ink redraw. -->
+    <!-- No animations: every transition is a single e-ink redraw.
+         windowAnimationStyle kills Activity enter/exit, but it does not reach the *popup* windows
+         AppCompat opens for the toolbar overflow, nor the ripple on toolbar items. Those are
+         inherited from the parent theme and animate by default, so the library's overflow, search,
+         sort/view/filter menus, and every toolbar back arrow were the one place the app still
+         animated. Overridden below. -->
     <style name="Theme.Reader" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:popupMenuStyle">@style/Widget.Reader.PopupMenu</item>
+        <item name="popupMenuStyle">@style/Widget.Reader.PopupMenu</item>
+        <item name="android:popupWindowStyle">@style/Widget.Reader.PopupWindow</item>
+        <item name="actionBarItemBackground">@android:color/transparent</item>
+        <item name="selectableItemBackground">@android:color/transparent</item>
+        <item name="selectableItemBackgroundBorderless">@android:color/transparent</item>
+    </style>
+
+    <!-- Popup menus open and close with no fade/scale: one redraw, not an animated sequence. -->
+    <style name="Widget.Reader.PopupMenu" parent="Widget.AppCompat.PopupMenu">
+        <item name="android:popupAnimationStyle">@null</item>
+        <item name="android:popupEnterTransition">@null</item>
+        <item name="android:popupExitTransition">@null</item>
+    </style>
+
+    <style name="Widget.Reader.PopupWindow" parent="Widget.AppCompat.PopupWindow">
+        <item name="android:popupAnimationStyle">@null</item>
+        <item name="android:popupEnterTransition">@null</item>
+        <item name="android:popupExitTransition">@null</item>
     </style>
 
     <!-- Aa sheet controls: monochrome, large tap targets, no ripple/animation. A selected option is

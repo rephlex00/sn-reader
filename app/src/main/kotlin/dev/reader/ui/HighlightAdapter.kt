@@ -3,6 +3,7 @@ package dev.reader.ui
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
@@ -74,7 +75,7 @@ class HighlightAdapter(
         private val excerpt: TextView = view.findViewById(R.id.highlight_excerpt)
         private val meta: TextView = view.findViewById(R.id.highlight_meta)
         private val body: View = view.findViewById(R.id.highlight_body)
-        private val delete: TextView = view.findViewById(R.id.highlight_delete)
+        private val delete: ImageView = view.findViewById(R.id.highlight_delete)
 
         fun bind(row: HighlightRow, onJump: (HighlightRow) -> Unit, onDelete: (HighlightRow) -> Unit) {
             excerpt.text = row.excerpt

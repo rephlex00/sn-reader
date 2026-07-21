@@ -14,7 +14,9 @@ import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
 import androidx.appcompat.widget.Toolbar
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
@@ -262,6 +264,7 @@ open class LibraryActivity : AppCompatActivity() {
             // on e-ink is a visible smear and is banned outright as animation, full stop. A view
             // toggle or a folder descent is one clean redraw, never an animated transition.
             itemAnimator = null
+            stopScrollAnimations()
         }
         adapter = BookGridAdapter(lifecycleScope, ::openBook, ::openFolder)
         recyclerView.adapter = adapter
@@ -369,12 +372,21 @@ open class LibraryActivity : AppCompatActivity() {
             // blank grid here is indistinguishable from a broken app — say what's missing, and
             // persistently (not a Toast): the user may sit on this screen for a while before
             // acting.
-            emptyStateView.text = "Grant all-files access in Settings to see your library."
+            emptyStateView.text = getString(R.string.library_permission_needed)
             emptyStateView.visibility = View.VISIBLE
+            // The message says "tap here", so it has to be tappable. Naming the fix without
+            // offering it is worse than saying nothing, especially on this ROM where the relevant
+            // Settings screen is buried (see StorageAccess.requestAllFilesAccess's fallbacks).
+            emptyStateView.isClickable = true
+            emptyStateView.setOnClickListener { requestAllFilesAccess() }
             return
         }
+        // Granted: drop the retry handler so the empty state is inert text again in its other roles
+        // (a zero-match filter, below), where a tap must do nothing.
+        emptyStateView.isClickable = false
+        emptyStateView.setOnClickListener(null)
         // Reflect the current state instead of hardcoding GONE: render() is the second writer to
-        // emptyStateView (a zero-match search/status filter shows "No books match." — see its own
+        // emptyStateView (a zero-match search/status filter shows getString(R.string.library_empty_no_matches) — see its own
         // KDoc), and a stale library's sync() below does no DB writes when nothing changed, so
         // observeAllSorted never re-emits and render() never reruns on its own. Without this,
         // backgrounding and reopening the app with a zero-match filter active would wipe that
@@ -558,7 +570,7 @@ open class LibraryActivity : AppCompatActivity() {
                 // no explanation, but it also must not crash the launcher activity. There is no
                 // flag to leave in a "failed" state: the next entry (or backgrounding and
                 // returning) just tries again.
-                Toast.makeText(this@LibraryActivity, "Couldn't scan your library: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@LibraryActivity, getString(R.string.error_scan_library), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -585,13 +597,22 @@ open class LibraryActivity : AppCompatActivity() {
     private fun observeSorted(order: SortOrder) {
         observeJob?.cancel()
         observeJob = lifecycleScope.launch {
-            // `collect`, not `collectLatest`: ListAdapter.submitList doesn't suspend, so
-            // collectLatest's cancel-the-previous-collector-body semantics never actually engage
-            // here — there is nothing in flight for a new emission to cancel. Plain `collect` says
-            // what's really happening: every emission is submitted in order.
-            db.bookDao().observeAllSorted(order).collect { books ->
-                latestBooks = books
-                render()
+            // repeatOnLifecycle(STARTED), not a bare collect: a bare collect from onCreate keeps the
+            // Room Flow subscribed for the Activity's whole life, including the entire time the user
+            // is inside a book with this Activity stopped — which is most of the app's runtime.
+            // Room's InvalidationTracker keeps a standing observer (and its periodic table check)
+            // alive for as long as anything is collecting, so the process never actually settles to
+            // zero while reading. Gating on STARTED drops the observer in onStop and re-subscribes
+            // in onStart, which also re-emits current data, so the grid is never stale on return.
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // `collect`, not `collectLatest`: ListAdapter.submitList doesn't suspend, so
+                // collectLatest's cancel-the-previous-collector-body semantics never actually engage
+                // here — there is nothing in flight for a new emission to cancel. Plain `collect`
+                // says what's really happening: every emission is submitted in order.
+                db.bookDao().observeAllSorted(order).collect { books ->
+                    latestBooks = books
+                    render()
+                }
             }
         }
     }
@@ -629,7 +650,7 @@ open class LibraryActivity : AppCompatActivity() {
         // name via the same call on the next render().
         toolbar.title = if (filterActive) titleFor(root, root) else titleFor(currentFolder, root)
         if (filterActive && rows.isEmpty()) {
-            emptyStateView.text = "No books match."
+            emptyStateView.text = getString(R.string.library_empty_no_matches)
             emptyStateView.visibility = View.VISIBLE
         } else {
             emptyStateView.visibility = View.GONE
@@ -638,7 +659,7 @@ open class LibraryActivity : AppCompatActivity() {
 
     /** "Library" at the root, otherwise the current folder's own name. */
     private fun titleFor(folder: String, root: String): String =
-        if (folder == clampToRoot(root, root)) "Library" else File(folder).name
+        if (folder == clampToRoot(root, root)) getString(R.string.library_title) else File(folder).name
 
     /**
      * Descend into a tapped folder: make it the current scope, remember it so a later launch lands

@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.annotation.StringRes
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -24,16 +25,15 @@ import kotlin.math.roundToInt
 /**
  * What the grid shows under a book's title, or null to show nothing.
  *
- * A never-opened book shows nothing ("reading progress if the book has been opened", per the
- * brief) rather than a misleading "0%". An opened book prefers [BookEntity.progressFraction] — the
+ * One label form only: a percentage, or nothing at all. [BookEntity.progressFraction] is the
  * byte-weighted whole-book position the reader stored (schema v2), the same value the in-book
- * progress bar shows — rendered as a percentage.
+ * progress bar shows.
  *
- * The fallback, for a row opened before that column shipped ([BookEntity.progressFraction] still
- * null), is "Section N" from the spine index. It is deliberately not "Chapter N": spineIndex is a
- * SPINE index, not a chapter ordinal — real EPUBs routinely carry cover/title/nav as spine items
- * 0-2 (ReaderActivity skips a zero-page spine item 0 for exactly that reason) — so "Section N"
- * reports only what the older index actually has, without claiming a chapter number.
+ * Anything else shows nothing. That covers a never-opened book (where "0%" would misrepresent an
+ * untouched book) and a row opened before that column shipped, whose progress simply isn't known.
+ * The earlier "Section N" spine-index fallback is gone deliberately: nothing backfilled those rows,
+ * so they sat next to percentages forever, and a grid mixing "Section 8" with "43%" reads as two
+ * half-built features rather than one.
  */
 fun progressLabel(
     lastOpenedAtMs: Long?,
@@ -42,9 +42,8 @@ fun progressLabel(
     progressFraction: Float?,
 ): String? {
     if (lastOpenedAtMs == null) return null
-    if (spineIndex == 0 && charOffset == 0) return "Just started"
-    progressFraction?.let { return "${(it.coerceIn(0f, 1f) * 100).roundToInt()}%" }
-    return "Section ${spineIndex + 1}"
+    val fraction = progressFraction ?: return null
+    return "${(fraction.coerceIn(0f, 1f) * 100).roundToInt()}%"
 }
 
 /**
@@ -58,16 +57,22 @@ internal fun formatAuthor(raw: String?): String =
     raw?.trim { it.isWhitespace() || it == ';' || it == ',' }.orEmpty()
 
 /**
- * The badge shown for a book in **list** mode: the reading status from [statusOf] rendered as text,
- * with the stored reason spelled out for an unreadable book. Tiles keep [progressLabel]'s
- * behavior instead (progress-if-opened, nothing if never opened) — status text is a list-mode
- * affordance only, per the brief. Pure and total: a null [BookEntity.unreadableReason] on an
- * unreadable row falls back to a generic phrase rather than printing "null".
+ * The badge shown for a book in **list** mode: the reading status from [statusOf], as a string
+ * resource the caller resolves. Tiles keep [progressLabel]'s behavior instead (progress-if-opened,
+ * nothing if never opened) — status text is a list-mode affordance only, per the brief.
+ *
+ * Returns a resource id rather than a string so this stays pure and testable without a Context,
+ * which it can now do because no case interpolates anything: an unreadable book reports only that
+ * it will not open, never the stored exception text.
  */
-fun statusText(book: BookEntity): String = when (statusOf(book)) {
-    BookStatus.IN_PROGRESS -> "In progress"
-    BookStatus.NOT_STARTED -> "Not started"
-    BookStatus.UNREADABLE -> "Unreadable: ${book.unreadableReason ?: "unknown reason"}"
+@StringRes
+fun statusTextRes(book: BookEntity): Int = when (statusOf(book)) {
+    BookStatus.IN_PROGRESS -> R.string.status_in_progress
+    BookStatus.NOT_STARTED -> R.string.status_not_started
+    // Deliberately not the stored reason. That string is a wrapped exception message
+    // ("Not a readable EPUB archive: error in opening zip file"), which tells a reader nothing
+    // they can act on. It stays in the index for logging; the shelf just says the book won't open.
+    BookStatus.UNREADABLE -> R.string.status_unreadable
 }
 
 /**
@@ -118,7 +123,7 @@ private const val BITMAP_CACHE_BYTES = 8 * 1024 * 1024
  *   `GridLayoutManager.spanSizeLookup` reads [getItemViewType] and gives everything but a book
  *   tile the full span).
  * - **List** ([ViewMode.LIST]): every row single-span — book rows carry title/author/size and a
- *   [statusText] badge and **never touch the cover cache or launch a decode**; folder rows carry
+ *   [statusTextRes] badge and **never touch the cover cache or launch a decode**; folder rows carry
  *   name and book count.
  *
  * Covers decode from [BookEntity.coverPath] on a background dispatcher and are cached in a small
@@ -251,13 +256,14 @@ open class BookGridAdapter(
         holder.author.text = author
         holder.author.visibility = if (author.isEmpty()) View.GONE else View.VISIBLE
         holder.size.text = humanReadableSize(book.sizeBytes)
-        holder.status.text = statusText(book)
+        holder.status.text = holder.itemView.context.getString(statusTextRes(book))
         holder.itemView.setOnClickListener { onBookClick(book) }
     }
 
     private fun bindFolder(holder: FolderViewHolder, folder: LibraryRow.Folder) {
         // A drawn glyph, not an image asset: "▸ name (count)", black on white, crisp on e-ink.
-        holder.label.text = "▸ ${folder.name} (${folder.bookCount})"
+        holder.label.text = holder.itemView.context
+            .getString(R.string.folder_row_label, folder.name, folder.bookCount)
         holder.itemView.setOnClickListener { onFolderClick(folder.path) }
     }
 

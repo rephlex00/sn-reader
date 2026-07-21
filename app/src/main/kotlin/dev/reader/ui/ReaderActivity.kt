@@ -1,6 +1,7 @@
 package dev.reader.ui
 
 import android.graphics.Color
+import android.util.Log
 import android.os.Bundle
 import android.os.Environment
 import android.view.View
@@ -8,6 +9,7 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.doOnLayout
@@ -292,7 +294,7 @@ open class ReaderActivity : AppCompatActivity() {
         val chipPadH = (16 * resources.displayMetrics.density).toInt()
         val chipPadV = (10 * resources.displayMetrics.density).toInt()
         deleteChip = TextView(this).apply {
-            text = "✕ Delete"
+            text = getString(R.string.highlight_delete_chip)
             setTextColor(Color.BLACK)
             textSize = 16f
             setBackgroundResource(R.drawable.delete_chip_bg)
@@ -319,6 +321,7 @@ open class ReaderActivity : AppCompatActivity() {
         tocAdapter = TocAdapter(::jumpToToc)
         tocList.layoutManager = LinearLayoutManager(this)
         tocList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
+        tocList.stopScrollAnimations()
         tocList.adapter = tocAdapter
         bookmarksPanel = overlay.findViewById(R.id.bookmarks_panel)
         bookmarksList = overlay.findViewById(R.id.bookmarks_list)
@@ -327,6 +330,7 @@ open class ReaderActivity : AppCompatActivity() {
         bookmarksAdapter = BookmarkAdapter(onJump = ::jumpToBookmark, onDelete = ::deleteBookmark)
         bookmarksList.layoutManager = LinearLayoutManager(this)
         bookmarksList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
+        bookmarksList.stopScrollAnimations()
         bookmarksList.adapter = bookmarksAdapter
         highlightsPanel = overlay.findViewById(R.id.highlights_panel)
         highlightsList = overlay.findViewById(R.id.highlights_list)
@@ -334,6 +338,7 @@ open class ReaderActivity : AppCompatActivity() {
         highlightsAdapter = HighlightAdapter(onJump = ::jumpToHighlight, onDelete = ::deleteHighlightRow)
         highlightsList.layoutManager = LinearLayoutManager(this)
         highlightsList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
+        highlightsList.stopScrollAnimations()
         highlightsList.adapter = highlightsAdapter
         overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
         overlay.findViewById<View>(R.id.highlights_button).setOnClickListener { toggleHighlights() }
@@ -500,16 +505,16 @@ open class ReaderActivity : AppCompatActivity() {
             )
             if (target == null) {
                 // The tapped chapter and everything after it paginate to zero pages: nothing to show.
-                showMessage("This book has no readable text.")
+                showMessage(R.string.error_book_no_text)
                 return
             }
             hideOverlay()
             showPage(target)
             flushPosition()
         } catch (e: EpubException) {
-            showMessage("Couldn't open that section: ${e.message}")
+            showError(R.string.error_open_section, e)
         } catch (e: Exception) {
-            showMessage("Couldn't open that section: ${e.message ?: e.javaClass.simpleName}")
+            showError(R.string.error_open_section, e)
         }
     }
 
@@ -534,7 +539,7 @@ open class ReaderActivity : AppCompatActivity() {
             bookmarksList.visibility = if (empty) View.GONE else View.VISIBLE
 
             val onThisPage = currentPageBookmarkForState(marks)
-            bookmarkToggle.text = if (onThisPage != null) "Remove bookmark from this page" else "Bookmark this page"
+            bookmarkToggle.text = getString(if (onThisPage != null) R.string.bookmark_remove else R.string.bookmark_add)
         }
     }
 
@@ -574,7 +579,7 @@ open class ReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val inLibrary = withContext(Dispatchers.IO) { bookDao().getByPath(path) != null }
             if (!inLibrary) {
-                showMessage("This book isn't in your library yet.")
+                showMessage(R.string.error_book_not_indexed)
                 return@launch
             }
             val existing = withContext(Dispatchers.IO) {
@@ -603,7 +608,7 @@ open class ReaderActivity : AppCompatActivity() {
                 // screen — the same rule openFirstBook and the prefetch coroutine hold in this file.
                 throw e
             } catch (e: Exception) {
-                showMessage("Couldn't save that bookmark: ${e.message ?: e.javaClass.simpleName}")
+                showError(R.string.error_save_bookmark, e)
             }
         }
     }
@@ -638,7 +643,7 @@ open class ReaderActivity : AppCompatActivity() {
                 firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
             )
             if (target == null) {
-                showMessage("This book has no readable text.")
+                showMessage(R.string.error_book_no_text)
                 return
             }
             // Hide the chrome BEFORE drawing the page (like jumpToToc), so the jump is one clean
@@ -647,9 +652,9 @@ open class ReaderActivity : AppCompatActivity() {
             showPage(target)
             flushPosition()
         } catch (e: EpubException) {
-            showMessage("Couldn't open that bookmark: ${e.message}")
+            showError(R.string.error_open_bookmark, e)
         } catch (e: Exception) {
-            showMessage("Couldn't open that bookmark: ${e.message ?: e.javaClass.simpleName}")
+            showError(R.string.error_open_bookmark, e)
         }
     }
 
@@ -706,14 +711,14 @@ open class ReaderActivity : AppCompatActivity() {
                     pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
                 },
                 firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
-            ) ?: run { showMessage("This book has no readable text."); return }
+            ) ?: run { showMessage(R.string.error_book_no_text); return }
             hideOverlay()
             showPage(target)
             flushPosition()
         } catch (e: EpubException) {
-            showMessage("Couldn't open that highlight: ${e.message}")
+            showError(R.string.error_open_highlight, e)
         } catch (e: Exception) {
-            showMessage("Couldn't open that highlight: ${e.message ?: e.javaClass.simpleName}")
+            showError(R.string.error_open_highlight, e)
         }
     }
 
@@ -787,7 +792,7 @@ open class ReaderActivity : AppCompatActivity() {
         val snapped = snapToWords(text, rawStart, rawEnd) ?: return // landed between words → no-op
         lifecycleScope.launch {
             val inLibrary = withContext(Dispatchers.IO) { bookDao().getByPath(path) != null }
-            if (!inLibrary) { showMessage("This book isn't in your library yet."); return@launch }
+            if (!inLibrary) { showMessage(R.string.error_book_not_indexed); return@launch }
             try {
                 val existing = withContext(Dispatchers.IO) { highlightDao().highlightsForChapter(path, spineIndex) }
                 val merge = mergeHighlights(existing.map { ExistingHighlight(it.id, it.startOffset, it.endOffset) }, snapped)
@@ -808,7 +813,7 @@ open class ReaderActivity : AppCompatActivity() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                showMessage("Couldn't save that highlight: ${e.message ?: e.javaClass.simpleName}")
+                showError(R.string.error_save_highlight, e)
             }
         }
     }
@@ -980,9 +985,9 @@ open class ReaderActivity : AppCompatActivity() {
             flushPosition()
             refreshSheet()
         } catch (e: EpubException) {
-            showMessage("Couldn't apply that setting: ${e.message}")
+            showError(R.string.error_apply_setting, e)
         } catch (e: Exception) {
-            showMessage("Couldn't apply that setting: ${e.message ?: e.javaClass.simpleName}")
+            showError(R.string.error_apply_setting, e)
         }
     }
 
@@ -1058,7 +1063,7 @@ open class ReaderActivity : AppCompatActivity() {
         setOptionSelected(R.id.font_bitter, prefs.fontFamily == "bitter")
         setOptionSelected(R.id.font_atkinson, prefs.fontFamily == "atkinson")
 
-        overlay.findViewById<TextView>(R.id.size_value).text = "${prefs.textSizePx.toInt()}px"
+        overlay.findViewById<TextView>(R.id.size_value).text = getString(R.string.text_size_value, prefs.textSizePx.toInt())
 
         setOptionSelected(R.id.spacing_12, prefs.lineSpacingMultiplier == 1.2f)
         setOptionSelected(R.id.spacing_14, prefs.lineSpacingMultiplier == 1.4f)
@@ -1116,7 +1121,7 @@ open class ReaderActivity : AppCompatActivity() {
             // indistinguishable from a broken app. Say why and bow out; reopening after
             // granting starts clean. (In the normal flow this is unreachable: LibraryActivity
             // already gated on the same permission before launching us.)
-            showMessage("Reader needs all-files access to open books.")
+            showMessage(R.string.library_permission_prompt)
             finish()
             return
         }
@@ -1242,13 +1247,13 @@ open class ReaderActivity : AppCompatActivity() {
                         // one tapped, and once Task 6 wires position memory it would write that
                         // book's position onto the wrong row. Name the problem and bow out; the
                         // library re-syncs on re-entry and drops the stale cell.
-                        showMessage("That book is no longer there.")
+                        showMessage(R.string.error_book_missing)
                         finish()
                     } else {
                         // No extra at all: the standalone adb launch path. Not a permanent
                         // failure — the user may drop a book in and come back, and onResume
                         // re-arms only while `opening` is false.
-                        showMessage("No EPUB found in /Document.")
+                        showMessage(R.string.error_no_epub_found)
                     }
                     return@launch
                 }
@@ -1315,10 +1320,10 @@ open class ReaderActivity : AppCompatActivity() {
                     // return silently and leave a blank white screen — indistinguishable from a
                     // broken app — so name the problem, and say that the book may still be
                     // readable from the next chapter on (advance() skips empty chapters).
-                    showMessage("This book has no readable text.")
+                    showMessage(R.string.error_book_no_text)
                     // showPage never ran, so the scrubber was never set; give the overlay (if the
                     // reader opens it on this broken book) a coherent readout instead of a blank.
-                    scrubberView.text = "No readable text"
+                    scrubberView.text = getString(R.string.error_no_text_short)
                 } else {
                     showPage(start)
                     // Write the resolved start back immediately: stamps lastOpenedAtMs (so the
@@ -1338,14 +1343,14 @@ open class ReaderActivity : AppCompatActivity() {
                 throw e
             } catch (e: EpubException) {
                 opening = false
-                showMessage("Couldn't open this book: ${e.message}")
+                showError(R.string.error_open_book, e)
             } catch (e: Exception) {
                 // open() is documented to throw only EpubException, but that promise is only as
                 // good as every path inside EpubPackageParser/EpubTocParser honouring it (e.g. a
                 // raw XmlPullParserException or IOException from a corrupt-but-zip-valid file).
                 // A malformed book must never crash the app, so nothing escapes this boundary.
                 opening = false
-                showMessage("Couldn't open this book: ${e.message ?: e.javaClass.simpleName}")
+                showError(R.string.error_open_book, e)
             }
         }
     }
@@ -1450,12 +1455,12 @@ open class ReaderActivity : AppCompatActivity() {
                 }
             }
         } catch (e: EpubException) {
-            showMessage("Couldn't turn the page: ${e.message}")
+            showError(R.string.error_turn_page, e)
         } catch (e: Exception) {
             // Mirrors openFirstBook's defense-in-depth catch: chapter() is documented to throw
             // only EpubException, but that promise is only as good as every path inside the
             // format parsers honouring it. A malformed book must never crash the app here either.
-            showMessage("Couldn't turn the page: ${e.message ?: e.javaClass.simpleName}")
+            showError(R.string.error_turn_page, e)
         }
     }
 
@@ -1473,7 +1478,7 @@ open class ReaderActivity : AppCompatActivity() {
         if (state.spineIndex != chapterHighlightsSpine) {
             // Moved to a new chapter: a pending bracket cannot cross chapters, so drop it with a note.
             if (bracketAnchorOffset != null) {
-                showMessage("Highlight cancelled — you moved to another chapter.")
+                showMessage(R.string.highlight_cancelled_chapter_change)
                 clearBracketAnchor()
             }
             chapterHighlightsSpine = state.spineIndex
@@ -1598,6 +1603,22 @@ open class ReaderActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
+    private fun showMessage(@StringRes message: Int) = showMessage(getString(message))
+
+    /**
+     * Reports a failure to the reader and sends [cause] to the log.
+     *
+     * These used to interpolate `e.message ?: e.javaClass.simpleName` straight into the toast, so a
+     * damaged book produced "Couldn't open this book: Not a readable EPUB archive: error in opening
+     * zip file", and anything without a message produced a bare "NullPointerException". The reader
+     * can act on neither. The throwable is genuinely useful to whoever is debugging, so it goes
+     * where debugging happens instead.
+     */
+    private fun showError(@StringRes message: Int, cause: Throwable) {
+        Log.w(TAG, getString(message), cause)
+        showMessage(getString(message))
+    }
+
     /**
      * The largest margin the current viewport can take while still leaving positive content width AND
      * height. `RenderConfig.init` throws when `viewport - margin*2 <= 0` on either axis, so a margin
@@ -1609,6 +1630,8 @@ open class ReaderActivity : AppCompatActivity() {
         ((minOf(width, height) - 1) / 2).coerceAtLeast(0)
 
     companion object {
+        private const val TAG = "ReaderActivity"
+
         /** String extra: an absolute book path, set by [LibraryActivity] when opening a tap. */
         const val EXTRA_BOOK_PATH = "dev.reader.ui.EXTRA_BOOK_PATH"
 

@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.os.Looper
 import android.widget.FrameLayout
 import com.google.common.truth.Truth.assertThat
+import dev.reader.R
 import dev.reader.data.BookEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -153,7 +154,7 @@ class BookGridAdapterBindTest {
     }
 
     @Test
-    fun `an unreadable book's list row shows the reason end to end`() {
+    fun `an unreadable book's list row says it cannot be opened, without the raw reason`() {
         // statusText is unit-tested, but this pins the actual bound TextView: the row a user sees
         // must carry the reason, not just the pure helper's return value.
         val adapter = TestableAdapter(scope)
@@ -168,7 +169,11 @@ class BookGridAdapterBindTest {
         ) as BookGridAdapter.BookRowViewHolder
         adapter.onBindViewHolder(holder, 0)
 
-        assertThat(holder.status.text.toString()).isEqualTo("Unreadable: torn zip")
+        // The stored reason ("torn zip") is a wrapped exception message: it goes to the log,
+        // never onto the shelf. The row reports only that the book will not open.
+        assertThat(holder.status.text.toString())
+            .isEqualTo(RuntimeEnvironment.getApplication().getString(R.string.status_unreadable))
+        assertThat(holder.status.text.toString()).doesNotContain("torn zip")
     }
 
     /** [BookGridAdapter] whose decode is latched, so tests control exactly when it finishes. */

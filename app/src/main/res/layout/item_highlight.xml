@@ -37,7 +37,7 @@
             android:textSize="13sp" />
     </LinearLayout>
 
-    <TextView
+    <ImageView
         android:id="@+id/highlight_delete"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -45,10 +45,9 @@
         android:focusable="true"
         android:minWidth="48dp"
         android:minHeight="48dp"
-        android:gravity="center"
         android:paddingHorizontal="16dp"
-        android:text="✕"
-        android:textColor="@android:color/black"
-        android:textSize="18sp" />
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_delete"
+        android:contentDescription="@string/highlight_delete" />
 
 </LinearLayout>

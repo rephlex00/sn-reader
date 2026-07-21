@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every user-facing string in the app.
+
+  Error messages here are deliberately plain-language and carry no exception text. The raw
+  throwable goes to Log.w with a tag, where it is useful to whoever is debugging; a reader who
+  taps a damaged book should be told the book is damaged, not shown "error in opening zip file"
+  or a bare "NullPointerException".
+-->
+<resources>
+    <string name="app_name">Reader</string>
+
+    <!-- Library -->
+    <string name="library_title">Library</string>
+    <string name="menu_search">Search</string>
+    <string name="menu_sort_by">Sort by</string>
+    <string name="menu_sort_title">Title</string>
+    <string name="menu_sort_author">Author</string>
+    <string name="menu_sort_recently_added">Recently added</string>
+    <string name="menu_sort_recently_opened">Recently opened</string>
+    <string name="menu_view">View</string>
+    <string name="menu_view_tiles">Tiles</string>
+    <string name="menu_view_list">List</string>
+    <string name="menu_flatten_folders">Flatten folders</string>
+    <string name="menu_filter">Filter</string>
+    <string name="filter_all">All</string>
+    <string name="filter_not_started">Not started</string>
+    <string name="filter_in_progress">In progress</string>
+    <string name="filter_finished">Finished</string>
+    <string name="menu_settings">Settings</string>
+
+    <!-- Book status shown under a title -->
+    <string name="status_in_progress">In progress</string>
+    <string name="status_not_started">Not started</string>
+    <string name="status_unreadable">Can\'t be opened</string>
+    <string name="folder_row_label">▸ %1$s (%2$d)</string>
+
+    <!-- Library empty and permission states -->
+    <string name="library_empty_no_matches">No books match. Clear the search or filter to see your library.</string>
+    <string name="library_permission_needed">Reader needs permission to read your files before it can show your library. Tap here to grant it.</string>
+    <string name="library_permission_prompt">Reader needs all-files access to open books.</string>
+
+    <!-- Reader chrome -->
+    <string name="reader_back">‹ Back</string>
+    <string name="reader_bookmarks">Bookmarks</string>
+    <string name="reader_highlights">Highlights</string>
+    <string name="reader_contents">Contents</string>
+    <string name="reader_display">Display</string>
+    <string name="reader_display_short">Aa</string>
+
+    <!-- Reader panels -->
+    <string name="panel_close_contents">Close contents</string>
+    <string name="panel_close_bookmarks">Close bookmarks</string>
+    <string name="panel_close_highlights">Close highlights</string>
+    <string name="panel_close_display">Close display settings</string>
+    <string name="contents_empty">No contents</string>
+    <string name="bookmarks_empty">No bookmarks yet</string>
+    <string name="highlights_empty">No highlights yet</string>
+    <string name="bookmark_add">Bookmark this page</string>
+    <string name="bookmark_remove">Remove bookmark from this page</string>
+    <string name="bookmark_delete">Delete bookmark</string>
+    <string name="highlight_delete">Delete highlight</string>
+    <string name="highlight_delete_chip">✕ Delete</string>
+
+    <!-- Display settings -->
+    <string name="setting_font">Font</string>
+    <string name="font_literata">Literata</string>
+    <string name="font_bitter">Bitter</string>
+    <string name="font_atkinson">Atkinson</string>
+    <string name="setting_text_size">Text size</string>
+    <string name="text_size_decrease">A −</string>
+    <string name="text_size_increase">A +</string>
+    <string name="text_size_value">%1$dpx</string>
+    <string name="setting_line_spacing">Line spacing</string>
+    <string name="spacing_12">1.2</string>
+    <string name="spacing_14">1.4</string>
+    <string name="spacing_16">1.6</string>
+    <string name="setting_margins">Margins</string>
+    <string name="margin_narrow">Narrow</string>
+    <string name="margin_medium">Medium</string>
+    <string name="margin_wide">Wide</string>
+    <string name="setting_justify">Justify</string>
+    <string name="setting_hyphenation">Hyphenation</string>
+    <string name="setting_publisher_styling">Publisher styling</string>
+    <string name="setting_heading_detection">Heading detection</string>
+    <string name="setting_progress_bar">Progress bar</string>
+    <string name="setting_faster_page_turns">Faster page turns</string>
+    <string name="setting_full_refresh_every">Full refresh every</string>
+    <string name="refresh_every_3">3</string>
+    <string name="refresh_every_6">6</string>
+    <string name="refresh_every_10">10</string>
+
+    <!-- Settings and folder chooser -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_book_folder">Book folder</string>
+    <string name="chooser_title">Choose book folder</string>
+    <string name="chooser_up">Up</string>
+    <string name="chooser_use_this_folder">Use this folder</string>
+    <string name="action_back">Back</string>
+
+    <!-- Failures. Plain language; the throwable goes to the log, never here. -->
+    <string name="error_open_book">This book couldn\'t be opened. It may be damaged or in a format Reader doesn\'t support.</string>
+    <string name="error_book_missing">That book is no longer there.</string>
+    <string name="error_book_no_text">This book has no readable text.</string>
+    <string name="error_no_text_short">No readable text</string>
+    <string name="error_turn_page">Something went wrong turning the page.</string>
+    <string name="error_apply_setting">That setting couldn\'t be applied.</string>
+    <string name="error_open_bookmark">That bookmark couldn\'t be opened.</string>
+    <string name="error_open_highlight">That highlight couldn\'t be opened.</string>
+    <string name="error_open_section">That section couldn\'t be opened.</string>
+    <string name="error_save_bookmark">That bookmark couldn\'t be saved.</string>
+    <string name="error_save_highlight">That highlight couldn\'t be saved.</string>
+    <string name="error_scan_library">Your library couldn\'t be scanned.</string>
+    <string name="error_book_not_indexed">This book isn\'t in your library yet.</string>
+    <string name="error_no_epub_found">No EPUB found in /Document.</string>
+    <string name="highlight_cancelled_chapter_change">Highlight cancelled — you moved to another chapter.</string>
+</resources>

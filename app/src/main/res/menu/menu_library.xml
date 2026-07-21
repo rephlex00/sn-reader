@@ -21,28 +21,28 @@
     <item
         android:id="@+id/action_search"
         android:icon="@android:drawable/ic_menu_search"
-        android:title="Search"
+        android:title="@string/menu_search"
         app:showAsAction="ifRoom|collapseActionView"
         app:actionViewClass="androidx.appcompat.widget.SearchView" />
     <item
         android:id="@+id/header_sort"
         android:enabled="false"
-        android:title="Sort by" />
+        android:title="@string/menu_sort_by" />
     <group
         android:id="@+id/sort_group"
         android:checkableBehavior="single">
         <item
             android:id="@+id/sort_title"
-            android:title="Title" />
+            android:title="@string/menu_sort_title" />
         <item
             android:id="@+id/sort_author"
-            android:title="Author" />
+            android:title="@string/menu_sort_author" />
         <item
             android:id="@+id/sort_recently_added"
-            android:title="Recently added" />
+            android:title="@string/menu_sort_recently_added" />
         <item
             android:id="@+id/sort_recently_opened"
-            android:title="Recently opened" />
+            android:title="@string/menu_sort_recently_opened" />
     </group>
     <!-- The tiles/list toggle, styled like the sort group: checkableBehavior="single" makes the
          two items a radio pair so the active view mode carries a visible mark. LibraryActivity
@@ -51,16 +51,16 @@
     <item
         android:id="@+id/header_view"
         android:enabled="false"
-        android:title="View" />
+        android:title="@string/menu_view" />
     <group
         android:id="@+id/view_group"
         android:checkableBehavior="single">
         <item
             android:id="@+id/view_tiles"
-            android:title="Tiles" />
+            android:title="@string/menu_view_tiles" />
         <item
             android:id="@+id/view_list"
-            android:title="List" />
+            android:title="@string/menu_view_list" />
     </group>
     <!-- A standalone checkable toggle (not a radio group): flatten collapses the folder tree to
          every book under the root. LibraryActivity restores its check state after inflating, the
@@ -68,7 +68,7 @@
     <item
         android:id="@+id/action_flatten"
         android:checkable="true"
-        android:title="Flatten folders" />
+        android:title="@string/menu_flatten_folders" />
     <!-- Reading-status filter, styled exactly like the sort/view groups above: a disabled header
          label plus a single-choice radio group. Selecting anything but "All" (together with a
          non-blank search query) switches the library to LibraryActivity's flat filtered-results
@@ -76,26 +76,26 @@
     <item
         android:id="@+id/header_filter"
         android:enabled="false"
-        android:title="Filter" />
+        android:title="@string/menu_filter" />
     <group
         android:id="@+id/filter_group"
         android:checkableBehavior="single">
         <item
             android:id="@+id/filter_all"
-            android:title="All" />
+            android:title="@string/filter_all" />
         <item
             android:id="@+id/filter_not_started"
-            android:title="Not started" />
+            android:title="@string/filter_not_started" />
         <item
             android:id="@+id/filter_in_progress"
-            android:title="In progress" />
+            android:title="@string/filter_in_progress" />
         <item
             android:id="@+id/filter_finished"
-            android:title="Finished" />
+            android:title="@string/filter_finished" />
     </group>
     <!-- Outside every checkable group: this is an action, not a selection, so it must not carry a
          check mark. Opens SettingsActivity. -->
     <item
         android:id="@+id/action_settings"
-        android:title="Settings" />
+        android:title="@string/menu_settings" />
 </menu>

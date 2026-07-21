@@ -147,7 +147,10 @@ class ReaderActivityTest {
         // Wait for the failure to round-trip back to the main thread (the toast), not merely for
         // openDocument to have been entered on Dispatchers.IO.
         idleUntil { ShadowToast.getTextOfLatestToast() != null }
-        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("Couldn't open this book: boom")
+        // Plain language, and crucially NOT the exception text: "boom" belongs in the log.
+        assertThat(ShadowToast.getTextOfLatestToast())
+            .isEqualTo(RuntimeEnvironment.getApplication().getString(R.string.error_open_book))
+        assertThat(ShadowToast.getTextOfLatestToast()).doesNotContain("boom")
         assertThat(activity.isFinishing).isFalse()
 
         // The failure reset `opening`, so coming back to this screen retries rather than

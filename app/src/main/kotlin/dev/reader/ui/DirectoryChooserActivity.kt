@@ -9,6 +9,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import dev.reader.R
 import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -58,7 +59,7 @@ private fun compareNatural(a: String, b: String): Int {
  * a user ever re-points their library, so it has no search, no file display, and no gold-plating.
  * It lists the *directories* of the current location (starting at
  * [Environment.getExternalStorageDirectory]), naturally sorted; tapping one descends into it, an
- * "Up" control ascends (disabled at the storage root), and "Use this folder" writes the current
+ * getString(R.string.chooser_up) control ascends (disabled at the storage root), and getString(R.string.chooser_use_this_folder) writes the current
  * directory as the root and finishes back to [SettingsActivity].
  *
  * **It never writes anything under the storage tree** — it only reads directory listings and, on
@@ -83,19 +84,19 @@ open class DirectoryChooserActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val toolbar = Toolbar(this).apply {
-            title = "Choose book folder"
+            title = getString(R.string.chooser_title)
             // Up affordance (cancel/return): without it the only way out was the device Back
-            // gesture. This returns to Settings without choosing a folder — the "Up" button in the
+            // gesture. This returns to Settings without choosing a folder — the getString(R.string.chooser_up) button in the
             // list navigates the directory tree, a separate concern.
             setNavigationIcon(androidx.appcompat.R.drawable.abc_ic_ab_back_material)
-            navigationContentDescription = "Back"
+            navigationContentDescription = getString(R.string.action_back)
             setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
         }
 
-        pathLabel = TextView(this).apply { setPadding(48, 24, 48, 24) }
+        pathLabel = TextView(this).apply { setPadding(dp(24), dp(12), dp(24), dp(12)) }
 
         upButton = Button(this).apply {
-            text = "Up"
+            text = getString(R.string.chooser_up)
             setOnClickListener {
                 // The storage root is the floor: never ascend above it (the button is also
                 // disabled there, so this is belt-and-braces). Below it, every parent is in range.
@@ -116,11 +117,12 @@ open class DirectoryChooserActivity : AppCompatActivity() {
             // Same reason as everywhere else in this app: DefaultItemAnimator cross-fades on every
             // change, a smear on e-ink and banned outright.
             itemAnimator = null
+            stopScrollAnimations()
             this.adapter = this@DirectoryChooserActivity.adapter
         }
 
         val useButton = Button(this).apply {
-            text = "Use this folder"
+            text = getString(R.string.chooser_use_this_folder)
             setOnClickListener {
                 prefs.rootPath = currentDir.path
                 // A folder remembered under the OLD root is meaningless under the new one; clear it
@@ -168,8 +170,9 @@ open class DirectoryChooserActivity : AppCompatActivity() {
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-            val tv = TextView(parent.context).apply {
-                setPadding(48, 40, 48, 40)
+            val ctx = parent.context
+            val tv = TextView(ctx).apply {
+                setPadding(ctx.dp(24), ctx.dp(20), ctx.dp(24), ctx.dp(20))
                 textSize = 16f
                 layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,

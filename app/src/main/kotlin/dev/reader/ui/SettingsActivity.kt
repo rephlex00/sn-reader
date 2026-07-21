@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import dev.reader.R
 import androidx.appcompat.widget.Toolbar
 
 /**
@@ -31,26 +32,26 @@ open class SettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val toolbar = Toolbar(this).apply {
-            title = "Settings"
+            title = getString(R.string.settings_title)
             // An explicit up affordance: this screen is reached from the library overflow and had
             // no on-screen way back — only the device's Back gesture, the same discoverability gap
             // the reader's own "‹ Back" control was added to close.
             setNavigationIcon(androidx.appcompat.R.drawable.abc_ic_ab_back_material)
-            navigationContentDescription = "Back"
+            navigationContentDescription = getString(R.string.action_back)
             setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
         }
 
         val label = TextView(this).apply {
-            text = "Book folder"
+            text = getString(R.string.settings_book_folder)
             textSize = 16f
         }
         rootValue = TextView(this).apply {
             text = prefs.rootPath
-            setPadding(0, 8, 0, 0)
+            setPadding(0, dp(4), 0, 0)
         }
         val bookFolderRow = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 40, 48, 40)
+            setPadding(dp(24), dp(20), dp(24), dp(20))
             isClickable = true
             addView(label)
             addView(rootValue)

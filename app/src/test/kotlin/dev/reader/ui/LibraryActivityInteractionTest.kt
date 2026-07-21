@@ -126,7 +126,7 @@ class LibraryActivityInteractionTest {
 
         val activity = controller.get()
         assertThat(activity.emptyStateVisibility).isEqualTo(View.VISIBLE)
-        assertThat(activity.emptyStateText).contains("all-files access")
+        assertThat(activity.emptyStateText).contains("needs permission to read your files")
     }
 
     @Test
