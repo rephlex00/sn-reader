@@ -2,7 +2,9 @@ package dev.reader.ui
 
 import android.graphics.Bitmap
 import android.os.Looper
+import android.view.View
 import android.widget.FrameLayout
+import android.widget.TextView
 import com.google.common.truth.Truth.assertThat
 import dev.reader.R
 import dev.reader.data.BookEntity
@@ -176,6 +178,53 @@ class BookGridAdapterBindTest {
         assertThat(holder.status.text.toString()).doesNotContain("torn zip")
     }
 
+    @Test
+    fun `badge shows the percentage and the status row stays hidden for a readable book`() {
+        val holder = bindBook(book(lastOpenedAtMs = 1L, progressFraction = 0.43f, unreadable = false))
+
+        val badge = holder.itemView.findViewById<TextView>(R.id.progress_badge)
+        val status = holder.itemView.findViewById<TextView>(R.id.status)
+
+        assertThat(badge.visibility).isEqualTo(View.VISIBLE)
+        assertThat(badge.text.toString()).isEqualTo("43%")
+        assertThat(status.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `an unopened book shows neither badge nor status`() {
+        val holder = bindBook(book(lastOpenedAtMs = null, progressFraction = null, unreadable = false))
+
+        assertThat(holder.itemView.findViewById<TextView>(R.id.progress_badge).visibility).isEqualTo(View.GONE)
+        assertThat(holder.itemView.findViewById<TextView>(R.id.status).visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `an unreadable book shows its reason in the status row and no badge`() {
+        val holder = bindBook(
+            book(lastOpenedAtMs = 1L, progressFraction = 0.43f, unreadable = true, unreadableReason = "Not a readable EPUB archive"),
+        )
+
+        val badge = holder.itemView.findViewById<TextView>(R.id.progress_badge)
+        val status = holder.itemView.findViewById<TextView>(R.id.status)
+
+        assertThat(badge.visibility).isEqualTo(View.GONE)
+        assertThat(status.visibility).isEqualTo(View.VISIBLE)
+        assertThat(status.text.toString()).contains("Not a readable EPUB archive")
+    }
+
+    /** Binds a single book tile using the standard [TestableAdapter] setup and returns the bound holder. */
+    private fun bindBook(entity: BookEntity): BookGridAdapter.BookTileViewHolder {
+        val adapter = TestableAdapter(scope)
+        adapter.submitList(listOf(LibraryRow.Book(entity)))
+        val holder = adapter.onCreateViewHolder(
+            FrameLayout(RuntimeEnvironment.getApplication()),
+            BookGridAdapter.VIEW_TYPE_BOOK_TILE,
+        ) as BookGridAdapter.BookTileViewHolder
+        adapter.onBindViewHolder(holder, 0)
+        shadowOf(Looper.getMainLooper()).idle()
+        return holder
+    }
+
     /** [BookGridAdapter] whose decode is latched, so tests control exactly when it finishes. */
     private class TestableAdapter(scope: CoroutineScope) : BookGridAdapter(scope, onBookClick = {}, onFolderClick = {}) {
         val decodeEntered = CountDownLatch(1)
@@ -199,7 +248,15 @@ class BookGridAdapterBindTest {
     private fun bookRow(path: String, coverPath: String?, modifiedAtMs: Long = 1_700_000_000_000L) =
         LibraryRow.Book(book(path, coverPath, modifiedAtMs))
 
-    private fun book(path: String, coverPath: String?, modifiedAtMs: Long = 1_700_000_000_000L) = BookEntity(
+    private fun book(
+        path: String = "/book.epub",
+        coverPath: String? = null,
+        modifiedAtMs: Long = 1_700_000_000_000L,
+        lastOpenedAtMs: Long? = null,
+        progressFraction: Float? = null,
+        unreadable: Boolean = false,
+        unreadableReason: String? = null,
+    ) = BookEntity(
         path = path,
         sizeBytes = 1_000L,
         modifiedAtMs = modifiedAtMs,
@@ -208,9 +265,10 @@ class BookGridAdapterBindTest {
         coverPath = coverPath,
         spineIndex = 0,
         charOffset = 0,
-        unreadable = false,
-        unreadableReason = null,
+        unreadable = unreadable,
+        unreadableReason = unreadableReason,
         addedAtMs = 1_700_000_000_000L,
-        lastOpenedAtMs = null,
+        lastOpenedAtMs = lastOpenedAtMs,
+        progressFraction = progressFraction,
     )
 }

@@ -241,11 +241,22 @@ open class BookGridAdapter(
         holder.author.text = formatAuthor(book.author)
         holder.itemView.setOnClickListener { onBookClick(book) }
 
-        holder.status.text = when {
-            book.unreadable -> book.unreadableReason ?: "Unreadable"
-            else -> progressLabel(book.lastOpenedAtMs, book.spineIndex, book.charOffset, book.progressFraction)
-        }
-        holder.status.visibility = if (holder.status.text.isNullOrEmpty()) View.GONE else View.VISIBLE
+        // Progress now rides in the cover's corner; the status row is reserved for the one thing a
+        // badge cannot carry — the words explaining why a book won't open. A readable book therefore
+        // gives its whole row back to the grid.
+        val reason = if (book.unreadable) book.unreadableReason ?: "Unreadable" else null
+        val percent = if (book.unreadable) null else progressLabel(
+            book.lastOpenedAtMs,
+            book.spineIndex,
+            book.charOffset,
+            book.progressFraction,
+        )
+
+        holder.progressBadge.text = percent.orEmpty()
+        holder.progressBadge.visibility = if (percent != null) View.VISIBLE else View.GONE
+
+        holder.status.text = reason.orEmpty()
+        holder.status.visibility = if (reason != null) View.VISIBLE else View.GONE
 
         bindCover(holder, book)
     }
@@ -337,6 +348,7 @@ open class BookGridAdapter(
         val title: TextView = view.findViewById(R.id.title)
         val author: TextView = view.findViewById(R.id.author)
         val status: TextView = view.findViewById(R.id.status)
+        val progressBadge: TextView = view.findViewById(R.id.progress_badge)
 
         /**
          * The [coverCacheKey] this holder's [ImageView] currently reflects (or is waiting to) —
