@@ -31,7 +31,6 @@ import org.robolectric.android.controller.ActivityController
 import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -135,7 +134,17 @@ class ReaderActivityTest {
         activity.blockOpen = CountDownLatch(1)
 
         launchAndLayOut(controller)
-        assertThat(activity.openEntered!!.await(5, TimeUnit.SECONDS)).isTrue()
+        // Wait by PUMPING the main looper, never by blocking on the latch. The open path makes two
+        // hops to Dispatchers.IO — first to resolve the file, then to open it — and the resumption
+        // between them is posted to the main looper, which Robolectric leaves paused until
+        // something idles it. A bare `openEntered.await(5s)` blocks this thread with that
+        // continuation still sitting in the queue, so openDocument is never reached and the latch
+        // times out having proved nothing. That is what made this test fail about one run in ten
+        // (and only alongside its siblings, never alone) until 2026-07-21, when it blocked a
+        // release. `idleUntil` runs the queue between checks, which is the only thing that lets the
+        // coroutine advance.
+        idleUntil { activity.openEntered!!.count == 0L }
+        assertThat(activity.openEntered!!.count).isEqualTo(0L)
 
         // Back-press/destroy while open() is still in flight on Dispatchers.IO: lifecycleScope
         // is cancelled, but the blocking open only returns after the latch is released.
@@ -147,13 +156,26 @@ class ReaderActivityTest {
         // back-press during load and a leaked ZipFile. Observable as: reading from the document
         // now fails (its ZipFile is closed), where the test above proves an uncancelled one reads
         // fine.
-        idleUntil {
-            activity.openedDocuments.size == 1 &&
-                runCatching { activity.openedDocuments.single().chapter(0, testRenderConfig()) }.isFailure
+        //
+        // Every probe uses a config the document has NOT seen. `chapter()` memoises per
+        // (config, spineIndex) via `cache.getOrPut`, so probing twice with the SAME config reads
+        // the cache the second time and reports success against an archive that is by then closed
+        // — the probe would stop measuring the thing it is named for. The first probe can
+        // legitimately land before the cancellation handler has run (the wait exists because that
+        // ordering is not guaranteed), and it would then poison every later one. A config it has
+        // not seen clears the cache and forces a real read of the archive.
+        //
+        // This was latent, not the cause of the flake above: the runs that failed never got far
+        // enough to probe at all.
+        var probe = 0
+        fun archiveIsClosed(): Boolean {
+            val doc = activity.openedDocuments.singleOrNull() ?: return false
+            val unseen = testRenderConfig().copy(textSizePx = 30f + probe++)
+            return runCatching { doc.chapter(0, unseen) }.isFailure
         }
-        assertThat(
-            runCatching { activity.openedDocuments.single().chapter(0, testRenderConfig()) }.isFailure,
-        ).isTrue()
+
+        idleUntil { archiveIsClosed() }
+        assertThat(archiveIsClosed()).isTrue()
     }
 
     // -- Failed-open recoverability ------------------------------------------------------------
