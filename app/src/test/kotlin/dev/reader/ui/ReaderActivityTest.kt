@@ -73,7 +73,11 @@ class ReaderActivityTest {
         controller.get().firstEpub = null
 
         launchAndLayOut(controller)
-        idleUntil { controller.get().findFirstCalls > 0 }
+        // Wait on the toast, not on findFirstCalls. The counter increments inside findFirstEpub on
+        // Dispatchers.IO while the toast is posted to the main thread afterwards, so waiting on the
+        // counter can return before the toast exists and the assertion below reads null. That race
+        // is a real intermittent failure, not a theoretical one.
+        idleUntil { ShadowToast.getTextOfLatestToast() != null }
 
         assertThat(controller.get().findFirstCalls).isEqualTo(1)
         assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("No EPUB found in /Document.")

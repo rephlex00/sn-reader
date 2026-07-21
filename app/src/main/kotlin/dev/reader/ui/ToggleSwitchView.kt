@@ -33,9 +33,14 @@ class ToggleSwitchView @JvmOverloads constructor(
 
     private val density = resources.displayMetrics.density
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // Hoisted deliberately: inside a `Paint().apply { }` block the name `density` resolves to the
+    // Paint's own member rather than this view's, so `2f * density` there silently means 2px. The
+    // switch border was drawing at 2px instead of 2dp on a 1.875-density panel.
+    private val strokeWidthPx = 2f * density
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 2f * density
+        strokeWidth = strokeWidthPx
         color = Color.BLACK
     }
 

@@ -972,7 +972,7 @@ open class ReaderActivity : AppCompatActivity() {
             val oldPages = doc.chapter(state.spineIndex, cfg).pages
 
             mutate(ReaderPrefs(this))
-            val newConfig = ReaderPrefs(this).renderConfig(width, height)
+            val newConfig = ReaderPrefs(this).renderConfig(width, height, pageView.bottomChromeHeightPx)
 
             // chapter() takes newConfig as a parameter, so the re-paginate does not need the field
             // set yet. Reassign config/state only AFTER this (throwing) call succeeds, so a failure
@@ -1223,6 +1223,7 @@ open class ReaderActivity : AppCompatActivity() {
         val renderConfig = ReaderPrefs(this).renderConfig(
             viewportWidthPx = width,
             viewportHeightPx = height,
+            bottomChromePx = pageView.bottomChromeHeightPx,
         )
         config = renderConfig
 

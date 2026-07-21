@@ -104,6 +104,49 @@ class ReaderPrefsTest {
     }
 
     @Test
+    fun `a margin deeper than the bottom chrome reserves nothing`() {
+        // The medium and wide presets already clear the foot on their own, so pagination must be
+        // byte-identical to before the reserve existed — no silently lost line at the default.
+        val prefs = ReaderPrefs(context)
+        prefs.marginPx = 72
+
+        val built = prefs.renderConfig(1404, 1872, bottomChromePx = 60)
+        assertThat(built.viewportHeightPx).isEqualTo(1872)
+    }
+
+    @Test
+    fun `a margin shallower than the bottom chrome gives the shortfall back to the chrome`() {
+        // The narrow preset (40px) is shallower than the progress bar + running foot band, so the
+        // text area must shrink by exactly the difference. Without this the foot overdraws the
+        // last line, which is what happened at every foot size the app has shipped.
+        val prefs = ReaderPrefs(context)
+        prefs.marginPx = 40
+
+        val built = prefs.renderConfig(1404, 1872, bottomChromePx = 60)
+        assertThat(built.viewportHeightPx).isEqualTo(1872 - 20)
+        assertThat(built.marginPx).isEqualTo(40) // the margin itself is untouched
+    }
+
+    @Test
+    fun `omitting the bottom chrome reserves nothing`() {
+        val prefs = ReaderPrefs(context)
+        prefs.marginPx = 0
+
+        assertThat(prefs.renderConfig(1404, 1872).viewportHeightPx).isEqualTo(1872)
+    }
+
+    @Test
+    fun `chrome taller than the whole viewport still leaves a content pixel`() {
+        // Defensive, mirroring the margin clamp above: an absurd chrome height must not drive
+        // contentHeightPx to zero and make RenderConfig.init throw on the way into the reader.
+        val prefs = ReaderPrefs(context)
+        prefs.marginPx = 40
+
+        val built = prefs.renderConfig(1404, 1872, bottomChromePx = 9999)
+        assertThat(built.contentHeightPx).isGreaterThan(0)
+    }
+
+    @Test
     fun `renderConfig carries a changed field through to the built config`() {
         val prefs = ReaderPrefs(context)
         prefs.textSizePx = 40f

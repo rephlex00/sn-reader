@@ -92,18 +92,39 @@ class ReaderPrefs(context: Context) {
      * too (and any future viewport that shrinks below a previously-stored margin). On a real panel
      * every shipped preset (≤80) is far below the limit (~701), so this is pure defense.
      */
-    fun renderConfig(viewportWidthPx: Int, viewportHeightPx: Int): RenderConfig = RenderConfig(
-        fontFamily = fontFamily,
-        textSizePx = textSizePx,
-        lineSpacingMultiplier = lineSpacingMultiplier,
-        marginPx = marginPx.coerceIn(0, (minOf(viewportWidthPx, viewportHeightPx) - 1) / 2),
-        justified = justified,
-        hyphenated = hyphenated,
-        viewportWidthPx = viewportWidthPx,
-        viewportHeightPx = viewportHeightPx,
-        inferHeadings = inferHeadings,
-        publisherStyling = publisherStyling,
-    )
+    fun renderConfig(
+        viewportWidthPx: Int,
+        viewportHeightPx: Int,
+        bottomChromePx: Int = 0,
+    ): RenderConfig {
+        val margin = marginPx.coerceIn(0, (minOf(viewportWidthPx, viewportHeightPx) - 1) / 2)
+        // The progress bar and running foot are drawn into the bottom margin band, and nothing in
+        // the draw path enforces clearance — so before this, whether the foot overdrew the last
+        // line was decided by whether the chosen margin happened to be deeper than the foot. At
+        // the narrow preset it was not, and every increase in foot size ate further into the text.
+        // Taking the shortfall out of the text area instead makes the two independent: the foot
+        // can be sized for legibility without the margin preset having a vote.
+        // Capped at half the content height. On any real viewport the cap is nowhere near binding
+        // (the band is ~57px against ~1700px of content), but without it a degenerate viewport
+        // could see the whole text area reserved away, leaving a 1px content height that paginates
+        // into an absurd number of pages. Reserving less is the right failure, never inflating
+        // viewportHeightPx to make room — that would hand the paginator a viewport that does not
+        // exist.
+        val contentHeight = viewportHeightPx - margin * 2
+        val reserved = (bottomChromePx - margin).coerceIn(0, (contentHeight / 2).coerceAtLeast(0))
+        return RenderConfig(
+            fontFamily = fontFamily,
+            textSizePx = textSizePx,
+            lineSpacingMultiplier = lineSpacingMultiplier,
+            marginPx = margin,
+            justified = justified,
+            hyphenated = hyphenated,
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx - reserved,
+            inferHeadings = inferHeadings,
+            publisherStyling = publisherStyling,
+        )
+    }
 
     private companion object {
         const val KEY_FONT_FAMILY = "font_family"

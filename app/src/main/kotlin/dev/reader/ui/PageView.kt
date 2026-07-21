@@ -15,6 +15,7 @@ import android.view.ViewConfiguration
 import dev.reader.R
 import dev.reader.engine.Page
 import kotlin.math.abs
+import kotlin.math.ceil
 
 enum class TapZone { PREVIOUS, NEXT, TOGGLE_OVERLAY }
 
@@ -69,11 +70,46 @@ class PageView(context: Context) : View(context) {
     internal val pageCountForTest: Int get() = runningFootPageCount
 
     private val runningFootBottomInsetPx = progressBarBottomInsetPx + progressBarThicknessPx + 4f * density
+
+    /**
+     * Hoisted out of the [runningFootPaint] builder below, and it must stay out of it: inside a
+     * `Paint().apply { }` block the name `density` resolves to the *Paint's* own `density` member,
+     * not this view's. That silently made every scaled value in such a block a raw-pixel one — the
+     * running foot asked for 11dp and drew at 11px, a third of its intended size on this panel, and
+     * two rounds of enlarging it changed 11px to 16px while looking like nothing had happened.
+     *
+     * 13dp is @dimen/text_meta, the size the app already uses for metadata that sits beside content
+     * without competing with it — which is exactly this line's job.
+     */
+    private val runningFootSizePx = 13f * density
+
+    /**
+     * Test-visible readout of the size the foot paint ACTUALLY carries — read off the paint, not
+     * off [runningFootSizePx], because the paint builder is where the density bug lived and a test
+     * that reads the hoisted value back would pass against the broken code too.
+     */
+    internal val runningFootSizePxForTest: Float get() = runningFootPaint.textSize
+
     private val runningFootPaint = TextPaint().apply {
         color = context.getColor(R.color.reader_text_faint) // fainter than body text; matches the progress bar's restraint
-        textSize = 11f * density
+        // See [runningFootSizePx] for the size and why it is computed outside this block. Sizing
+        // this freely is only safe because [bottomChromeHeightPx] is reserved out of the text area;
+        // before that, a foot this size overdrew the last line at the narrow margin.
+        textSize = runningFootSizePx
         isAntiAlias = true
     }
+
+    /**
+     * Height, up from the view's bottom edge, of the band the progress bar and running foot are
+     * drawn into. Callers building a [dev.reader.engine.RenderConfig] pass this as `bottomChromePx`
+     * so the paginator keeps the last line clear of it — this chrome sits OUTSIDE the text clip and
+     * would otherwise overdraw text at any margin shallower than the band.
+     *
+     * Measured from the paint's own metrics rather than assumed from the point size, so it stays
+     * correct if the foot's size or typeface changes.
+     */
+    internal val bottomChromeHeightPx: Int =
+        ceil(runningFootBottomInsetPx + runningFootPaint.descent() - runningFootPaint.ascent()).toInt()
 
     var onTap: ((TapZone) -> Unit)? = null
 
@@ -99,7 +135,10 @@ class PageView(context: Context) : View(context) {
     private var bracketAnchor: Int? = null
 
     private val washPaint = Paint().apply { color = context.getColor(R.color.reader_highlight_wash) } // tuned on device
-    private val anchorPaint = Paint().apply { color = Color.BLACK; strokeWidth = 1.5f * density }
+    // anchorStrokePx is hoisted for the same reason runningFootSizePx is: `density` inside a
+    // Paint builder block is the Paint's, not this view's. The caret was drawing 1.5px wide.
+    private val anchorStrokePx = 1.5f * density
+    private val anchorPaint = Paint().apply { color = Color.BLACK; strokeWidth = anchorStrokePx }
     private val selectionPath = Path()
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
@@ -226,12 +265,12 @@ class PageView(context: Context) : View(context) {
         drawBracketAnchor(canvas, layout, page)
         canvas.restore()
 
-        // The progress bar lives OUTSIDE the text clip, pinned to the bottom edge of the view
-        // (not the content box), so it sits at the very bottom. Text clears it only because the
-        // shipped margin floor (MARGIN_NARROW_PX = 24px) leaves a band below the last line — the
-        // draw code does NOT itself enforce clearance, so at marginPx 0 (unreachable via the Aa
-        // sheet) the bar would sit under the final line. One extra draw folded into this same
-        // per-turn redraw — no separate pass.
+        // The progress bar lives OUTSIDE the text clip, pinned to the bottom edge of the view (not
+        // the content box), so it sits at the very bottom. This draw code does NOT itself enforce
+        // clearance from the text; the paginator does, by reserving [bottomChromeHeightPx] out of
+        // the text area (see ReaderPrefs.renderConfig). Clearance therefore holds at every margin
+        // preset, including one shallower than this band — which the narrow preset (40px) is.
+        // One extra draw folded into this same per-turn redraw — no separate pass.
         progress?.let { drawProgressBar(canvas, it) }
 
         // Same band, same discipline: the running foot is also outside the text clip, drawn once

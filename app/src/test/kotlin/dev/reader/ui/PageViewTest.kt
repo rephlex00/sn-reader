@@ -277,4 +277,37 @@ class PageViewTest {
         if (moveThrough) view.dispatchTouchEvent(ev(MotionEvent.ACTION_MOVE, upX, upY))
         view.dispatchTouchEvent(ev(MotionEvent.ACTION_UP, upX, upY))
     }
+
+    @Test
+    fun `the reserved bottom chrome band covers the foot's full ascent and the progress bar`() {
+        // This number is what ReaderPrefs.renderConfig takes out of the text area, so an
+        // under-measure means the foot overdraws the last line. It must exceed the foot's own
+        // point size (the glyphs alone) plus the bar and its insets beneath them.
+        // Stated in density-independent terms: the margin presets are raw px, so comparing this
+        // to the 40px narrow preset only means anything at the device's 1.875 density, and
+        // Robolectric runs at 1.0. What holds at any density is that the band covers the foot's
+        // 13dp of glyphs plus the 12dp of bar and insets sitting under them.
+        val view = PageView(context)
+        val density = context.resources.displayMetrics.density
+        assertThat(view.bottomChromeHeightPx).isAtLeast(((13f + 12f) * density).toInt())
+    }
+
+    @Test
+    fun `the running foot is scaled by display density, not left in raw pixels`() {
+        // Regression: `textSize = 16f * density` written INSIDE a `TextPaint().apply { }` block
+        // resolves `density` to the Paint's own member (1.0), not the view's, so the foot silently
+        // drew at 16px instead of 16dp. It survived two rounds of enlargement because the bug ate
+        // the multiplier each time. Robolectric runs at density 1.0, where the correct and the
+        // broken expression give the same number — so this asserts against a forced density
+        // instead, which is the only way the mistake is visible in a test.
+        val res = context.resources
+        val original = res.displayMetrics.density
+        try {
+            res.displayMetrics.density = 3f
+            val view = PageView(context)
+            assertThat(view.runningFootSizePxForTest).isEqualTo(39f) // 13dp at the forced density
+        } finally {
+            res.displayMetrics.density = original
+        }
+    }
 }

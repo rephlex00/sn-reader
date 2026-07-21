@@ -53,6 +53,17 @@ private const val PARAGRAPH_JOIN = "\n"
 /** The reader's own first-line indent for a body paragraph, in ems of the reader's text size. */
 private const val PARAGRAPH_INDENT_EM = 1.5f
 
+/**
+ * What every scene break renders as, whatever the publisher wrote ("***", "---", "· · ·", a row
+ * of dashes). Normalising is the point: the mark is the reader's, so a scene break looks the same
+ * in every book, and a book that used forty hyphens does not get a forty-hyphen rule.
+ *
+ * Plain asterisks rather than an asterism (U+2042) or bullets, because the bundled faces are the
+ * only ones guaranteed present and ASCII is the only thing guaranteed inside them — a missing
+ * glyph would draw as tofu right where the eye is looking for a pause.
+ */
+private const val SCENE_BREAK_MARK = "* * *"
+
 private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 5 to 1.1f, 6 to 1.05f)
 
 /**
@@ -175,14 +186,21 @@ class SpannedChapterBuilder {
     ) {
         when (block) {
             is Block.Paragraph -> {
-                // A scene-break line ("***" etc.) renders as a band of blank vertical space,
-                // not centered glyphs: no visible text, no AlignmentSpan. It still counts as
-                // an emitted block — the appended "\n" advances sb.length, so the break-offset
-                // / prev-emission logic in build() still sees it, and separatorBetween /
-                // isBreakLike still classify it as a separator paragraph (not a body paragraph)
-                // for the block-join and first-after-break-indent rules above.
+                // A scene-break line ("***" etc.) renders as the reader's own centered mark, NOT
+                // the publisher's glyphs and not blank space. Blank space alone is ambiguous at a
+                // page boundary: a break that lands at the foot of a page is indistinguishable
+                // from the page simply ending, so the pause is lost exactly where it matters most.
+                // The block still counts as emitted, so the break-offset / prev-emission logic in
+                // build() sees it, and separatorBetween / isBreakLike still classify it as a
+                // separator paragraph (not a body paragraph) for the block-join and
+                // first-after-break-indent rules above.
                 if (isSeparatorLine(block.text.text)) {
-                    sb.append("\n")
+                    val start = sb.length
+                    sb.append(SCENE_BREAK_MARK)
+                    sb.setSpan(
+                        AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+                        start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
                 } else {
                     val start = sb.length
                     appendStyled(sb, block.text, config)

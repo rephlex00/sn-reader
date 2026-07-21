@@ -618,7 +618,7 @@ class SpannedChapterBuilderTest {
     }
 
     @Test
-    fun `a scene break renders as blank space with no visible glyphs`() {
+    fun `a scene break renders as a centered mark on its own line`() {
         val ct = builder.build(
             listOf(
                 Block.Paragraph(StyledText("Before.")),
@@ -627,14 +627,21 @@ class SpannedChapterBuilderTest {
             ),
             config,
         )
-        // No asterisks survive in the text...
-        assertThat(ct.text.toString()).doesNotContain("*")
-        // ...and no AlignmentSpan was applied for the scene break.
-        val aligns = ct.text.getSpans(0, ct.text.length, AlignmentSpan::class.java)
-        assertThat(aligns).isEmpty()
-        // The two real paragraphs are still both present and separated by blank space.
-        assertThat(ct.text.toString()).contains("Before.")
-        assertThat(ct.text.toString()).contains("After.")
+        assertThat(ct.text.toString()).isEqualTo("Before.\n\n* * *\n\nAfter.")
+
+        val markStart = ct.text.toString().indexOf("* * *")
+        val aligns = ct.text.getSpans(markStart, markStart + 5, AlignmentSpan::class.java)
+        assertThat(aligns).hasLength(1)
+        assertThat(aligns.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    @Test
+    fun `every separator style normalises to the same mark`() {
+        // The publisher's own glyphs are discarded: a row of forty hyphens must not become a rule.
+        for (source in listOf("***", "* * *", "---", "· · ·", "~~~", "-".repeat(40))) {
+            val ct = builder.build(listOf(para("One."), para(source), para("Two.")), config)
+            assertThat(ct.text.toString()).isEqualTo("One.\n\n* * *\n\nTwo.")
+        }
     }
 
     @Test
