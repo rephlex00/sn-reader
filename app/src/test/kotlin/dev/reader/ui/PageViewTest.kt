@@ -310,4 +310,128 @@ class PageViewTest {
             res.displayMetrics.density = original
         }
     }
+
+    // --- Landscape spreads -------------------------------------------------------------------
+
+    private val spreadMargin = 20
+    private val spreadGap = 40
+    private val spreadWidth = 400
+
+    /**
+     * A view showing two columns of the same layout: the left page is the first two lines, the right
+     * page the next two. Mirrors what ReaderActivity does — one chapter Layout, two consecutive
+     * pages out of it, side by side.
+     */
+    private fun spreadPageView(secondPage: Boolean = true): Triple<PageView, StaticLayout, List<Page>> {
+        val view = PageView(context)
+        val text = (1..80).joinToString(" ") { "word$it" }
+        val columnWidth = (spreadWidth - spreadMargin * 2 - spreadGap) / 2
+        val layout = StaticLayout.Builder
+            .obtain(text, 0, text.length, TextPaint().apply { textSize = 12f }, columnWidth)
+            .build()
+        check(layout.lineCount >= 4) { "need at least four lines to make two pages" }
+        val left = Page(
+            index = 0, startLine = 0, endLine = 1,
+            startOffset = 0, endOffset = layout.getLineEnd(1), topPx = layout.getLineTop(0),
+        )
+        val right = Page(
+            index = 1, startLine = 2, endLine = 3,
+            startOffset = layout.getLineStart(2), endOffset = layout.getLineEnd(3),
+            topPx = layout.getLineTop(2),
+        )
+        view.show(layout, left, spreadMargin, secondPage = if (secondPage) right else null, columnGapPx = spreadGap)
+        view.measure(
+            MeasureSpec.makeMeasureSpec(spreadWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(600, MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        return Triple(view, layout, listOf(left, right))
+    }
+
+    @Test
+    fun `two columns share the content width with the gutter taken out of the middle`() {
+        val (view, _, _) = spreadPageView()
+        assertThat(view.columnWidth()).isEqualTo((spreadWidth - spreadMargin * 2 - spreadGap) / 2)
+        // Both columns and the gutter fit between the margins — the invariant that keeps the right
+        // column's text from running off the edge of the panel.
+        assertThat(view.columnWidth() * 2 + spreadGap).isAtMost(spreadWidth - spreadMargin * 2)
+    }
+
+    @Test
+    fun `one column keeps the full content width`() {
+        val (view, _, _) = spreadPageView(secondPage = false)
+        assertThat(view.columnWidth()).isEqualTo(spreadWidth - spreadMargin * 2)
+    }
+
+    @Test
+    fun `a touch resolves to the column it landed in, not always the left one`() {
+        // The defect this guards: with one shared origin, a pen anywhere on the right column
+        // resolves against the LEFT page and highlights text the reader never touched.
+        val (view, _, pages) = spreadPageView()
+        val y = spreadMargin + 5f
+
+        val leftOffset = view.offsetAt(spreadMargin + 5f, y)
+        assertThat(leftOffset).isIn(pages[0].startOffset..pages[0].endOffset)
+
+        val rightColumnX = spreadMargin + view.columnWidth() + spreadGap + 5f
+        val rightOffset = view.offsetAt(rightColumnX, y)
+        assertThat(rightOffset).isIn(pages[1].startOffset..pages[1].endOffset)
+        assertThat(rightOffset).isGreaterThan(leftOffset)
+    }
+
+    @Test
+    fun `the gutter splits down the middle so a touch in it picks the nearer column`() {
+        val (view, _, _) = spreadPageView()
+        val gutterLeft = spreadMargin + view.columnWidth()
+        assertThat(view.columnIndexAt(gutterLeft + 1f)).isEqualTo(0)
+        assertThat(view.columnIndexAt(gutterLeft + spreadGap - 1f)).isEqualTo(1)
+    }
+
+    @Test
+    fun `with no second page every touch resolves to the only column`() {
+        val (view, _, _) = spreadPageView(secondPage = false)
+        assertThat(view.columnIndexAt(spreadWidth - 1f)).isEqualTo(0)
+    }
+
+    @Test
+    fun `the delete chip follows a highlight into the right column`() {
+        // caretPointFor has to resolve against whichever column holds the offset; anchoring by the
+        // left column's origin would park the chip under the wrong text.
+        val (view, _, pages) = spreadPageView()
+        val leftPoint = view.caretPointFor(pages[0].startOffset)
+        val rightPoint = view.caretPointFor(pages[1].startOffset + 1)
+        assertThat(leftPoint).isNotNull()
+        assertThat(rightPoint).isNotNull()
+        assertThat(rightPoint!!.x).isAtLeast(spreadMargin + view.columnWidth() + spreadGap.toFloat())
+    }
+
+    @Test
+    fun `an offset on the seam between the two columns anchors in the RIGHT column`() {
+        // Page.endOffset is exclusive, so the left page's endOffset IS the right page's
+        // startOffset. Resolving that shared offset left-first anchors a highlight starting on the
+        // right column's first character under the foot of the LEFT column.
+        val (view, _, pages) = spreadPageView()
+        val seam = pages[1].startOffset
+        check(seam == pages[0].endOffset) { "test needs the pages to actually share a boundary" }
+        val point = view.caretPointFor(seam)
+        assertThat(point).isNotNull()
+        assertThat(point!!.x).isAtLeast(spreadMargin + view.columnWidth() + spreadGap.toFloat())
+    }
+
+    @Test
+    fun `it draws a two-column spread without error`() {
+        // Screencap reads black on e-ink, so a Canvas regression in the second column can only
+        // surface here.
+        val (view, _, _) = spreadPageView()
+        view.setRunningFoot("Chapter One", pageInChapter = 3, pageCount = 12, lastPageInSpread = 4)
+        view.draw(Canvas(Bitmap.createBitmap(spreadWidth, 600, Bitmap.Config.ARGB_8888)))
+    }
+
+    @Test
+    fun `the running foot names both pages of a spread, and one when the right column is blank`() {
+        assertThat(runningFootLabel(3, 12, lastPageInSpread = 4)).isEqualTo("pages 3–4 of 12")
+        // The last page of an odd-length chapter: the right column is blank, so the foot must not
+        // claim a page 13 that is not on screen.
+        assertThat(runningFootLabel(12, 12, lastPageInSpread = 12)).isEqualTo("page 12 of 12")
+    }
 }

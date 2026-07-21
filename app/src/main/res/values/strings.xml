@@ -87,6 +87,7 @@
     <string name="setting_publisher_styling">Publisher styling</string>
     <string name="setting_heading_detection">Heading detection</string>
     <string name="setting_progress_bar">Progress bar</string>
+    <string name="setting_rotation_lock">Lock rotation</string>
     <string name="setting_faster_page_turns">Faster page turns</string>
     <string name="setting_full_refresh_every">Full refresh every</string>
     <string name="refresh_every_3">3</string>

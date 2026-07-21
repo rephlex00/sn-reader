@@ -2,6 +2,7 @@ package dev.reader.ui
 
 import android.content.Context
 import com.google.common.truth.Truth.assertThat
+import dev.reader.engine.COLUMN_GAP_PX
 import dev.reader.engine.RenderConfig
 import org.junit.Before
 import org.junit.Test
@@ -205,5 +206,59 @@ class ReaderPrefsTest {
     @Test
     fun `the default margin is the medium preset`() {
         assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).marginPx).isEqualTo(72)
+    }
+
+    @Test
+    fun `a portrait viewport renders in one full-width column`() {
+        val c = ReaderPrefs(context).renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
+        assertThat(c.columnCount).isEqualTo(1)
+        assertThat(c.contentWidthPx).isEqualTo(1404 - 72 * 2)
+    }
+
+    @Test
+    fun `a landscape viewport renders in two columns with a gutter between them`() {
+        val c = ReaderPrefs(context).renderConfig(viewportWidthPx = 1872, viewportHeightPx = 1404)
+        assertThat(c.columnCount).isEqualTo(2)
+        assertThat(c.contentWidthPx).isEqualTo((1872 - 72 * 2 - COLUMN_GAP_PX) / 2)
+        // A column narrower than the portrait full width is the whole point — the wide single column
+        // this replaces ran to roughly a hundred characters a line.
+        assertThat(c.contentWidthPx).isLessThan(1404 - 72 * 2)
+    }
+
+    @Test
+    fun `rotating produces a different config so the pagination cache cannot be reused`() {
+        val prefs = ReaderPrefs(context)
+        val portrait = prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
+        val landscape = prefs.renderConfig(viewportWidthPx = 1872, viewportHeightPx = 1404)
+        assertThat(landscape).isNotEqualTo(portrait)
+    }
+
+    @Test
+    fun `a viewport too narrow for the gutter still yields a usable config`() {
+        // Nothing on a real device gets near this; the point is that a degenerate landscape viewport
+        // shrinks the gutter (and the margin) rather than driving the column width to zero, which is
+        // what RenderConfig's init throws on. A crash on open is never the right failure.
+        val c = ReaderPrefs(context).renderConfig(viewportWidthPx = 100, viewportHeightPx = 80)
+        assertThat(c.columnCount).isEqualTo(2)
+        assertThat(c.contentWidthPx).isGreaterThan(0)
+        assertThat(c.contentHeightPx).isGreaterThan(0)
+    }
+
+    @Test
+    fun `rotation lock defaults off and round-trips`() {
+        val prefs = ReaderPrefs(context)
+        assertThat(prefs.rotationLocked).isFalse()
+        prefs.rotationLocked = true
+        assertThat(ReaderPrefs(context).rotationLocked).isTrue()
+    }
+
+    @Test
+    fun `rotation lock is not part of the render config`() {
+        // Like showProgressBar: it decides which viewport the reader is handed, never how one is
+        // laid out. Wiring it into RenderConfig would make toggling it re-paginate for nothing.
+        val prefs = ReaderPrefs(context)
+        val before = prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)
+        prefs.rotationLocked = true
+        assertThat(prefs.renderConfig(viewportWidthPx = 1404, viewportHeightPx = 1872)).isEqualTo(before)
     }
 }

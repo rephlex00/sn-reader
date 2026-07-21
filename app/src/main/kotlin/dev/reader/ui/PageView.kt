@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import dev.reader.R
 import dev.reader.engine.Page
+import dev.reader.engine.columnWidthPx
 import kotlin.math.abs
 import kotlin.math.ceil
 
@@ -32,18 +33,48 @@ fun tapZoneFor(x: Float, width: Int): TapZone {
     }
 }
 
-/** The right-hand half of the running foot: 1-based page-in-chapter of the chapter's page count. */
-fun runningFootLabel(pageInChapter: Int, pageCount: Int): String = "page $pageInChapter of $pageCount"
+/**
+ * The right-hand half of the running foot: the 1-based page(s) on screen, of the chapter's page
+ * count. A landscape spread shows two pages at once and says so ("pages 3–4 of 12"); when the
+ * spread's right column is blank — the last page of an odd-length chapter — [lastPageInSpread]
+ * equals [pageInChapter] and the singular form is used, so the foot never claims a page that is
+ * not on screen.
+ */
+fun runningFootLabel(
+    pageInChapter: Int,
+    pageCount: Int,
+    lastPageInSpread: Int = pageInChapter,
+): String = if (lastPageInSpread > pageInChapter) {
+    "pages $pageInChapter–$lastPageInSpread of $pageCount"
+} else {
+    "page $pageInChapter of $pageCount"
+}
 
 /**
- * Draws one page by translating a pre-laid-out chapter and clipping to the content box.
- * The Layout is never rebuilt here: a page turn is a translate, a clip and one draw.
+ * Draws one page — or, in landscape, a spread of two — by translating a pre-laid-out chapter and
+ * clipping to each column. The Layout is never rebuilt here: a page turn is a translate, a clip and
+ * one draw per column.
+ *
+ * The second column is not a second kind of thing. The chapter's Layout is already laid out at
+ * COLUMN width (see [dev.reader.engine.RenderConfig.contentWidthPx]), so every page it paginates
+ * into is column-sized; a spread just shows two consecutive ones, side by side, from that same
+ * Layout. Everything below that takes a [Page] therefore works per column with no changes.
  */
 class PageView(context: Context) : View(context) {
 
     private var layout: Layout? = null
     private var page: Page? = null
+
+    /**
+     * The page drawn in the right column, or null in portrait and on a spread whose right column is
+     * blank (the last page of an odd-length chapter — a spread never crosses a chapter boundary, so
+     * there is nothing to put there, exactly as in a printed book).
+     */
+    private var secondPage: Page? = null
     private var marginPx = 0
+
+    /** Whitespace between the columns; unused when [secondPage] is null. Set by [show]. */
+    private var columnGapPx = 0
 
     /** Whole-book progress in `[0,1]`, or null to draw no bar. Set via [setProgress]. */
     internal var progress: Float? = null
@@ -63,6 +94,13 @@ class PageView(context: Context) : View(context) {
 
     /** The chapter's page count shown by the running foot's right-hand label. Set via [setRunningFoot]. */
     private var runningFootPageCount: Int = 0
+
+    /** 1-based last page of the spread on screen; equal to [runningFootPageInChapter] when one page
+     *  is showing. See [runningFootLabel]. */
+    private var runningFootLastPageInSpread: Int = 0
+
+    /** Test-visible readout of the page in the right column — null when one column is showing. */
+    internal val secondPageForTest: Page? get() = secondPage
 
     /** Test-visible readout of what [setRunningFoot] last stored. */
     internal val chapterTitleForTest: String? get() = runningFootChapterTitle
@@ -169,12 +207,32 @@ class PageView(context: Context) : View(context) {
         // never posted at all, so there is no pressed state to leak (see onTouchEvent).
     }
 
-    fun show(layout: Layout, page: Page, marginPx: Int) {
+    /**
+     * Shows [page], and [secondPage] beside it when the reader is in a two-column landscape spread.
+     * [columnGapPx] must be the gap the [dev.reader.engine.RenderConfig] was built with — the column
+     * width is derived from it, so a disagreement would clip glyphs at a column edge.
+     */
+    fun show(layout: Layout, page: Page, marginPx: Int, secondPage: Page? = null, columnGapPx: Int = 0) {
         this.layout = layout
         this.page = page
+        this.secondPage = secondPage
         this.marginPx = marginPx
+        this.columnGapPx = columnGapPx
         invalidate()
     }
+
+    /** Columns currently on screen: 2 for a spread, 1 otherwise. */
+    private fun columnCount(): Int = if (secondPage != null) 2 else 1
+
+    /**
+     * The width of one column, from the SAME pure function [dev.reader.engine.RenderConfig] measures
+     * the text with. Deriving it independently here — say, halving the content box — would be one
+     * rounding decision away from a column of text laid out wider than the column it is drawn into.
+     */
+    internal fun columnWidth(): Int = columnWidthPx(width, marginPx, columnCount(), columnGapPx)
+
+    /** The view-space x of column [index]'s left edge. */
+    private fun columnLeft(index: Int): Int = marginPx + index * (columnWidth() + columnGapPx)
 
     /**
      * Sets the whole-book progress fraction the bottom bar shows (null hides it) and invalidates.
@@ -191,10 +249,16 @@ class PageView(context: Context) : View(context) {
      * Display-only, computed once per page turn from [ReaderActivity.showPage] — never steady-state
      * work. A null or blank [chapterTitle] draws the page label alone (see [drawRunningFoot]).
      */
-    fun setRunningFoot(chapterTitle: String?, pageInChapter: Int, pageCount: Int) {
+    fun setRunningFoot(
+        chapterTitle: String?,
+        pageInChapter: Int,
+        pageCount: Int,
+        lastPageInSpread: Int = pageInChapter,
+    ) {
         this.runningFootChapterTitle = chapterTitle
         this.runningFootPageInChapter = pageInChapter
         this.runningFootPageCount = pageCount
+        this.runningFootLastPageInSpread = lastPageInSpread
         invalidate()
     }
 
@@ -215,16 +279,31 @@ class PageView(context: Context) : View(context) {
         get() = pendingSelection
 
     /**
-     * The character offset under a screen point. Inverts [onDraw]'s translate (text drawn at
-     * `marginPx, marginPx - page.topPx`) and clamps the line into the visible page's own line range, so
-     * a touch in the bottom margin cannot land on a hidden next-page line.
+     * Which column a screen x falls in: 0 unless there is a second column and the point is past the
+     * MIDDLE of the gutter. Splitting at the gutter's midpoint rather than at the right column's
+     * left edge means a pen landing in the blank gutter selects in the column it is nearer to,
+     * instead of always snapping left.
+     */
+    internal fun columnIndexAt(x: Float): Int {
+        if (secondPage == null) return 0
+        val gutterMiddle = columnLeft(0) + columnWidth() + columnGapPx / 2f
+        return if (x >= gutterMiddle) 1 else 0
+    }
+
+    /**
+     * The character offset under a screen point. Resolves which column was touched, then inverts
+     * [drawColumn]'s translate for THAT column (text drawn at `columnLeft(i), marginPx - page.topPx`)
+     * and clamps the line into that column's own page line range, so a touch in the bottom margin
+     * cannot land on a hidden next-page line — nor, in a spread, can a touch in the right column
+     * resolve against the left column's page and highlight text the reader never touched.
      */
     internal fun offsetAt(x: Float, y: Float): Int {
         val layout = layout ?: return 0
-        val page = page ?: return 0
+        val columnIndex = columnIndexAt(x)
+        val page = (if (columnIndex == 1) secondPage else page) ?: return 0
         val layoutY = (y - marginPx + page.topPx).toInt()
         val line = layout.getLineForVertical(layoutY).coerceIn(page.startLine, page.endLine)
-        val layoutX = (x - marginPx).coerceAtLeast(0f)
+        val layoutX = (x - columnLeft(columnIndex)).coerceAtLeast(0f)
         return layout.getOffsetForHorizontal(line, layoutX)
     }
 
@@ -251,19 +330,10 @@ class PageView(context: Context) : View(context) {
         val layout = layout ?: return
         val page = page ?: return
 
-        canvas.save()
-        // Clip first: without it, the lines belonging to the next page would spill below. The
-        // bottom edge is THIS page's own content bottom, not the fixed content box (height -
-        // marginPx): onDraw draws the whole chapter's Layout and shows only a page-sized window of
-        // it, but a page breaks at a line boundary and rarely fills the box to the pixel, so a
-        // fixed height-marginPx clip leaves a gap into which the NEXT page's first line bleeds — a
-        // sliver of text clipped mid-glyph under the bottom margin. See [pageClipBottom].
-        canvas.clipRect(marginPx, marginPx, width - marginPx, pageClipBottom(layout, page))
-        canvas.translate(marginPx.toFloat(), (marginPx - page.topPx).toFloat())
-        drawHighlights(canvas, layout, page)
-        layout.draw(canvas)
-        drawBracketAnchor(canvas, layout, page)
-        canvas.restore()
+        // One column, or two. The second is the same code against the next page, offset by a column
+        // and a gap — the gap itself is left blank, which is the whole of the "gutter".
+        drawColumn(canvas, layout, page, columnLeft(0))
+        secondPage?.let { drawColumn(canvas, layout, it, columnLeft(1)) }
 
         // The progress bar lives OUTSIDE the text clip, pinned to the bottom edge of the view (not
         // the content box), so it sits at the very bottom. This draw code does NOT itself enforce
@@ -277,6 +347,27 @@ class PageView(context: Context) : View(context) {
         // per turn from values ReaderActivity.showPage already computed, above the progress bar
         // (see runningFootBottomInsetPx) so the two never overlap.
         drawRunningFoot(canvas)
+    }
+
+    /**
+     * Draws one page into the column whose left edge is [leftPx].
+     *
+     * Clip first: without it, the lines belonging to the next page would spill below. The bottom
+     * edge is THIS page's own content bottom, not the fixed content box (height - marginPx): the
+     * whole chapter's Layout is drawn and only a page-sized window of it shown, but a page breaks at
+     * a line boundary and rarely fills the box to the pixel, so a fixed height-marginPx clip leaves
+     * a gap into which the NEXT page's first line bleeds — a sliver of text clipped mid-glyph under
+     * the bottom margin. See [pageClipBottom]. The horizontal clip matters for the same reason in
+     * the other axis: it keeps each column's text out of the gutter and out of its neighbour.
+     */
+    private fun drawColumn(canvas: Canvas, layout: Layout, page: Page, leftPx: Int) {
+        canvas.save()
+        canvas.clipRect(leftPx, marginPx, leftPx + columnWidth(), pageClipBottom(layout, page))
+        canvas.translate(leftPx.toFloat(), (marginPx - page.topPx).toFloat())
+        drawHighlights(canvas, layout, page)
+        layout.draw(canvas)
+        drawBracketAnchor(canvas, layout, page)
+        canvas.restore()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -392,12 +483,25 @@ class PageView(context: Context) : View(context) {
      */
     internal fun caretPointFor(offset: Int): PointF? {
         val layout = layout ?: return null
-        val page = page ?: return null
-        if (offset < page.startOffset || offset > page.endOffset) return null
+        // Whichever visible column holds the offset — in a spread the anchored chip must follow the
+        // text into the right column, not sit under the left one at the matching height.
+        //
+        // The RIGHT column is tested first, and that order is load-bearing: Page.endOffset is
+        // exclusive, so the left page's endOffset IS the right page's startOffset. Testing the left
+        // page first (its range check has to stay inclusive, so a caret at the very last offset of
+        // the last page still resolves) would claim that shared offset for the left column — and a
+        // highlight starting on the right column's first character would anchor its delete chip at
+        // the foot of the left column instead of under the word the pen touched.
+        val columnIndex = when {
+            secondPage?.let { offset >= it.startOffset && offset <= it.endOffset } == true -> 1
+            page?.let { offset >= it.startOffset && offset <= it.endOffset } == true -> 0
+            else -> return null
+        }
+        val page = (if (columnIndex == 1) secondPage else page) ?: return null
         // Clamp into the visible page's own lines, matching [offsetAt], so an offset at the exclusive
         // page end can't resolve to a next-page line and drop the chip below the visible content.
         val line = layout.getLineForOffset(offset).coerceIn(page.startLine, page.endLine)
-        val x = layout.getPrimaryHorizontal(offset) + marginPx
+        val x = layout.getPrimaryHorizontal(offset) + columnLeft(columnIndex)
         val y = layout.getLineBottom(line).toFloat() + (marginPx - page.topPx)
         return PointF(x, y)
     }
@@ -433,7 +537,11 @@ class PageView(context: Context) : View(context) {
         if (right <= left) return
 
         val baseline = height - runningFootBottomInsetPx - runningFootPaint.descent()
-        val label = runningFootLabel(runningFootPageInChapter, runningFootPageCount)
+        val label = runningFootLabel(
+            runningFootPageInChapter,
+            runningFootPageCount,
+            runningFootLastPageInSpread,
+        )
         val labelWidth = runningFootPaint.measureText(label)
         canvas.drawText(label, right - labelWidth, baseline, runningFootPaint)
 

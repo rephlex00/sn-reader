@@ -1,6 +1,7 @@
 package dev.reader.ui
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
@@ -47,6 +48,23 @@ class ReaderActivityTest {
 
     @get:Rule
     val tempFolder = TemporaryFolder()
+
+    private companion object {
+        /**
+         * The default test viewport, PORTRAIT — taller than it is wide, like the panel this reader
+         * runs on. The shape is load-bearing, not decoration: `renderConfig` reads two columns out
+         * of any viewport wider than it is tall (see `columnCountFor`), and in two columns a page
+         * turn moves TWO pages. This harness laid out at 800x600 until landscape support landed, so
+         * every test in this class was silently asserting single-page turns against a viewport that
+         * now asks for spreads. Tests that want a spread say so explicitly — see the landscape
+         * section — and pass [LANDSCAPE_W] / [LANDSCAPE_H] to `launchAndLayOut`.
+         */
+        const val VIEWPORT_W = 600
+        const val VIEWPORT_H = 800
+
+        const val LANDSCAPE_W = 800
+        const val LANDSCAPE_H = 600
+    }
 
     // -- I2: a stale EXTRA_BOOK_PATH must not silently open a different book ------------------
 
@@ -1147,6 +1165,104 @@ class ReaderActivityTest {
      * A reader opened on a real multi-page book and driven until its first page is shown (the
      * scrubber readout populated), so overlay tests can drive taps against a live document.
      */
+    // -- Landscape: two columns per screen ------------------------------------------------------
+
+    @Test
+    fun `a landscape viewport shows two pages side by side`() {
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller, LANDSCAPE_W, LANDSCAPE_H)
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+
+        val pageView = pageViewOf(controller.get())
+        assertThat(pageView.secondPageForTest).isNotNull()
+        // The right column holds the page immediately after the left one — a spread is two
+        // CONSECUTIVE pages, not two arbitrary ones.
+        assertThat(pageView.secondPageForTest!!.index).isEqualTo(1)
+    }
+
+    @Test
+    fun `a landscape page turn moves a whole spread, and back again returns to it`() {
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller, LANDSCAPE_W, LANDSCAPE_H)
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+        val pageView = pageViewOf(controller.get())
+
+        pageView.onTap!!.invoke(TapZone.NEXT)
+        // Pages 0-1 were showing; the next spread is 2-3, NOT 1-2 (which would re-show page 1).
+        assertThat(pageView.secondPageForTest!!.index).isEqualTo(3)
+
+        pageView.onTap!!.invoke(TapZone.PREVIOUS)
+        assertThat(pageView.secondPageForTest!!.index).isEqualTo(1)
+    }
+
+    @Test
+    fun `rotating re-paginates into columns and keeps the reader on the same text`() {
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller) // portrait
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+        val pageView = pageViewOf(controller.get())
+        assertThat(pageView.secondPageForTest).isNull()
+
+        // Read a few pages in, so the restored position is a real offset rather than 0 — landing on
+        // the same TEXT (not the same page number) is the property that matters.
+        pageView.onTap!!.invoke(TapZone.NEXT)
+        pageView.onTap!!.invoke(TapZone.NEXT)
+        val anchor = controller.get().currentTopOffsetForTest()!!
+
+        // Rotate: the configuration change arrives first, the re-measure follows on the next layout
+        // pass — exactly the order the real system delivers them in.
+        controller.get().onConfigurationChanged(landscapeConfiguration(controller))
+        layOutAt(controller, LANDSCAPE_W, LANDSCAPE_H)
+
+        assertThat(pageViewOf(controller.get()).secondPageForTest).isNotNull()
+        // The reader is on the page whose range contains the offset it was reading, not on page 2.
+        val after = controller.get().currentTopOffsetForTest()!!
+        assertThat(after.spineIndex).isEqualTo(anchor.spineIndex)
+        // The spread STARTS at or before the text that was on screen, and the text is still within
+        // it — which is what "the same words, not the same page number" means once a spread shows
+        // two pages' worth at once.
+        assertThat(after.charOffset).isAtMost(anchor.charOffset)
+    }
+
+    @Test
+    fun `a book opened while the device is already sideways still paginates into columns`() {
+        // The activity is created portrait (the library is pinned portrait), measures a portrait
+        // viewport, and installs a portrait config SYNCHRONOUSLY — then the system rotates the
+        // window while the archive is still opening on IO. onConfigurationChanged sees a null
+        // document and can do nothing; reconcileViewport is what catches it after the open. Without
+        // that, the book renders as one narrow portrait column stranded on a landscape screen.
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        controller.setup()
+        // Portrait layout arms the open, but do NOT idle: the open coroutine stays suspended on IO
+        // with a portrait config already installed.
+        val decor = controller.get().window.decorView
+        decor.measure(
+            View.MeasureSpec.makeMeasureSpec(VIEWPORT_W, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(VIEWPORT_H, View.MeasureSpec.EXACTLY),
+        )
+        decor.layout(0, 0, VIEWPORT_W, VIEWPORT_H)
+
+        // The system rotates the window under the in-flight open.
+        controller.get().onConfigurationChanged(landscapeConfiguration(controller))
+        layOutAt(controller, LANDSCAPE_W, LANDSCAPE_H)
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertThat(pageViewOf(controller.get()).secondPageForTest).isNotNull()
+    }
+
+    /** The activity's configuration with orientation flipped to landscape, as the system delivers
+     *  it to [ReaderActivity.onConfigurationChanged] on a rotation. */
+    private fun landscapeConfiguration(
+        controller: ActivityController<TestableReaderActivity>,
+    ): Configuration = Configuration(controller.get().resources.configuration).apply {
+        orientation = Configuration.ORIENTATION_LANDSCAPE
+    }
+
     private fun openedMultiPage(): ActivityController<TestableReaderActivity> {
         val book = multiPageEpub(tempFolder.newFile("book.epub"))
         val controller = readerFor(intentWithExtra(book.path))
@@ -1237,18 +1353,32 @@ class ReaderActivityTest {
      * arms actually fire — Robolectric does not lay out a window on its own, and openFirstBook
      * deliberately waits for a pass with real bounds.
      */
-    private fun launchAndLayOut(controller: ActivityController<TestableReaderActivity>) {
+    private fun launchAndLayOut(
+        controller: ActivityController<TestableReaderActivity>,
+        widthPx: Int = VIEWPORT_W,
+        heightPx: Int = VIEWPORT_H,
+    ) {
         controller.setup()
+        layOutAt(controller, widthPx, heightPx)
+    }
+
+    /** Forces a layout pass at the given size — a second call with a different shape is how a test
+     *  rotates the device (paired with [ReaderActivity.onConfigurationChanged]). */
+    private fun layOutAt(
+        controller: ActivityController<TestableReaderActivity>,
+        widthPx: Int,
+        heightPx: Int,
+    ) {
         val decor = controller.get().window.decorView
         decor.measure(
-            View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY),
         )
-        decor.layout(0, 0, 800, 600)
+        decor.layout(0, 0, widthPx, heightPx)
         shadowOf(Looper.getMainLooper()).idle()
     }
 
-    /** Same shape as ReaderActivity's production RenderConfig, at the test's fixed 800x600. */
+    /** Same shape as ReaderActivity's production RenderConfig, at the test's default viewport. */
     private fun testRenderConfig() = RenderConfig(
         fontFamily = "serif",
         textSizePx = 34f,
@@ -1256,8 +1386,8 @@ class ReaderActivityTest {
         marginPx = 72,
         justified = true,
         hyphenated = true,
-        viewportWidthPx = 800,
-        viewportHeightPx = 600,
+        viewportWidthPx = VIEWPORT_W,
+        viewportHeightPx = VIEWPORT_H,
     )
 
     /**

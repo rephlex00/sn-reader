@@ -1,5 +1,7 @@
 package dev.reader.ui
 
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.util.Log
 import android.os.Bundle
@@ -28,6 +30,7 @@ import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.TocEntry
 import dev.reader.engine.advance
+import dev.reader.engine.advanceSpread
 import dev.reader.engine.bookProgress
 import dev.reader.engine.chapterTitleFor
 import dev.reader.engine.highlightContaining
@@ -35,7 +38,9 @@ import dev.reader.engine.mergeHighlights
 import dev.reader.engine.pageIndexFor
 import dev.reader.engine.reflowedPageIndex
 import dev.reader.engine.retreat
+import dev.reader.engine.retreatSpread
 import dev.reader.engine.snapToWords
+import dev.reader.engine.spreadStart
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
 import dev.reader.formats.epub.PaginatedChapter
@@ -278,6 +283,7 @@ open class ReaderActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyRotationLock(ReaderPrefs(this).rotationLocked)
         pageView = PageView(this)
         pageView.epd = EinkController.forContext(this)
 
@@ -892,6 +898,14 @@ open class ReaderActivity : AppCompatActivity() {
     /** The current chapter's source text — a test computes the expected word-snap against it. */
     internal fun currentChapterTextForTest(): String? = currentChapterText()
 
+    /** The char offset at the top of the page on screen — the anchor a re-pagination preserves. */
+    internal fun currentTopOffsetForTest(): Locator? {
+        val doc = document ?: return null
+        val cfg = config ?: return null
+        val page = doc.chapter(state.spineIndex, cfg).pages.getOrNull(state.pageIndex) ?: return null
+        return Locator(state.spineIndex, page.startOffset)
+    }
+
     /** The on-page delete chip — a test asserts a highlight-tap reveals it and its tap deletes. */
     internal val deleteChipForTest: TextView get() = deleteChip
 
@@ -921,6 +935,7 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.toggle_publisher).setOnClickListener { applySettingsChange { p -> p.publisherStyling = !p.publisherStyling } }
         overlay.findViewById<View>(R.id.toggle_headings).setOnClickListener { applySettingsChange { p -> p.inferHeadings = !p.inferHeadings } }
         overlay.findViewById<View>(R.id.toggle_progress).setOnClickListener { toggleProgressBar() }
+        overlay.findViewById<View>(R.id.toggle_rotation_lock).setOnClickListener { toggleRotationLock() }
         overlay.findViewById<View>(R.id.toggle_faster_turns).setOnClickListener { toggleFasterTurns() }
         overlay.findViewById<View>(R.id.refresh_freq_3).setOnClickListener { applyRefreshFrequency(3) }
         overlay.findViewById<View>(R.id.refresh_freq_6).setOnClickListener { applyRefreshFrequency(6) }
@@ -989,6 +1004,95 @@ open class ReaderActivity : AppCompatActivity() {
         } catch (e: Exception) {
             showError(R.string.error_apply_setting, e)
         }
+    }
+
+    /**
+     * The device was rotated (or the window otherwise resized). The manifest declares
+     * `configChanges="orientation|screenSize"`, so this arrives INSTEAD of the activity being
+     * destroyed and recreated — which would reopen the ZIP, re-parse and re-measure the chapter from
+     * scratch, and flash the panel through a teardown. On e-ink that is a multi-second ugly
+     * transition for something the reader already knows how to do in one redraw.
+     *
+     * The work is exactly a settings change with no setting changed: [applySettingsChange] rebuilds
+     * the config from the newly measured viewport (which is what picks up the new column count — see
+     * [ReaderPrefs.renderConfig]), re-paginates, and resolves the char offset at the top of the
+     * current page onto the new pagination. The reader lands on the same words, not the same page
+     * number.
+     *
+     * Deferred to the next layout pass: when this callback runs, the view has been told the
+     * configuration changed but has NOT been re-measured, so `pageView.width/height` are still the
+     * old orientation's. Building a config from them would paginate portrait pages and then draw
+     * them into landscape columns.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Nothing is open yet. The open path measures the viewport for itself — and when it is
+        // already in flight when this arrives, it has ALREADY measured, so it finishes against a
+        // viewport that no longer exists. That case is caught after the open instead, by
+        // [reconcileViewport]; there is nothing useful to do from here.
+        if (document == null) return
+        // An anchored chip and a half-drawn overlay both point at coordinates that are about to stop
+        // existing. The overlay's own layout follows the new viewport; the chip is positioned per-tap
+        // and has no way to re-resolve itself, so it goes.
+        hideDeleteChip()
+        pageView.doOnNextLayout { applySettingsChange { /* re-measure only; no pref changes */ } }
+    }
+
+    /**
+     * Re-paginates if the config the book was opened against no longer matches the viewport on
+     * screen, and does nothing (the overwhelmingly common case) if it does.
+     *
+     * This closes the window that [onConfigurationChanged] structurally cannot: [openFirstBook]
+     * measures the viewport and installs the config SYNCHRONOUSLY, but `document` is only assigned
+     * after a multi-second archive open on [Dispatchers.IO]. A configuration change arriving in
+     * between finds `document == null` and has nothing to act on, and nothing re-arms it afterwards.
+     *
+     * That window is not exotic — it is the ordinary path for someone who reads in landscape. The
+     * library is pinned portrait, so a book tapped while the device is held sideways opens into a
+     * portrait window, measures a portrait viewport, and only then is rotated by the system. Without
+     * this, the book would paginate as one narrow portrait column stranded on a landscape screen,
+     * turning one page at a time, until the reader rotated twice or touched an Aa control.
+     *
+     * Comparing the whole [RenderConfig] rather than just the orientation makes it total: any drift
+     * between the config in force and the one this viewport would produce is reconciled, whatever
+     * caused it. Rebuilding through the same [ReaderPrefs.renderConfig] the open path used means an
+     * unchanged viewport compares equal and this costs one allocation and no pagination.
+     */
+    private fun reconcileViewport() {
+        val cfg = config ?: return
+        val width = pageView.width
+        val height = pageView.height
+        if (width <= 0 || height <= 0) return
+        val current = ReaderPrefs(this).renderConfig(width, height, pageView.bottomChromeHeightPx)
+        if (current != cfg) applySettingsChange { /* re-measure only; no pref changes */ }
+    }
+
+    /**
+     * Pins the reader to its current orientation, or releases it back to the sensor.
+     *
+     * Locking uses the CURRENT orientation rather than a stored one, so the lock means "keep it like
+     * this" — which is what a reader settling down on their side actually wants. Unlocking returns
+     * to `UNSPECIFIED`, which defers to the system auto-rotate setting rather than forcing rotation
+     * on: if the reader has auto-rotate off system-wide, this app does not override that.
+     */
+    private fun applyRotationLock(locked: Boolean) {
+        requestedOrientation = if (!locked) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    /** Flips [ReaderPrefs.rotationLocked] and applies it immediately. A pure display-side change:
+     *  it never re-paginates — if it changes anything about the viewport, that arrives as a
+     *  configuration change and [onConfigurationChanged] handles it. */
+    private fun toggleRotationLock() {
+        val prefs = ReaderPrefs(this)
+        prefs.rotationLocked = !prefs.rotationLocked
+        applyRotationLock(prefs.rotationLocked)
+        refreshSheet()
     }
 
     /**
@@ -1078,6 +1182,7 @@ open class ReaderActivity : AppCompatActivity() {
         setToggle(R.id.toggle_publisher_switch, prefs.publisherStyling)
         setToggle(R.id.toggle_headings_switch, prefs.inferHeadings)
         setToggle(R.id.toggle_progress_switch, prefs.showProgressBar)
+        setToggle(R.id.toggle_rotation_lock_switch, prefs.rotationLocked)
 
         setToggle(R.id.toggle_faster_turns_switch, prefs.fasterPageTurns)
         overlay.findViewById<View>(R.id.refresh_frequency_row).visibility =
@@ -1332,6 +1437,10 @@ open class ReaderActivity : AppCompatActivity() {
                     // AND heals a stale or clamped stored position on disk. showPage recorded the
                     // resolved start, so flushPosition persists exactly the page that was shown.
                     flushPosition()
+                    // The device may have been rotated while this open was in flight — most likely
+                    // by the system itself, on a book tapped from the portrait-pinned library while
+                    // the reader held the device sideways. See reconcileViewport.
+                    reconcileViewport()
                 }
             } catch (e: CancellationException) {
                 // The activity was destroyed while open() was in flight. lifecycleScope cancelled
@@ -1423,9 +1532,15 @@ open class ReaderActivity : AppCompatActivity() {
         //
         // Not a coroutine, so no CancellationException can arise here; none is caught.
         try {
+            // A landscape spread shows two pages, so a turn moves two — the spread functions defer
+            // to these same advance/retreat rules for everything that is not simple arithmetic
+            // (crossing a chapter boundary, skipping a chapter that paginates to nothing).
+            val spread = cfg.columnCount > 1
             val next = when (zone) {
-                TapZone.NEXT -> advance(nav, state, pageCountFor)
-                TapZone.PREVIOUS -> retreat(nav, state, pageCountFor)
+                TapZone.NEXT ->
+                    if (spread) advanceSpread(nav, state, pageCountFor) else advance(nav, state, pageCountFor)
+                TapZone.PREVIOUS ->
+                    if (spread) retreatSpread(nav, state, pageCountFor) else retreat(nav, state, pageCountFor)
                 // Overlay hidden (the visible case returned above): reveal it. No page turn, so
                 // this arm yields null and the showPage/flush below is skipped.
                 TapZone.TOGGLE_OVERLAY -> {
@@ -1471,7 +1586,12 @@ open class ReaderActivity : AppCompatActivity() {
         val chapter: PaginatedChapter = doc.chapter(next.spineIndex, cfg)
         if (chapter.pages.isEmpty()) return
 
-        val pageIndex = next.pageIndex.coerceIn(0, chapter.pages.lastIndex)
+        // Align to the spread that OWNS the requested page whenever two columns are showing. Every
+        // path that lands on a page runs through here — a TOC jump, a bookmark, a highlight, the
+        // locator reflowed after a rotation — so none of them can split a spread and leave every
+        // later turn pairing pages that a forward read never paired.
+        val requested = next.pageIndex.coerceIn(0, chapter.pages.lastIndex)
+        val pageIndex = if (cfg.columnCount > 1) spreadStart(requested) else requested
         state = next.copy(pageIndex = pageIndex)
 
         hideDeleteChip() // the page is changing; an anchored delete chip no longer points at anything
@@ -1499,7 +1619,17 @@ open class ReaderActivity : AppCompatActivity() {
         // AndroidTextMeasurer — this cast is the seam's one leak, and it stays that way rather
         // than widening MeasuredChapter's contract for a single caller.
         val layout = (chapter.measured as AndroidMeasuredChapter).layout
-        pageView.show(layout, chapter.pages[pageIndex], cfg.marginPx)
+        // The right column of a landscape spread: the next page of THIS chapter, or nothing when
+        // there isn't one (a spread never crosses a chapter boundary, so an odd-length chapter ends
+        // with a blank right column, as a printed book does).
+        val secondPage = if (cfg.columnCount > 1) chapter.pages.getOrNull(pageIndex + 1) else null
+        pageView.show(
+            layout,
+            chapter.pages[pageIndex],
+            cfg.marginPx,
+            secondPage = secondPage,
+            columnGapPx = cfg.columnGapPx,
+        )
         // Computed once and used two ways: it drives the in-book bar (only when the toggle is on)
         // AND is captured for persistence below so the library card can show the same percentage.
         // Persistence is independent of the display toggle — hiding the bar must not blank the
@@ -1508,7 +1638,14 @@ open class ReaderActivity : AppCompatActivity() {
         pageView.setProgress(if (showProgressBar) currentBookProgress else null)
         // Same once-per-turn readout as the progress bar and scrubber above — chapterTitleFor is the
         // same pure TOC lookup the bookmarks/highlights rows already use.
-        pageView.setRunningFoot(chapterTitleFor(doc.toc, next.spineIndex), pageIndex + 1, chapter.pages.size)
+        pageView.setRunningFoot(
+            chapterTitleFor(doc.toc, next.spineIndex),
+            pageIndex + 1,
+            chapter.pages.size,
+            // "pages 3–4 of 12" for a full spread; the singular form when the right column is blank,
+            // so the foot never names a page that is not on screen.
+            lastPageInSpread = if (secondPage != null) pageIndex + 2 else pageIndex + 1,
+        )
 
         // Record the new position: the page's startOffset is the stable char offset a later restore
         // maps back to a page. This only sets an in-memory field; the caller (onTap, or the open
@@ -1550,7 +1687,7 @@ open class ReaderActivity : AppCompatActivity() {
     private fun schedulePrefetch(chapterPageCount: Int) {
         val doc = document ?: return
         val cfg = config ?: return
-        val target = chapterToPrefetch(state, chapterPageCount, doc.spineSize) ?: return
+        val target = chapterToPrefetch(state, chapterPageCount, doc.spineSize, cfg.columnCount) ?: return
         // Already resident (e.g. the chapter just turned away from): the prefetch would recompute it
         // only for publish to no-op. Skip the wasted pagination.
         if (doc.isPaginated(target, cfg)) return

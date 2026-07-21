@@ -13,8 +13,13 @@
         android:theme="@style/Theme.Reader">
 
         <!-- The library grid is now the app's entry point (Plan 2, Task 5). -->
+        <!-- screenOrientation="portrait" here and on the two screens below: two-column reading is a
+             reader feature, and these three are lists whose landscape layouts nothing has looked at
+             on the panel. Pinning them keeps rotation to the one screen it was designed for rather
+             than shipping three unverified layouts by omission. -->
         <activity
             android:name=".ui.LibraryActivity"
+            android:screenOrientation="portrait"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -35,9 +40,22 @@
           for this task is already on top, so a stray duplicate can never stack a second reader
           (two open ZipFiles, and dueling position writers once Task 6 lands).
         -->
+        <!--
+          configChanges="orientation|screenSize|screenLayout": the reader handles rotation itself
+          (ReaderActivity.onConfigurationChanged) rather than being destroyed and recreated for it.
+          Recreation would reopen the archive, re-parse and re-measure the chapter, and flash the
+          panel through a teardown — seconds of ugly on e-ink for a change the reader can absorb in
+          one redraw, since re-measuring and reflowing to a new viewport is exactly what the Aa
+          sheet's live re-paginate already does.
+
+          screenSize and screenLayout accompany orientation deliberately: on API 13+ a rotation
+          reports a screen-size change too, and omitting them would let the activity be recreated
+          anyway on the very configuration this is meant to catch.
+        -->
         <activity
             android:name=".ui.ReaderActivity"
             android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout"
             android:launchMode="singleTop" />
 
         <!-- exported="false": both are internal screens reached only from within the app (the
@@ -45,9 +63,11 @@
              starting them. -->
         <activity
             android:name=".ui.SettingsActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
         <activity
             android:name=".ui.DirectoryChooserActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
     </application>
 </manifest>

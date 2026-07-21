@@ -1,7 +1,9 @@
 package dev.reader.ui
 
 import android.content.Context
+import dev.reader.engine.COLUMN_GAP_PX
 import dev.reader.engine.RenderConfig
+import dev.reader.engine.columnCountFor
 
 /** The full-refresh cadence choices offered in the Aa sheet (pages between clean refreshes in
  *  "Faster page turns" mode). The single source of truth for both the pref clamp and the UI cells. */
@@ -82,6 +84,16 @@ class ReaderPrefs(context: Context) {
         set(value) = prefs.edit().putInt(KEY_FULL_REFRESH_EVERY_N, value).apply()
 
     /**
+     * Whether the reader ignores the device's rotation sensor and stays in the orientation it is
+     * currently in. Off by default, so a fresh install follows the sensor (itself subject to the
+     * system auto-rotate setting). Like [showProgressBar] this is deliberately NOT part of
+     * [renderConfig]: it changes which viewport the reader is handed, never how one is laid out.
+     */
+    var rotationLocked: Boolean
+        get() = prefs.getBoolean(KEY_ROTATION_LOCKED, DEFAULT_ROTATION_LOCKED)
+        set(value) = prefs.edit().putBoolean(KEY_ROTATION_LOCKED, value).apply()
+
+    /**
      * Builds the [RenderConfig] for one open: the stored typography plus the viewport the view
      * just measured. The pure prefs+viewport→config mapping, factored out so its no-op equivalence
      * to the old hardcoded literals is unit-testable without an Activity (see [ReaderPrefsTest]).
@@ -97,7 +109,21 @@ class ReaderPrefs(context: Context) {
         viewportHeightPx: Int,
         bottomChromePx: Int = 0,
     ): RenderConfig {
-        val margin = marginPx.coerceIn(0, (minOf(viewportWidthPx, viewportHeightPx) - 1) / 2)
+        val columns = columnCountFor(viewportWidthPx, viewportHeightPx)
+        // The gutter eats width the margin clamp below would otherwise be free to spend. Shrink it
+        // (to nothing, in the limit) rather than letting it push the column width to zero, which is
+        // the one thing RenderConfig throws on. No real viewport comes close — a landscape Nomad has
+        // ~1.7k px for a 140px gutter — this only keeps a degenerate viewport from crashing the open.
+        val gap = if (columns > 1) {
+            COLUMN_GAP_PX.coerceIn(0, ((viewportWidthPx - columns) / (columns - 1)).coerceAtLeast(0))
+        } else {
+            COLUMN_GAP_PX // unused at one column (multiplied by columns - 1), kept constant so
+            // portrait configs differ from landscape ones only in the fields that matter.
+        }
+        // Leave at least one pixel of COLUMN width, not just of content width: with two columns the
+        // margin has to clear the gutter as well as both edges.
+        val widthLimit = (viewportWidthPx - gap * (columns - 1) - columns) / 2
+        val margin = marginPx.coerceIn(0, minOf((minOf(viewportWidthPx, viewportHeightPx) - 1) / 2, widthLimit).coerceAtLeast(0))
         // The progress bar and running foot are drawn into the bottom margin band, and nothing in
         // the draw path enforces clearance — so before this, whether the foot overdrew the last
         // line was decided by whether the chosen margin happened to be deeper than the foot. At
@@ -123,6 +149,11 @@ class ReaderPrefs(context: Context) {
             viewportHeightPx = viewportHeightPx - reserved,
             inferHeadings = inferHeadings,
             publisherStyling = publisherStyling,
+            // Not a stored preference — the viewport's own shape decides it, so rotating the device
+            // is all it takes to read in two columns and there is no setting to get out of sync
+            // with the panel. See columnCountFor.
+            columnCount = columns,
+            columnGapPx = gap,
         )
     }
 
@@ -138,6 +169,7 @@ class ReaderPrefs(context: Context) {
         const val KEY_SHOW_PROGRESS_BAR = "show_progress_bar"
         const val KEY_FASTER_PAGE_TURNS = "faster_page_turns"
         const val KEY_FULL_REFRESH_EVERY_N = "full_refresh_every_n"
+        const val KEY_ROTATION_LOCKED = "rotation_locked"
 
         // The reader's standing typography baseline. All but the font matched openFirstBook's old
         // hardcoded literals; the font default became "literata" when bundled fonts shipped.
@@ -152,5 +184,6 @@ class ReaderPrefs(context: Context) {
         const val DEFAULT_SHOW_PROGRESS_BAR = true
         const val DEFAULT_FASTER_PAGE_TURNS = false
         const val DEFAULT_FULL_REFRESH_EVERY_N = 6
+        const val DEFAULT_ROTATION_LOCKED = false
     }
 }

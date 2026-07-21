@@ -100,4 +100,23 @@ class PrefetchPolicyTest {
         assertThat(chapterToPrefetch(ReadingState(1, 1), chapterPageCount = 2, spineSize = 4))
             .isEqualTo(2)
     }
+
+    @Test
+    fun `a spread on the last two pages counts as the chapter's end`() {
+        // Landscape: the spread at index 4 shows pages 4 and 5 of a 6-page chapter, so the next turn
+        // leaves the chapter. Under the one-page rule this reads as mid-chapter, nothing is
+        // prefetched, and the boundary turn pays the pagination on the main thread.
+        assertThat(chapterToPrefetch(ReadingState(1, 4), chapterPageCount = 6, spineSize = 4, pagesPerTurn = 2))
+            .isEqualTo(2)
+        // The spread before it is genuinely mid-chapter and still prefetches nothing.
+        assertThat(chapterToPrefetch(ReadingState(1, 2), chapterPageCount = 6, spineSize = 4, pagesPerTurn = 2))
+            .isNull()
+    }
+
+    @Test
+    fun `the single-page rule is unchanged when a turn moves one page`() {
+        // The same position in portrait IS mid-chapter — this is what the default preserves.
+        assertThat(chapterToPrefetch(ReadingState(1, 4), chapterPageCount = 6, spineSize = 4))
+            .isNull()
+    }
 }

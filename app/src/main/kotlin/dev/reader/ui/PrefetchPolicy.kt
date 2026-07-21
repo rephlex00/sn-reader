@@ -18,15 +18,26 @@ import dev.reader.engine.ReadingState
  *  - Anywhere in the interior, both neighbours of a turn stay within this already-paginated chapter,
  *    so there is nothing to prefetch.
  *
+ * [pagesPerTurn] is how many pages one turn moves — 2 for a landscape spread, 1 otherwise. It is
+ * what makes "the next turn leaves this chapter" mean the same thing in both orientations: a spread
+ * showing the last two pages of an even-length chapter sits at `chapterPageCount - 2`, so a
+ * single-page rule would call it mid-chapter, prefetch nothing, and hand the boundary turn a
+ * main-thread pagination — precisely the hitch this exists to avoid.
+ *
  * Pure and total: no I/O, no allocation, defined for every input. A non-positive [chapterPageCount]
  * (an empty/degenerate chapter, where "first" and "last" have no meaning) yields null rather than a
  * guess. The [pageIndex] comparisons use `<=`/`>=` so a value the caller has clamped past the real
  * bounds still resolves to the nearest boundary rather than falling through to null.
  */
-internal fun chapterToPrefetch(state: ReadingState, chapterPageCount: Int, spineSize: Int): Int? {
+internal fun chapterToPrefetch(
+    state: ReadingState,
+    chapterPageCount: Int,
+    spineSize: Int,
+    pagesPerTurn: Int = 1,
+): Int? {
     if (chapterPageCount <= 0) return null
 
-    val onLastPage = state.pageIndex >= chapterPageCount - 1
+    val onLastPage = state.pageIndex + pagesPerTurn.coerceAtLeast(1) >= chapterPageCount
     val onFirstPage = state.pageIndex <= 0
     val nextIndex = state.spineIndex + 1
     val previousIndex = state.spineIndex - 1

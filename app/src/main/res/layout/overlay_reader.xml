@@ -399,6 +399,14 @@
             </LinearLayout>
 
             <LinearLayout
+                android:id="@+id/toggle_rotation_lock"
+                style="@style/AaToggleRow">
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_rotation_lock" />
+                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_rotation_lock_switch"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/toggle_faster_turns"
                 style="@style/AaToggleRow">
                 <TextView style="@style/AaToggleLabel" android:text="@string/setting_faster_page_turns" />
