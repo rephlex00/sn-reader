@@ -72,6 +72,27 @@ class PageViewTest {
     }
 
     @Test
+    fun `setProgress stores the chapter end fraction`() {
+        val view = PageView(context)
+
+        view.setProgress(0.3f, 0.5f)
+        assertThat(view.chapterEndForTest).isWithin(1e-6f).of(0.5f)
+
+        view.setProgress(0.3f, null)
+        assertThat(view.chapterEndForTest).isNull()
+    }
+
+    @Test
+    fun `setProgress keeps its single argument form working`() {
+        val view = PageView(context)
+
+        view.setProgress(0.3f)
+
+        assertThat(view.progress).isWithin(1e-6f).of(0.3f)
+        assertThat(view.chapterEndForTest).isNull()
+    }
+
+    @Test
     fun `the clip stops at this page's last line, so the next page's first line cannot bleed in`() {
         // Regression: onDraw draws the WHOLE chapter's Layout and shows only a page-sized window.
         // A page breaks at a line boundary and rarely fills the content box to the pixel, so

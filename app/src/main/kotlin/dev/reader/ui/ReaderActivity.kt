@@ -28,6 +28,7 @@ import dev.reader.engine.TocEntry
 import dev.reader.engine.advance
 import dev.reader.engine.advanceSpread
 import dev.reader.engine.bookProgress
+import dev.reader.engine.chapterEndFraction
 import dev.reader.engine.chapterTitleFor
 import dev.reader.engine.pageIndexFor
 import dev.reader.engine.reflowedPageIndex
@@ -1174,7 +1175,12 @@ open class ReaderActivity : AppCompatActivity() {
         // Persistence is independent of the display toggle — hiding the bar must not blank the
         // library's progress.
         currentBookProgress = bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
-        pageView.setProgress(if (showProgressBar) currentBookProgress else null)
+        // The tick is computed from chapterWeights alone — no pagination, no new state — and is
+        // suppressed with the bar itself so hiding the bar hides all of it.
+        pageView.setProgress(
+            if (showProgressBar) currentBookProgress else null,
+            if (showProgressBar) chapterEndFraction(chapterWeights, state.spineIndex) else null,
+        )
         // Same once-per-turn readout as the progress bar and scrubber above — chapterTitleFor is the
         // same pure TOC lookup the bookmarks/highlights rows already use.
         pageView.setRunningFoot(

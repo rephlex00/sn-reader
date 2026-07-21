@@ -80,9 +80,18 @@ class PageView(context: Context) : View(context) {
     internal var progress: Float? = null
         private set
 
+    /** Whole-book fraction where the current chapter ends, or null to draw no tick. Set via
+     *  [setProgress]. */
+    private var chapterEnd: Float? = null
+
+    /** Test-visible readout of what [setProgress] last stored for the chapter-end tick. */
+    internal val chapterEndForTest: Float? get() = chapterEnd
+
     private val density = resources.displayMetrics.density
     private val progressBarThicknessPx = 2f * density
     private val progressBarBottomInsetPx = 6f * density
+    private val chapterTickHeightPx = 6f * density
+    private val chapterTickWidthPx = 2f * density
     private val progressTrackPaint = Paint().apply { color = context.getColor(R.color.reader_progress_track) }
     private val progressFillPaint = Paint().apply { color = Color.BLACK }
 
@@ -235,12 +244,17 @@ class PageView(context: Context) : View(context) {
     private fun columnLeft(index: Int): Int = marginPx + index * (columnWidth() + columnGapPx)
 
     /**
-     * Sets the whole-book progress fraction the bottom bar shows (null hides it) and invalidates.
+     * Sets the whole-book progress fraction the bottom bar shows (null hides the bar) and the
+     * whole-book fraction at which the current chapter ends (null draws no tick), then invalidates.
      * A display-only change — it never re-paginates. Called once per page turn from
      * [ReaderActivity.showPage], and directly when the progress-bar toggle flips.
+     *
+     * [chapterEndFraction] is defaulted so the toggle's single-argument call site, and the existing
+     * tests, keep working unchanged.
      */
-    fun setProgress(fraction: Float?) {
+    fun setProgress(fraction: Float?, chapterEndFraction: Float? = null) {
         this.progress = fraction
+        this.chapterEnd = chapterEndFraction
         invalidate()
     }
 
@@ -523,6 +537,14 @@ class PageView(context: Context) : View(context) {
         canvas.drawRect(left, top, right, bottom, progressTrackPaint)
         val fillRight = left + (right - left) * fraction.coerceIn(0f, 1f)
         canvas.drawRect(left, top, fillRight, bottom, progressFillPaint)
+
+        // The chapter-end tick: a short mark crossing the bar, so the distance from the fill's edge
+        // to the tick reads as "how much of this chapter is left". Drawn after the fill so it stays
+        // visible where the two overlap.
+        val end = chapterEnd ?: return
+        val tickX = left + (right - left) * end.coerceIn(0f, 1f)
+        val tickTop = bottom - chapterTickHeightPx
+        canvas.drawRect(tickX, tickTop, tickX + chapterTickWidthPx, bottom, progressFillPaint)
     }
 
     /**
