@@ -174,17 +174,12 @@ open class ReaderActivity : AppCompatActivity() {
 
     /**
      * The Bookmarks panel — a visibility-toggled, full-height layer inside [overlay], opened by the
-     * Bookmarks ("Marks") button. Same shape as [tocPanel]: one `visibility` flip, no timer or
-     * animation. [bookmarkToggle] reads "Bookmark this page" / "Remove bookmark from this page"
-     * from a fresh, one-shot [refreshBookmarks] read — never a standing observer, so an idle reader
-     * with the panel closed (or even open) costs nothing. [bookmarksList] is backed by
-     * [bookmarksAdapter]; [bookmarksEmpty] takes its place when the book has no bookmarks yet.
+     * Bookmarks ("Marks") button. This Activity owns only [bookmarksPanel]'s visibility; everything
+     * inside it (the list, the empty state, the add/remove toggle, and every database call) belongs
+     * to [BookmarksPanel]. Like [tocPanel] it is one `visibility` flip, no timer or animation.
      */
     private lateinit var bookmarksPanel: View
-    private lateinit var bookmarksList: RecyclerView
-    private lateinit var bookmarksAdapter: BookmarkAdapter
-    private lateinit var bookmarksEmpty: View
-    private lateinit var bookmarkToggle: TextView
+    private lateinit var bookmarks: BookmarksPanel
 
     /**
      * The Highlights panel — a visibility-toggled, full-height layer inside [overlay], opened by the
@@ -323,14 +318,10 @@ open class ReaderActivity : AppCompatActivity() {
         tocPanel = overlay.findViewById(R.id.toc_panel)
         toc = TocPanel(overlay, readerSurface)
         bookmarksPanel = overlay.findViewById(R.id.bookmarks_panel)
-        bookmarksList = overlay.findViewById(R.id.bookmarks_list)
-        bookmarksEmpty = overlay.findViewById(R.id.bookmarks_empty)
-        bookmarkToggle = overlay.findViewById(R.id.bookmark_toggle)
-        bookmarksAdapter = BookmarkAdapter(onJump = ::jumpToBookmark, onDelete = ::deleteBookmark)
-        bookmarksList.layoutManager = LinearLayoutManager(this)
-        bookmarksList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
-        bookmarksList.stopScrollAnimations()
-        bookmarksList.adapter = bookmarksAdapter
+        bookmarks = BookmarksPanel(
+            overlay, readerSurface, lifecycleScope,
+            database.bookmarkDao(), database.bookDao(),
+        )
         highlightsPanel = overlay.findViewById(R.id.highlights_panel)
         highlightsList = overlay.findViewById(R.id.highlights_list)
         highlightsEmpty = overlay.findViewById(R.id.highlights_empty)
@@ -351,7 +342,6 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.bookmarks_close).setOnClickListener { bookmarksPanel.visibility = View.GONE }
         overlay.findViewById<View>(R.id.highlights_close).setOnClickListener { highlightsPanel.visibility = View.GONE }
         overlay.findViewById<View>(R.id.settings_close).setOnClickListener { settingsSheet.visibility = View.GONE }
-        bookmarkToggle.setOnClickListener { toggleCurrentPageBookmark() }
         pageView.onStylusTap = ::onStylusTap
         pageView.onStylusDrag = ::onStylusDrag
         wireSettingsControls()
@@ -444,6 +434,9 @@ open class ReaderActivity : AppCompatActivity() {
         override fun error(messageId: Int, cause: Throwable) = showError(messageId, cause)
     }
 
+    /** The app's single Room database — the panels take the DAOs they need from it. */
+    private val database get() = (application as ReaderApplication).database
+
     /** Whether the reading chrome is currently on screen. */
     private fun isOverlayVisible(): Boolean = overlay.visibility == View.VISIBLE
 
@@ -521,147 +514,7 @@ open class ReaderActivity : AppCompatActivity() {
             tocPanel.visibility = View.GONE
             highlightsPanel.visibility = View.GONE
             bookmarksPanel.visibility = View.VISIBLE
-            refreshBookmarks()
-        }
-    }
-
-    private fun bookmarkDao() = (application as ReaderApplication).database.bookmarkDao()
-
-    private fun bookDao() = (application as ReaderApplication).database.bookDao()
-
-    /**
-     * Loads this book's bookmarks (one-shot, off-main) and rebinds the panel: the list (chapter · %,
-     * in reading order), the empty state, and the "Add/remove this page" toggle's label — set from
-     * range-based [currentPageBookmark] detection so it stays correct after a re-paginate. No
-     * standing observer: the panel re-reads each time it opens, and add/remove/delete call this again.
-     */
-    private fun refreshBookmarks() {
-        val path = bookPath ?: return
-        lifecycleScope.launch {
-            val marks = withContext(Dispatchers.IO) { bookmarkDao().bookmarksFor(path) }
-            val rows = bookmarkRows(marks, document?.toc.orEmpty())
-            bookmarksAdapter.submit(rows)
-            val empty = rows.isEmpty()
-            bookmarksEmpty.visibility = if (empty) View.VISIBLE else View.GONE
-            bookmarksList.visibility = if (empty) View.GONE else View.VISIBLE
-
-            val onThisPage = currentPageBookmarkForState(marks)
-            bookmarkToggle.text = getString(if (onThisPage != null) R.string.bookmark_remove else R.string.bookmark_add)
-        }
-    }
-
-    /** The bookmark on the page [showPage] last drew, if any (range-based). Null if the reader has no
-     *  current chapter/page yet. */
-    private fun currentPageBookmarkForState(marks: List<BookmarkEntity>): BookmarkEntity? {
-        val doc = document ?: return null
-        val cfg = config ?: return null
-        val pages = doc.chapter(state.spineIndex, cfg).pages
-        val page = pages.getOrNull(state.pageIndex) ?: return null
-        return currentPageBookmark(marks, state.spineIndex, page)
-    }
-
-    /**
-     * Adds a bookmark for the current page, or removes the one already on it — a pure data action
-     * that never re-paginates or moves the reading position. Captures the page's top [Locator] and
-     * the current [currentBookProgress] (independent of the display toggle). Reloads the panel after
-     * the write so the list + toggle reflect it.
-     *
-     * Guarded by a library-membership check first: [BookmarkEntity.bookPath] is a foreign key to
-     * `books.path` with FK enforcement ON, but the reader also opens books that have no `books` row
-     * — a sideloaded EPUB launched directly, or one the library indexer hasn't reached yet. For such
-     * a book, inserting a bookmark would violate the FK and throw `SQLiteConstraintException`.
-     * Unlike [persistPosition] (an `UPDATE ... WHERE path` that harmlessly no-ops on 0 rows), an
-     * INSERT has no such graceful fallback, so we check membership via [bookDao] before attempting
-     * any write and bail out with a message instead — a book with no `books` row also can't have any
-     * existing bookmarks, so there is nothing to remove either. The try/catch around the write itself
-     * is a backstop for the race where a concurrent library sync deletes the `books` row between this
-     * check and the write: surface the failure instead of letting it crash the coroutine.
-     */
-    private fun toggleCurrentPageBookmark() {
-        val doc = document ?: return
-        val cfg = config ?: return
-        val path = bookPath ?: return
-        val pages = doc.chapter(state.spineIndex, cfg).pages
-        val page = pages.getOrNull(state.pageIndex) ?: return
-        lifecycleScope.launch {
-            val inLibrary = withContext(Dispatchers.IO) { bookDao().getByPath(path) != null }
-            if (!inLibrary) {
-                showMessage(R.string.error_book_not_indexed)
-                return@launch
-            }
-            val existing = withContext(Dispatchers.IO) {
-                currentPageBookmark(bookmarkDao().bookmarksFor(path), state.spineIndex, page)
-            }
-            try {
-                withContext(Dispatchers.IO) {
-                    if (existing != null) {
-                        bookmarkDao().deleteById(existing.id)
-                    } else {
-                        bookmarkDao().insert(
-                            BookmarkEntity(
-                                bookPath = path,
-                                spineIndex = state.spineIndex,
-                                charOffset = page.startOffset,
-                                progressFraction = currentBookProgress,
-                                createdAtMs = System.currentTimeMillis(),
-                            ),
-                        )
-                    }
-                }
-                refreshBookmarks()
-            } catch (e: CancellationException) {
-                // The Activity was destroyed mid-write: let structured-concurrency cancellation
-                // propagate rather than swallowing it into a "couldn't save" toast on a dying
-                // screen — the same rule openFirstBook and the prefetch coroutine hold in this file.
-                throw e
-            } catch (e: Exception) {
-                showError(R.string.error_save_bookmark, e)
-            }
-        }
-    }
-
-    /** Deletes a bookmark from the list's ✕ and reloads the panel. */
-    private fun deleteBookmark(row: BookmarkRow) {
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) { bookmarkDao().deleteById(row.id) }
-            refreshBookmarks()
-        }
-    }
-
-    /**
-     * Jumps to a tapped bookmark through the SAME restore machinery as [jumpToToc]: resolve the
-     * target page via [tocTarget] (lands on the page containing the bookmark's char offset, re-
-     * pagination-safe; skips forward if the chapter is empty), then [showPage] + [flushPosition] and
-     * close the chrome. Wrapped like [jumpToToc] since the lazy [EpubDocument.chapter] can throw.
-     */
-    private fun jumpToBookmark(row: BookmarkRow) {
-        val doc = document ?: return
-        val cfg = config ?: return
-        val nav = navigator ?: return
-        val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
-        try {
-            val target = tocTarget(
-                spineIndex = row.spineIndex,
-                charOffset = row.charOffset,
-                pageCountFor = pageCountFor,
-                offsetToPageIndex = { spineIndex, charOffset ->
-                    pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
-                },
-                firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
-            )
-            if (target == null) {
-                showMessage(R.string.error_book_no_text)
-                return
-            }
-            // Hide the chrome BEFORE drawing the page (like jumpToToc), so the jump is one clean
-            // e-ink redraw rather than a page draw followed by an overlay-dismiss redraw.
-            hideOverlay()
-            showPage(target)
-            flushPosition()
-        } catch (e: EpubException) {
-            showError(R.string.error_open_bookmark, e)
-        } catch (e: Exception) {
-            showError(R.string.error_open_bookmark, e)
+            bookmarks.refresh()
         }
     }
 
@@ -798,7 +651,7 @@ open class ReaderActivity : AppCompatActivity() {
         val text = currentChapterText() ?: return
         val snapped = snapToWords(text, rawStart, rawEnd) ?: return // landed between words → no-op
         lifecycleScope.launch {
-            val inLibrary = withContext(Dispatchers.IO) { bookDao().getByPath(path) != null }
+            val inLibrary = withContext(Dispatchers.IO) { database.bookDao().getByPath(path) != null }
             if (!inLibrary) { showMessage(R.string.error_book_not_indexed); return@launch }
             try {
                 val existing = withContext(Dispatchers.IO) { highlightDao().highlightsForChapter(path, spineIndex) }

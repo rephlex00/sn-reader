@@ -74,3 +74,32 @@ internal interface ReaderSurface {
     /** Shows a transient message and logs [cause]. */
     fun error(@StringRes messageId: Int, cause: Throwable)
 }
+
+/**
+ * Goes to the page containing a stored `(spineIndex, charOffset)` anchor — how a Contents entry, a
+ * bookmark and a highlight all navigate. Returns false when that chapter and everything after it
+ * paginate to nothing, so the caller can say so in its own words.
+ *
+ * The offset, not the page number, is what is stored and resolved: page numbers change whenever the
+ * typography or the screen shape does, so landing on "page 4" would drift while landing on the page
+ * CONTAINING the offset does not. [tocTarget] also skips forward past chapters that paginate to
+ * nothing rather than showing a blank page.
+ *
+ * The chrome is closed BEFORE the page is drawn so a jump costs one clean e-ink redraw rather than
+ * a page draw followed by an overlay-dismiss redraw.
+ *
+ * Throws [dev.reader.formats.epub.EpubException] if the chapter cannot be read; every caller is a
+ * panel that reports it against its own string.
+ */
+internal fun ReaderSurface.jumpToAnchor(spineIndex: Int, charOffset: Int): Boolean {
+    val target = tocTarget(
+        spineIndex = spineIndex,
+        charOffset = charOffset,
+        pageCountFor = ::pageCountFor,
+        offsetToPageIndex = ::pageIndexForOffset,
+        firstNonEmptyFrom = ::firstNonEmptyFrom,
+    ) ?: return false
+    closeOverlay()
+    goTo(target)
+    return true
+}

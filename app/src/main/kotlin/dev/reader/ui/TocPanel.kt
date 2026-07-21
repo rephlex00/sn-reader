@@ -58,20 +58,10 @@ internal class TocPanel(
     private fun jumpTo(row: TocRow) {
         if (!reader.isBookOpen) return
         try {
-            val target = tocTarget(
-                spineIndex = row.spineIndex,
-                charOffset = row.charOffset,
-                pageCountFor = reader::pageCountFor,
-                offsetToPageIndex = reader::pageIndexForOffset,
-                firstNonEmptyFrom = reader::firstNonEmptyFrom,
-            )
-            if (target == null) {
-                // The tapped chapter and everything after it paginate to zero pages: nothing to show.
+            // The tapped chapter and everything after it paginate to zero pages: nothing to show.
+            if (!reader.jumpToAnchor(row.spineIndex, row.charOffset)) {
                 reader.message(R.string.error_book_no_text)
-                return
             }
-            reader.closeOverlay()
-            reader.goTo(target)
         } catch (e: EpubException) {
             reader.error(R.string.error_open_section, e)
         } catch (e: Exception) {
