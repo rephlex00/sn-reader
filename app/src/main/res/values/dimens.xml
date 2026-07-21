@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Spacing and type scale.
+
+  The reader's four panels (Contents, Bookmarks, Highlights, Display) are meant to read as one
+  surface the user learns once. They had drifted: the Display sheet's header sat at 12dp where the
+  other three sat at 16dp, and only Display put an 8dp gap under its rule. Naming the values is
+  what stops that happening again.
+
+  48dp is the tap-target floor everywhere, per Android's accessibility guidance and because this
+  device is used with a finger as often as a pen.
+-->
+<resources>
+    <!-- Panels -->
+    <dimen name="panel_edge_padding">16dp</dimen>
+    <dimen name="panel_header_padding_v">16dp</dimen>
+    <dimen name="panel_title_text">20sp</dimen>
+    <dimen name="panel_row_padding_v">12dp</dimen>
+    <dimen name="panel_divider_height">2dp</dimen>
+
+    <!-- Reader toolbar. Outer controls (Back, Aa) take the wider edge padding so the row is not
+         crowded against the screen edge; the inner group is tighter so it reads as a set. -->
+    <dimen name="toolbar_edge_padding_h">16dp</dimen>
+    <dimen name="toolbar_button_padding_h">12dp</dimen>
+    <dimen name="toolbar_padding_v">12dp</dimen>
+
+    <!-- Type -->
+    <dimen name="text_body">16sp</dimen>
+    <dimen name="text_title">18sp</dimen>
+    <dimen name="text_meta">13sp</dimen>
+
+    <!-- The minimum any tappable thing may be. -->
+    <dimen name="tap_target_min">48dp</dimen>
+</resources>

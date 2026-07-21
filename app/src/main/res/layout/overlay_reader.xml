@@ -55,8 +55,8 @@
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="12dp"
+                android:paddingHorizontal="@dimen/toolbar_button_padding_h"
+                android:paddingVertical="@dimen/toolbar_padding_v"
                 android:textColor="@android:color/black"
                 android:textSize="18sp" />
 
@@ -205,7 +205,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:paddingVertical="12dp"
+                    android:paddingVertical="@dimen/panel_header_padding_v"
                     android:text="@string/reader_display"
                     android:textColor="@android:color/black"
                     android:textSize="20sp"
@@ -220,8 +220,7 @@
 
             <View
                 android:layout_width="match_parent"
-                android:layout_height="2dp"
-                android:layout_marginBottom="8dp"
+                android:layout_height="@dimen/panel_divider_height"
                 android:background="@android:color/black" />
 
             <!-- Font family -->
@@ -463,7 +462,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:paddingHorizontal="16dp"
-                android:paddingVertical="16dp"
+                android:paddingVertical="@dimen/panel_header_padding_v"
                 android:text="@string/reader_contents"
                 android:textColor="@android:color/black"
                 android:textSize="20sp"
@@ -491,17 +490,34 @@
         <!-- Shown (with toc_list hidden) when the book has no usable TOC — never an empty clickable
              void. Unreachable for a well-formed EPUB, since the parser synthesizes a flat spine TOC
              when neither nav nor NCX is present, but the reader must still degrade gracefully. -->
-        <TextView
+        <LinearLayout
             android:id="@+id/toc_empty"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:gravity="center"
-            android:padding="24dp"
-            android:text="@string/contents_empty"
-            android:textColor="@android:color/black"
-            android:textSize="16sp"
-            android:visibility="gone" />
+            android:orientation="vertical"
+            android:gravity="top|center_horizontal"
+            android:paddingHorizontal="24dp"
+            android:paddingTop="48dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/contents_empty"
+                android:textColor="@color/reader_text_primary"
+                android:textSize="@dimen/text_body" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="@string/contents_empty_hint"
+                android:textColor="@color/reader_text_secondary"
+                android:textSize="@dimen/text_meta" />
+
+        </LinearLayout>
 
     </LinearLayout>
 
@@ -531,7 +547,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:paddingHorizontal="16dp"
-                android:paddingVertical="16dp"
+                android:paddingVertical="@dimen/panel_header_padding_v"
                 android:text="@string/reader_bookmarks"
                 android:textColor="@android:color/black"
                 android:textSize="20sp"
@@ -569,17 +585,34 @@
             android:layout_weight="1"
             android:scrollbars="vertical" />
 
-        <TextView
+        <LinearLayout
             android:id="@+id/bookmarks_empty"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:gravity="center"
-            android:padding="24dp"
-            android:text="@string/bookmarks_empty"
-            android:textColor="@android:color/black"
-            android:textSize="16sp"
-            android:visibility="gone" />
+            android:orientation="vertical"
+            android:gravity="top|center_horizontal"
+            android:paddingHorizontal="24dp"
+            android:paddingTop="48dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/bookmarks_empty"
+                android:textColor="@color/reader_text_primary"
+                android:textSize="@dimen/text_body" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="@string/bookmarks_empty_hint"
+                android:textColor="@color/reader_text_secondary"
+                android:textSize="@dimen/text_meta" />
+
+        </LinearLayout>
 
     </LinearLayout>
 
@@ -611,7 +644,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:paddingHorizontal="16dp"
-                android:paddingVertical="16dp"
+                android:paddingVertical="@dimen/panel_header_padding_v"
                 android:text="@string/reader_highlights"
                 android:textColor="@android:color/black"
                 android:textSize="20sp"
@@ -636,17 +669,34 @@
             android:layout_weight="1"
             android:scrollbars="vertical" />
 
-        <TextView
+        <LinearLayout
             android:id="@+id/highlights_empty"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:gravity="center"
-            android:padding="24dp"
-            android:text="@string/highlights_empty"
-            android:textColor="@android:color/black"
-            android:textSize="16sp"
-            android:visibility="gone" />
+            android:orientation="vertical"
+            android:gravity="top|center_horizontal"
+            android:paddingHorizontal="24dp"
+            android:paddingTop="48dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/highlights_empty"
+                android:textColor="@color/reader_text_primary"
+                android:textSize="@dimen/text_body" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="@string/highlights_empty_hint"
+                android:textColor="@color/reader_text_secondary"
+                android:textSize="@dimen/text_meta" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

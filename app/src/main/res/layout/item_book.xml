@@ -14,7 +14,7 @@
         android:layout_width="match_parent"
         android:layout_height="180dp"
         android:layout_marginBottom="4dp"
-        android:background="#DDDDDD"
+        android:background="@color/reader_cover_placeholder"
         android:contentDescription="@null"
         android:scaleType="fitCenter" />
 
@@ -33,7 +33,7 @@
         android:layout_height="wrap_content"
         android:ellipsize="end"
         android:maxLines="1"
-        android:textColor="@android:color/darker_gray" />
+        android:textColor="@color/reader_text_secondary" />
 
     <TextView
         android:id="@+id/status"
@@ -41,7 +41,7 @@
         android:layout_height="wrap_content"
         android:ellipsize="end"
         android:maxLines="1"
-        android:textColor="@android:color/darker_gray"
+        android:textColor="@color/reader_text_secondary"
         android:textSize="12sp" />
 
 </LinearLayout>

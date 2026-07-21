@@ -54,8 +54,11 @@
     <string name="panel_close_highlights">Close highlights</string>
     <string name="panel_close_display">Close display settings</string>
     <string name="contents_empty">No contents</string>
+    <string name="contents_empty_hint">This book doesn\'t list any chapters.</string>
     <string name="bookmarks_empty">No bookmarks yet</string>
+    <string name="bookmarks_empty_hint">Use “Bookmark this page” above to save where you are.</string>
     <string name="highlights_empty">No highlights yet</string>
+    <string name="highlights_empty_hint">Drag the pen across text to highlight it.</string>
     <string name="bookmark_add">Bookmark this page</string>
     <string name="bookmark_remove">Remove bookmark from this page</string>
     <string name="bookmark_delete">Delete bookmark</string>

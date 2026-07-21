@@ -179,7 +179,7 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var bookmarksPanel: View
     private lateinit var bookmarksList: RecyclerView
     private lateinit var bookmarksAdapter: BookmarkAdapter
-    private lateinit var bookmarksEmpty: TextView
+    private lateinit var bookmarksEmpty: View
     private lateinit var bookmarkToggle: TextView
 
     /**
@@ -193,7 +193,7 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var highlightsPanel: View
     private lateinit var highlightsList: RecyclerView
     private lateinit var highlightsAdapter: HighlightAdapter
-    private lateinit var highlightsEmpty: TextView
+    private lateinit var highlightsEmpty: View
 
     private var document: EpubDocument? = null
     private var navigator: PageNavigator? = null

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app's whole palette. It is greys, because the display is greyscale: a hue here would only
+  ever be seen as the grey it collapses to, so the values ARE the design.
+
+  E-ink resolves roughly 16 levels, and light greys wash out badly at small sizes under reflected
+  light. That is why secondary text sits at 40% rather than the ~33% Android's darker_gray gives:
+  author and status lines were previously two different greys (darker_gray in the book rows,
+  #666666 in the highlight rows), and the lighter of the two was the least legible text in the app.
+-->
+<resources>
+    <!-- Text -->
+    <color name="reader_text_primary">#FF000000</color>
+    <!-- Secondary: authors, status badges, list metadata. One value, everywhere. -->
+    <color name="reader_text_secondary">#FF666666</color>
+    <!-- Deliberately quieter than secondary: chrome that must not compete with the page itself. -->
+    <color name="reader_text_faint">#FF999999</color>
+
+    <!-- Surfaces -->
+    <color name="reader_surface">#FFFFFFFF</color>
+    <!-- Rules and dividers are full black: a hairline grey disappears on this panel. -->
+    <color name="reader_divider">#FF000000</color>
+    <!-- Stands in for a cover that has not decoded, light enough to read as "empty", not "broken". -->
+    <color name="reader_cover_placeholder">#FFDDDDDD</color>
+
+    <!-- Reading surface. These three were tuned against the real panel; do not adjust by eye
+         on an LCD, where every one of them looks wrong in a different direction. -->
+    <color name="reader_progress_track">#FFCCCCCC</color>
+    <color name="reader_highlight_wash">#FFA8A8A8</color>
+</resources>

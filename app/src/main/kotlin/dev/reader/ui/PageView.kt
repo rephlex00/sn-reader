@@ -12,6 +12,7 @@ import android.text.TextUtils
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import dev.reader.R
 import dev.reader.engine.Page
 import kotlin.math.abs
 
@@ -50,7 +51,7 @@ class PageView(context: Context) : View(context) {
     private val density = resources.displayMetrics.density
     private val progressBarThicknessPx = 2f * density
     private val progressBarBottomInsetPx = 6f * density
-    private val progressTrackPaint = Paint().apply { color = Color.parseColor("#CCCCCC") }
+    private val progressTrackPaint = Paint().apply { color = context.getColor(R.color.reader_progress_track) }
     private val progressFillPaint = Paint().apply { color = Color.BLACK }
 
     /** The running foot's chapter title (null/blank draws the page label only). Set via [setRunningFoot]. */
@@ -69,7 +70,7 @@ class PageView(context: Context) : View(context) {
 
     private val runningFootBottomInsetPx = progressBarBottomInsetPx + progressBarThicknessPx + 4f * density
     private val runningFootPaint = TextPaint().apply {
-        color = Color.parseColor("#999999") // faint gray, fainter than body text, matches the progress bar's restraint
+        color = context.getColor(R.color.reader_text_faint) // fainter than body text; matches the progress bar's restraint
         textSize = 11f * density
         isAntiAlias = true
     }
@@ -97,7 +98,7 @@ class PageView(context: Context) : View(context) {
     /** The armed bracket-start offset, if any — drawn as a caret so the reader sees the pending start. */
     private var bracketAnchor: Int? = null
 
-    private val washPaint = Paint().apply { color = Color.parseColor("#A8A8A8") } // highlight wash gray; tuned on device
+    private val washPaint = Paint().apply { color = context.getColor(R.color.reader_highlight_wash) } // tuned on device
     private val anchorPaint = Paint().apply { color = Color.BLACK; strokeWidth = 1.5f * density }
     private val selectionPath = Path()
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
