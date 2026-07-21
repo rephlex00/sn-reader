@@ -62,6 +62,10 @@ internal interface ReaderSurface {
     /** The full text of the chapter on screen, for resolving highlight offsets to quotations. */
     fun currentChapterText(): String?
 
+    /** Whole-book progress in `[0,1]` for an arbitrary anchor — what a bookmark or highlight stores
+     *  so the library can show where in the book it sits. */
+    fun progressFor(spineIndex: Int, charOffset: Int): Float
+
     /** Navigates to [target] and records the new position, the same way a page turn does. */
     fun goTo(target: ReadingState)
 

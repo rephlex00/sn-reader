@@ -2,7 +2,6 @@ package dev.reader.ui
 
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
-import android.graphics.Color
 import android.util.Log
 import android.os.Bundle
 import android.os.Environment
@@ -17,13 +16,10 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
 import dev.reader.ReaderApplication
-import dev.reader.data.BookmarkEntity
 import dev.reader.data.HighlightEntity
-import dev.reader.engine.ExistingHighlight
 import dev.reader.engine.Locator
 import dev.reader.engine.Page
 import dev.reader.engine.PageNavigator
@@ -34,13 +30,10 @@ import dev.reader.engine.advance
 import dev.reader.engine.advanceSpread
 import dev.reader.engine.bookProgress
 import dev.reader.engine.chapterTitleFor
-import dev.reader.engine.highlightContaining
-import dev.reader.engine.mergeHighlights
 import dev.reader.engine.pageIndexFor
 import dev.reader.engine.reflowedPageIndex
 import dev.reader.engine.retreat
 import dev.reader.engine.retreatSpread
-import dev.reader.engine.snapToWords
 import dev.reader.engine.spreadStart
 import dev.reader.formats.epub.EpubDocument
 import dev.reader.formats.epub.EpubException
@@ -190,9 +183,7 @@ open class ReaderActivity : AppCompatActivity() {
      * list is loaded once per open by [refreshHighlights] — never a standing observer.
      */
     private lateinit var highlightsPanel: View
-    private lateinit var highlightsList: RecyclerView
-    private lateinit var highlightsAdapter: HighlightAdapter
-    private lateinit var highlightsEmpty: View
+    private lateinit var highlights: HighlightsController
 
     private var document: EpubDocument? = null
     private var navigator: PageNavigator? = null
@@ -215,21 +206,6 @@ open class ReaderActivity : AppCompatActivity() {
     /** Whole-book progress `[0,1]` of the page [showPage] last drew — captured there (independently
      *  of [showProgressBar]) so [persistPosition] can store it for the library's percentage. */
     private var currentBookProgress: Float = 0f
-
-    /** The current chapter's highlights, cached so page turns within a chapter never re-query. Keyed by
-     *  [chapterHighlightsSpine]; reloaded only on a chapter change or after an edit. */
-    private var chapterHighlights: List<HighlightEntity> = emptyList()
-    private var chapterHighlightsSpine: Int = -1
-
-    /** The armed bracket-start offset (transient UI state, not persisted); null when no bracket is armed. */
-    private var bracketAnchorOffset: Int? = null
-
-    /** A small on-page "✕ Delete" chip, revealed when a pen tap lands inside an existing highlight;
-     *  tapping it removes that highlight. Positioned per-tap over the page (see [showDeleteChipAt]). */
-    private lateinit var deleteChip: TextView
-
-    /** The highlight the visible [deleteChip] would remove, or null when the chip is hidden. */
-    private var pendingDeleteId: Long? = null
 
     /**
      * The one in-flight adjacent-chapter prefetch, if any (see [schedulePrefetch]). Held only so a
@@ -291,27 +267,6 @@ open class ReaderActivity : AppCompatActivity() {
         // The on-page delete chip: added last so it draws above the page; hidden until a pen tap lands
         // inside a highlight. Positioned per-tap. Its own tap consumes the touch (isClickable), so a tap
         // on the chip deletes while a tap elsewhere falls through to pageView and dismisses it.
-        val chipPadH = (16 * resources.displayMetrics.density).toInt()
-        val chipPadV = (10 * resources.displayMetrics.density).toInt()
-        deleteChip = TextView(this).apply {
-            text = getString(R.string.highlight_delete_chip)
-            setTextColor(Color.BLACK)
-            textSize = 16f
-            setBackgroundResource(R.drawable.delete_chip_bg)
-            setPadding(chipPadH, chipPadV, chipPadH, chipPadV)
-            minHeight = (44 * resources.displayMetrics.density).toInt()
-            isClickable = true
-            visibility = View.GONE
-            setOnClickListener {
-                val id = pendingDeleteId
-                hideDeleteChip()
-                if (id != null) deleteHighlight(id) { }
-            }
-        }
-        container.addView(
-            deleteChip,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT),
-        )
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
@@ -323,13 +278,10 @@ open class ReaderActivity : AppCompatActivity() {
             database.bookmarkDao(), database.bookDao(),
         )
         highlightsPanel = overlay.findViewById(R.id.highlights_panel)
-        highlightsList = overlay.findViewById(R.id.highlights_list)
-        highlightsEmpty = overlay.findViewById(R.id.highlights_empty)
-        highlightsAdapter = HighlightAdapter(onJump = ::jumpToHighlight, onDelete = ::deleteHighlightRow)
-        highlightsList.layoutManager = LinearLayoutManager(this)
-        highlightsList.itemAnimator = null // e-ink: a rebind is one redraw, never an animated shuffle.
-        highlightsList.stopScrollAnimations()
-        highlightsList.adapter = highlightsAdapter
+        highlights = HighlightsController(
+            overlay, container, pageView, readerSurface, lifecycleScope,
+            database.highlightDao(), database.bookDao(),
+        )
         overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
         overlay.findViewById<View>(R.id.highlights_button).setOnClickListener { toggleHighlights() }
         overlay.findViewById<View>(R.id.bookmarks_button).setOnClickListener { toggleBookmarks() }
@@ -342,8 +294,6 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.bookmarks_close).setOnClickListener { bookmarksPanel.visibility = View.GONE }
         overlay.findViewById<View>(R.id.highlights_close).setOnClickListener { highlightsPanel.visibility = View.GONE }
         overlay.findViewById<View>(R.id.settings_close).setOnClickListener { settingsSheet.visibility = View.GONE }
-        pageView.onStylusTap = ::onStylusTap
-        pageView.onStylusDrag = ::onStylusDrag
         wireSettingsControls()
         setContentView(container)
 
@@ -422,6 +372,13 @@ open class ReaderActivity : AppCompatActivity() {
 
         override fun currentChapterText(): String? = this@ReaderActivity.currentChapterText()
 
+        override fun progressFor(spineIndex: Int, charOffset: Int): Float {
+            val doc = document ?: return 0f
+            val cfg = config ?: return 0f
+            val pages = doc.chapter(spineIndex, cfg).pages
+            return bookProgress(chapterWeights, spineIndex, pageIndexFor(pages, charOffset), pages.size)
+        }
+
         override fun goTo(target: ReadingState) {
             showPage(target)
             flushPosition()
@@ -434,6 +391,13 @@ open class ReaderActivity : AppCompatActivity() {
         override fun error(messageId: Int, cause: Throwable) = showError(messageId, cause)
     }
 
+    /** The current chapter's source text (the StaticLayout's text), for word-snapping and excerpting. */
+    private fun currentChapterText(): String? {
+        val doc = document ?: return null
+        val cfg = config ?: return null
+        return (doc.chapter(state.spineIndex, cfg).measured as? AndroidMeasuredChapter)?.layout?.text?.toString()
+    }
+
     /** The app's single Room database — the panels take the DAOs they need from it. */
     private val database get() = (application as ReaderApplication).database
 
@@ -442,7 +406,7 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Reveals the reading chrome — one redraw, no animation. */
     private fun showOverlay() {
-        hideDeleteChip() // the chip is a reading-mode affordance; it never coexists with the chrome
+        highlights.hideDeleteChip() // the chip is a reading-mode affordance; it never coexists with the chrome
         overlay.visibility = View.VISIBLE
     }
 
@@ -456,15 +420,14 @@ open class ReaderActivity : AppCompatActivity() {
         highlightsPanel.visibility = View.GONE
         // Opening the chrome ends any on-page pen selection in progress: a pending bracket-start is
         // dropped (the marker would otherwise linger under the overlay).
-        clearBracketAnchor()
-        hideDeleteChip()
+        highlights.cancelPendingSelection()
         overlay.visibility = View.GONE
     }
 
     /** Opens or closes the Aa sheet — a visibility flip (one redraw). Opening first syncs its
      * controls to the current [ReaderPrefs] so it always shows the live values. */
     private fun toggleSettings() {
-        hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
+        highlights.hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
         if (settingsSheet.visibility == View.VISIBLE) {
             settingsSheet.visibility = View.GONE
         } else {
@@ -492,7 +455,7 @@ open class ReaderActivity : AppCompatActivity() {
      * the list from the current [EpubDocument.toc] and current chapter, and closes the Aa sheet so
      * only one panel is ever open. */
     private fun toggleToc() {
-        hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
+        highlights.hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
         if (tocPanel.visibility == View.VISIBLE) {
             tocPanel.visibility = View.GONE
         } else {
@@ -504,9 +467,23 @@ open class ReaderActivity : AppCompatActivity() {
         }
     }
 
+    /** Opens/closes the Highlights panel — one panel open at a time (closes the Aa sheet, TOC, Marks). */
+    private fun toggleHighlights() {
+        highlights.hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
+        if (highlightsPanel.visibility == View.VISIBLE) {
+            highlightsPanel.visibility = View.GONE
+        } else {
+            settingsSheet.visibility = View.GONE
+            tocPanel.visibility = View.GONE
+            bookmarksPanel.visibility = View.GONE
+            highlightsPanel.visibility = View.VISIBLE
+            highlights.refresh()
+        }
+    }
+
     /** Opens/closes the Bookmarks panel — one panel open at a time (closes the Aa sheet and TOC). */
     private fun toggleBookmarks() {
-        hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
+        highlights.hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
         if (bookmarksPanel.visibility == View.VISIBLE) {
             bookmarksPanel.visibility = View.GONE
         } else {
@@ -518,236 +495,16 @@ open class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    // -- Highlights ------------------------------------------------------------------------------
-
-    private fun highlightDao() = (application as ReaderApplication).database.highlightDao()
-
-    /** Opens/closes the Highlights panel — one panel open at a time (closes the Aa sheet, TOC, Marks). */
-    private fun toggleHighlights() {
-        hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
-        if (highlightsPanel.visibility == View.VISIBLE) {
-            highlightsPanel.visibility = View.GONE
-        } else {
-            settingsSheet.visibility = View.GONE
-            tocPanel.visibility = View.GONE
-            bookmarksPanel.visibility = View.GONE
-            highlightsPanel.visibility = View.VISIBLE
-            refreshHighlights()
-        }
-    }
-
-    /**
-     * Loads this book's highlights (one-shot, off-main) and rebinds the panel list + empty state. No
-     * standing observer: the panel re-reads each time it opens, and delete calls this again.
-     */
-    private fun refreshHighlights() {
-        val path = bookPath ?: return
-        lifecycleScope.launch {
-            val hl = withContext(Dispatchers.IO) { highlightDao().highlightsForBook(path) }
-            val rows = highlightRows(hl, document?.toc.orEmpty())
-            highlightsAdapter.submit(rows)
-            val empty = rows.isEmpty()
-            highlightsEmpty.visibility = if (empty) View.VISIBLE else View.GONE
-            highlightsList.visibility = if (empty) View.GONE else View.VISIBLE
-        }
-    }
-
-    /**
-     * Jumps to a tapped highlight via the SAME restore machinery as [jumpToToc]/[jumpToBookmark]:
-     * resolve the target page via [tocTarget] (lands on the page containing the highlight's start
-     * offset, re-pagination-safe), then [showPage] + [flushPosition], and close the chrome.
-     */
-    private fun jumpToHighlight(row: HighlightRow) {
-        val doc = document ?: return
-        val cfg = config ?: return
-        val nav = navigator ?: return
-        val pageCountFor: (Int) -> Int = { doc.chapter(it, cfg).pages.size }
-        try {
-            val target = tocTarget(
-                spineIndex = row.spineIndex,
-                charOffset = row.startOffset,
-                pageCountFor = pageCountFor,
-                offsetToPageIndex = { spineIndex, charOffset ->
-                    pageIndexFor(doc.chapter(spineIndex, cfg).pages, charOffset)
-                },
-                firstNonEmptyFrom = { from -> advance(nav, ReadingState(from, 0), pageCountFor) },
-            ) ?: run { showMessage(R.string.error_book_no_text); return }
-            hideOverlay()
-            showPage(target)
-            flushPosition()
-        } catch (e: EpubException) {
-            showError(R.string.error_open_highlight, e)
-        } catch (e: Exception) {
-            showError(R.string.error_open_highlight, e)
-        }
-    }
-
-    private fun deleteHighlightRow(row: HighlightRow) = deleteHighlight(row.id) { refreshHighlights() }
-
-    /** Clears a pending bracket-start (both the field and the on-page marker). */
-    private fun clearBracketAnchor() {
-        bracketAnchorOffset = null
-        pageView.setBracketAnchor(null)
-    }
-
-    /** The current chapter's source text (the StaticLayout's text), for word-snapping and excerpting. */
-    private fun currentChapterText(): String? {
-        val doc = document ?: return null
-        val cfg = config ?: return null
-        return (doc.chapter(state.spineIndex, cfg).measured as? AndroidMeasuredChapter)?.layout?.text?.toString()
-    }
-
-    /**
-     * A pen tap: if it lands inside an existing highlight, offer to remove it; otherwise it is a
-     * bracket endpoint — the first tap arms a start marker, a second tap in a different word commits
-     * the span, and a second tap in the same word cancels.
-     */
-    internal fun onStylusTap(offset: Int) {
-        hideDeleteChip() // any pen tap dismisses a chip from a previous tap; a hit below re-shows it
-        val existing = highlightContaining(chapterHighlights.toExisting(), offset)
-        if (existing != null) {
-            clearBracketAnchor() // a remove-tap also abandons any pending bracket
-            showDeleteChipAt(existing.id, offset)
-            return
-        }
-
-        val text = currentChapterText() ?: return
-        val anchor = bracketAnchorOffset
-        if (anchor == null) {
-            bracketAnchorOffset = offset
-            pageView.setBracketAnchor(offset)
-            return
-        }
-        // Tapping the same word as the anchor cancels; otherwise commit the span between them.
-        if (snapToWords(text, anchor, anchor) == snapToWords(text, offset, offset)) {
-            clearBracketAnchor()
-        } else {
-            clearBracketAnchor()
-            commitHighlight(minOf(anchor, offset), maxOf(anchor, offset))
-        }
-    }
-
-    /** A pen drag: clear any armed bracket and delete chip, then commit the swiped span. */
-    internal fun onStylusDrag(startOffset: Int, endOffset: Int) {
-        hideDeleteChip()
-        clearBracketAnchor()
-        commitHighlight(minOf(startOffset, endOffset), maxOf(startOffset, endOffset))
-    }
-
-    /**
-     * Word-snaps [rawStart,rawEnd], merges with the chapter's existing highlights, and writes one row
-     * — FK-guarded (a not-yet-indexed book has no `books` row) and cancellation-safe. Reloads the
-     * chapter's washes on success. All within the current chapter ([state.spineIndex]); brackets never
-     * cross chapters because the anchor is dropped on a chapter change (see [showPage]).
-     *
-     * `internal`, not `private`, purely as a test seam: [ReaderActivityTest] drives commits with
-     * explicit offsets so its assertions do not depend on Robolectric's coarse text measurement.
-     */
-    internal fun commitHighlight(rawStart: Int, rawEnd: Int) {
-        val doc = document ?: return
-        val cfg = config ?: return
-        val path = bookPath ?: return
-        val spineIndex = state.spineIndex
-        val text = currentChapterText() ?: return
-        val snapped = snapToWords(text, rawStart, rawEnd) ?: return // landed between words → no-op
-        lifecycleScope.launch {
-            val inLibrary = withContext(Dispatchers.IO) { database.bookDao().getByPath(path) != null }
-            if (!inLibrary) { showMessage(R.string.error_book_not_indexed); return@launch }
-            try {
-                val existing = withContext(Dispatchers.IO) { highlightDao().highlightsForChapter(path, spineIndex) }
-                val merge = mergeHighlights(existing.map { ExistingHighlight(it.id, it.startOffset, it.endOffset) }, snapped)
-                val pages = doc.chapter(spineIndex, cfg).pages
-                val frac = bookProgress(chapterWeights, spineIndex, pageIndexFor(pages, merge.merged.start), pages.size)
-                val excerpt = text.substring(merge.merged.start, merge.merged.end)
-                withContext(Dispatchers.IO) {
-                    highlightDao().replaceWithMerged(
-                        merge.removedIds,
-                        HighlightEntity(
-                            bookPath = path, spineIndex = spineIndex,
-                            startOffset = merge.merged.start, endOffset = merge.merged.end,
-                            text = excerpt, progressFraction = frac, createdAtMs = System.currentTimeMillis(),
-                        ),
-                    )
-                }
-                reloadChapterHighlightsIfCurrent(spineIndex)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                showError(R.string.error_save_highlight, e)
-            }
-        }
-    }
-
-    /**
-     * Reveals the [deleteChip] anchored under the tapped highlight (via [PageView.caretPointFor]),
-     * clamped to stay on screen. The chip is measured before it is shown so it appears already in
-     * place — no first-frame jump. Tapping it removes [highlightId]; tapping elsewhere hides it.
-     */
-    private fun showDeleteChipAt(highlightId: Long, offset: Int) {
-        val at = pageView.caretPointFor(offset) ?: return
-        pendingDeleteId = highlightId
-        deleteChip.measure(
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        val maxX = (pageView.width - deleteChip.measuredWidth).coerceAtLeast(0)
-        val maxY = (pageView.height - deleteChip.measuredHeight).coerceAtLeast(0)
-        deleteChip.translationX = at.x.coerceIn(0f, maxX.toFloat())
-        deleteChip.translationY = at.y.coerceIn(0f, maxY.toFloat())
-        deleteChip.visibility = View.VISIBLE
-    }
-
-    /** Hides the on-page delete chip and forgets its target. Safe to call when already hidden. */
-    private fun hideDeleteChip() {
-        pendingDeleteId = null
-        if (deleteChip.visibility != View.GONE) deleteChip.visibility = View.GONE
-    }
-
-    /** Deletes a highlight by id (off-main), reloads the current chapter's washes, then runs [also]. */
-    private fun deleteHighlight(id: Long, also: () -> Unit) {
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) { highlightDao().deleteById(id) }
-            reloadChapterHighlightsIfCurrent(state.spineIndex)
-            also()
-        }
-    }
-
-    /** Maps the cached entities to the engine's [ExistingHighlight] shape. */
-    private fun List<HighlightEntity>.toExisting(): List<ExistingHighlight> =
-        map { ExistingHighlight(it.id, it.startOffset, it.endOffset) }
-
-    /** One-shot off-main load of a chapter's highlights into the cache + PageView washes. */
-    private fun loadChapterHighlights(spineIndex: Int) {
-        val path = bookPath ?: return
-        lifecycleScope.launch {
-            val hl = try {
-                withContext(Dispatchers.IO) { highlightDao().highlightsForChapter(path, spineIndex) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                emptyList()
-            }
-            if (spineIndex != chapterHighlightsSpine) return@launch // a later chapter change won the race
-            chapterHighlights = hl
-            pageView.setHighlights(hl.map { it.startOffset to it.endOffset })
-        }
-    }
-
-    /** Reloads the chapter cache after an edit, but only if that chapter is still the one on screen. */
-    private fun reloadChapterHighlightsIfCurrent(spineIndex: Int) {
-        if (spineIndex == chapterHighlightsSpine) loadChapterHighlights(spineIndex)
-    }
-
     // -- Highlight test seams --------------------------------------------------------------------
     // The on-page gesture machine has no observable production surface of its own, so these read-only
     // hooks let ReaderActivityTest assert against the cache and the armed bracket without widening the
     // production API. None is called in production.
 
     /** The armed bracket-start offset, or null — a test's "did the chapter change drop it?" probe. */
-    internal val bracketAnchorForTest: Int? get() = bracketAnchorOffset
+    internal val bracketAnchorForTest: Int? get() = highlights.bracketAnchorForTest
 
     /** The current chapter's cached highlights — a test waits on this before tapping into a wash. */
-    internal val chapterHighlightsForTest: List<HighlightEntity> get() = chapterHighlights
+    internal val chapterHighlightsForTest: List<HighlightEntity> get() = highlights.chapterHighlightsForTest
 
     /** The current chapter's source text — a test computes the expected word-snap against it. */
     internal fun currentChapterTextForTest(): String? = currentChapterText()
@@ -761,7 +518,14 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     /** The on-page delete chip — a test asserts a highlight-tap reveals it and its tap deletes. */
-    internal val deleteChipForTest: TextView get() = deleteChip
+    internal val deleteChipForTest: TextView get() = highlights.deleteChipForTest
+
+    /** Pen entry points, forwarded so the tests can drive the gesture machine with exact offsets
+     *  rather than depending on Robolectric's coarse text measurement. */
+    internal fun onStylusTap(offset: Int) = highlights.onStylusTap(offset)
+    internal fun onStylusDrag(startOffset: Int, endOffset: Int) =
+        highlights.onStylusDrag(startOffset, endOffset)
+    internal fun commitHighlight(rawStart: Int, rawEnd: Int) = highlights.commit(rawStart, rawEnd)
 
     /** Wires every Aa-sheet control to its pref write + live re-paginate. Called once from onCreate;
      * the listeners hold no state and fire only on a deliberate tap, so they cost nothing at rest. */
@@ -888,7 +652,7 @@ open class ReaderActivity : AppCompatActivity() {
         // An anchored chip and a half-drawn overlay both point at coordinates that are about to stop
         // existing. The overlay's own layout follows the new viewport; the chip is positioned per-tap
         // and has no way to re-resolve itself, so it goes.
-        hideDeleteChip()
+        highlights.hideDeleteChip()
         pageView.doOnNextLayout { applySettingsChange { /* re-measure only; no pref changes */ } }
     }
 
@@ -1360,7 +1124,7 @@ open class ReaderActivity : AppCompatActivity() {
      * below is main-thread-confined, as `EpubDocument.chapter()`'s unsynchronized cache requires.
      */
     private fun onTap(zone: TapZone) {
-        hideDeleteChip() // a finger tap (page turn or overlay toggle) dismisses any on-page delete chip
+        highlights.hideDeleteChip() // a finger tap (page turn or overlay toggle) dismisses any on-page delete chip
         // While the overlay is up, any tap that reaches pageView is on the page area (the overlay's
         // Back control sits above pageView and consumes its own tap), so it dismisses the overlay
         // and turns NO page — not even a PREVIOUS/NEXT zone tap. Paired with the TOGGLE_OVERLAY show
@@ -1448,19 +1212,11 @@ open class ReaderActivity : AppCompatActivity() {
         val pageIndex = if (cfg.columnCount > 1) spreadStart(requested) else requested
         state = next.copy(pageIndex = pageIndex)
 
-        hideDeleteChip() // the page is changing; an anchored delete chip no longer points at anything
+        highlights.hideDeleteChip() // the page is changing; an anchored delete chip no longer points at anything
 
-        if (state.spineIndex != chapterHighlightsSpine) {
-            // Moved to a new chapter: a pending bracket cannot cross chapters, so drop it with a note.
-            if (bracketAnchorOffset != null) {
-                showMessage(R.string.highlight_cancelled_chapter_change)
-                clearBracketAnchor()
-            }
-            chapterHighlightsSpine = state.spineIndex
-            chapterHighlights = emptyList()
-            pageView.setHighlights(emptyList())
-            loadChapterHighlights(state.spineIndex)
-        }
+        // Reloads the chapter's washes when the chapter changed, and no-ops otherwise, so a page
+        // turn within a chapter costs no database read.
+        highlights.onChapterShown(state.spineIndex)
 
         // Keep the overlay's read-only readout current with the page just shown, so it is right the
         // next time the overlay opens. Reuses the chapter already fetched above — no extra work, and
