@@ -59,7 +59,7 @@ private fun compareNatural(a: String, b: String): Int {
  * a user ever re-points their library, so it has no search, no file display, and no gold-plating.
  * It lists the *directories* of the current location (starting at
  * [Environment.getExternalStorageDirectory]), naturally sorted; tapping one descends into it, an
- * getString(R.string.chooser_up) control ascends (disabled at the storage root), and getString(R.string.chooser_use_this_folder) writes the current
+ * "Up" control ascends (disabled at the storage root), and "Use this folder" writes the current
  * directory as the root and finishes back to [SettingsActivity].
  *
  * **It never writes anything under the storage tree** — it only reads directory listings and, on
@@ -86,7 +86,7 @@ open class DirectoryChooserActivity : AppCompatActivity() {
         val toolbar = Toolbar(this).apply {
             title = getString(R.string.chooser_title)
             // Up affordance (cancel/return): without it the only way out was the device Back
-            // gesture. This returns to Settings without choosing a folder — the getString(R.string.chooser_up) button in the
+            // gesture. This returns to Settings without choosing a folder — the "Up" button in the
             // list navigates the directory tree, a separate concern.
             setNavigationIcon(androidx.appcompat.R.drawable.abc_ic_ab_back_material)
             navigationContentDescription = getString(R.string.action_back)

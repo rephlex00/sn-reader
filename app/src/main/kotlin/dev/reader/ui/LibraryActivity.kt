@@ -342,7 +342,7 @@ open class LibraryActivity : AppCompatActivity() {
 
         emptyStateView = TextView(this).apply {
             gravity = Gravity.CENTER
-            setPadding(48, 96, 48, 96)
+            setPadding(dp(24), dp(48), dp(24), dp(48))
             visibility = View.GONE
         }
 
@@ -386,7 +386,7 @@ open class LibraryActivity : AppCompatActivity() {
         emptyStateView.isClickable = false
         emptyStateView.setOnClickListener(null)
         // Reflect the current state instead of hardcoding GONE: render() is the second writer to
-        // emptyStateView (a zero-match search/status filter shows getString(R.string.library_empty_no_matches) — see its own
+        // emptyStateView (a zero-match search/status filter shows the no-matches message — see its own
         // KDoc), and a stale library's sync() below does no DB writes when nothing changed, so
         // observeAllSorted never re-emits and render() never reruns on its own. Without this,
         // backgrounding and reopening the app with a zero-match filter active would wipe that
@@ -680,7 +680,11 @@ open class LibraryActivity : AppCompatActivity() {
      */
     protected fun openBook(book: BookEntity) {
         if (book.unreadable) {
-            Toast.makeText(this, "Unreadable: ${book.unreadableReason ?: "unknown reason"}", Toast.LENGTH_LONG).show()
+            // The stored reason is a wrapped exception message; it goes to the log, not to the
+            // reader. The shelf badge already follows this rule (see statusTextRes) and this path
+            // has to agree with it, or the same book explains itself two different ways.
+            Log.w(TAG, "openBook: unreadable ${book.path}: ${book.unreadableReason ?: "no reason recorded"}")
+            Toast.makeText(this, getString(R.string.error_open_book), Toast.LENGTH_LONG).show()
             // A transiently-unreadable book (half-synced file, permission hiccup) would otherwise
             // be unreadable forever: the indexer never re-cracks a row whose (size, mtime) is
             // unchanged. Tapping it is the user asking "try again" — invalidate the stored stat

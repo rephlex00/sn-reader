@@ -155,7 +155,7 @@ class BookGridAdapterBindTest {
 
     @Test
     fun `an unreadable book's list row says it cannot be opened, without the raw reason`() {
-        // statusText is unit-tested, but this pins the actual bound TextView: the row a user sees
+        // statusTextRes is unit-tested, but this pins the actual bound TextView: the row a user sees
         // must carry the reason, not just the pure helper's return value.
         val adapter = TestableAdapter(scope)
         val broken = book("/broken.epub", coverPath = null)

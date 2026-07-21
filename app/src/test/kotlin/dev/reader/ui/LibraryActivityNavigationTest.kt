@@ -20,7 +20,7 @@ import org.robolectric.Shadows.shadowOf
  * Robolectric coverage for Task 8c's folder navigation and view/flatten toggles on
  * [LibraryActivity], via the same protected-open + test-subclass seams as
  * [LibraryActivityRecreationTest] (see that file's KDoc for why the seams exist at all). The pure
- * projection itself ([folderListing], [clampToRoot], [statusText], [humanReadableSize]) is tested
+ * projection itself ([folderListing], [clampToRoot], [statusTextRes], [humanReadableSize]) is tested
  * without a device in [FolderListingTest] and [BookGridAdapterTest]; this file pins only the
  * Activity wiring around it — where a tap lands, what Back does, what persists.
  *
