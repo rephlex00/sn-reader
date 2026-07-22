@@ -118,7 +118,12 @@ class EinkController(serviceProvider: () -> Any?) : EpdRefresher {
         // Cleared before the call: if the restore throws and degrades the controller, a later retry
         // must not think fast mode is still held and loop on a dead call.
         fastModeHeld = false
-        if (degraded) return false
+        // Attempted even when `degraded` is already true. `degraded` is shared with cleanRefresh —
+        // if a SIBLING call threw and set it, that says nothing about setScreenMode's health, and
+        // skipping this restore would leave the panel stuck in SPEED mode device-wide until
+        // something else resets it. That is exactly the leak this method exists to prevent, so
+        // leaving it stuck is strictly worse than one more caught, failed call: if setScreenMode
+        // itself is genuinely dead, the call below is caught and no-ops harmlessly.
         return try {
             setter.invoke(m, DEFAULT_SCREEN_MODE, true)
             true

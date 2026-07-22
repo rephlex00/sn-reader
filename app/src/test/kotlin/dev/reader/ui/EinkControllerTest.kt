@@ -58,8 +58,11 @@ class EinkControllerTest {
     class FakeModeManager {
         val screenModeCalls = mutableListOf<Int>()
         var throwOnSet = false
+        var throwOnRefresh = false
 
-        fun screenRefresh(wait: Boolean, arg: Int) = Unit
+        fun screenRefresh(wait: Boolean, arg: Int) {
+            if (throwOnRefresh) throw RuntimeException("firmware says no")
+        }
         fun setScreenMode(mode: Int, flag: Boolean) {
             if (throwOnSet) throw RuntimeException("firmware says no")
             screenModeCalls += mode
@@ -115,5 +118,27 @@ class EinkControllerTest {
 
         assertThat(controller.enterFastMode()).isFalse()
         assertThat(controller.exitFastMode()).isFalse()
+    }
+
+    @Test
+    fun `exitFastMode still restores DEFAULT when a sibling call degraded the controller`() {
+        val manager = FakeModeManager()
+        val controller = EinkController { manager }
+
+        assertThat(controller.enterFastMode()).isTrue()
+        assertThat(manager.screenModeCalls.last()).isEqualTo(2) // EINK_SCREEN_MODE_SPEED
+
+        // A SIBLING call (cleanRefresh, not exitFastMode) throws and degrades the controller. The
+        // `degraded` flag is now shared-true, but the panel is still physically stuck in fast mode —
+        // exitFastMode has not run yet.
+        manager.throwOnRefresh = true
+        assertThat(controller.cleanRefresh()).isFalse()
+        assertThat(controller.available).isFalse()
+
+        // The mode-0 restore must still be attempted despite `degraded`: leaving the panel stuck in
+        // SPEED mode is strictly worse than one more caught, failed call. setScreenMode itself never
+        // throws here, so the restore succeeds.
+        controller.exitFastMode()
+        assertThat(manager.screenModeCalls.last()).isEqualTo(0) // EINK_SCREEN_MODE_DEFAULT
     }
 }

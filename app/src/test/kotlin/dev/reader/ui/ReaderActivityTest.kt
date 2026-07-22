@@ -439,6 +439,48 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `a Contents jump clean-refreshes only the destination page, not the page being left`() {
+        // The bug this guards: hideOverlay's own clean-on-close refresh used to fire unconditionally
+        // on every close, including the Contents/Bookmarks/Highlights jump path — flashing the OLD
+        // page clean (via closeOverlay) before goTo ever drew the destination, and leaving the
+        // destination itself un-clean-refreshed (showPage only invalidate()s).
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        // Opens on chapter 0.
+        assertThat(activity.currentTopOffsetForTest()!!.spineIndex).isEqualTo(0)
+
+        // Records which chapter was on screen (per the Activity's own state) at the moment each
+        // clean refresh actually fired — a refresh recorded against chapter 0 would mean the page
+        // being LEFT flashed clean before the jump landed.
+        val refreshedAtSpineIndex = mutableListOf<Int?>()
+        pageViewOf(activity).epd = object : EpdRefresher {
+            override val available = true
+            override fun cleanRefresh(): Boolean {
+                refreshedAtSpineIndex += activity.currentTopOffsetForTest()?.spineIndex
+                return true
+            }
+            override fun enterFastMode(): Boolean = false
+            override fun exitFastMode(): Boolean = false
+        }
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        val refreshesBefore = pageViewOf(activity).fullRefreshCount
+        clickTocRow(activity, position = 1) // tocEpub's second nav entry -> chapter index 1
+
+        // Exactly one clean refresh for the whole jump (not zero, not two — no flash of the old page
+        // AND no missing refresh of the new one), and it landed once chapter 1 was already on screen.
+        assertThat(pageViewOf(activity).fullRefreshCount - refreshesBefore).isEqualTo(1)
+        assertThat(refreshedAtSpineIndex).containsExactly(1)
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
     fun `system Back closes the overlay when shown and finishes when hidden`() {
         val controller = openedMultiPage()
         val activity = controller.get()

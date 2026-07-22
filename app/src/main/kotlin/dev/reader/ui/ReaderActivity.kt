@@ -403,9 +403,19 @@ open class ReaderActivity : AppCompatActivity() {
         override fun goTo(target: ReadingState) {
             showPage(target)
             flushPosition()
+            // goTo is only ever reached via jumpToAnchor (Contents/Bookmarks/Highlights), whose
+            // preceding closeOverlay() deliberately skipped its own clean refresh (see hideOverlay) —
+            // so this is the one clean refresh of the DESTINATION page for the whole jump. showPage
+            // only invalidate()s, so without this the landed-on page would carry whatever ghosting
+            // accumulated while the chrome (fast mode) was up, exactly the "crisp on return" promise
+            // a plain overlay close gets from hideOverlay's own refresh.
+            pageView.fullRefresh()
+            turnsSinceRefresh = 0
         }
 
-        override fun closeOverlay() = hideOverlay()
+        // The jump path: skips hideOverlay's own clean refresh (which would flash the page being
+        // LEFT) — goTo above supplies the one clean refresh of the DESTINATION page instead.
+        override fun closeOverlay() = hideOverlay(cleanRefresh = false)
 
         override fun message(messageId: Int) = showMessage(messageId)
 
@@ -456,10 +466,21 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.visibility = View.VISIBLE
     }
 
-    /** Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet, the
+    /**
+     * Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet, the
      * Contents panel, and the Bookmarks panel, so the overlay always reopens to its bare bar rather
-     * than a stale open panel. */
-    private fun hideOverlay() {
+     * than a stale open panel.
+     *
+     * [cleanRefresh] is false only on the jump path ([readerSurface]'s `closeOverlay`, called by
+     * [jumpToAnchor] before [goTo] draws a DIFFERENT page): a clean refresh here would flash the page
+     * being LEFT, and still leave the destination un-clean-refreshed once [goTo] draws over it —
+     * [goTo] does its own single refresh after the new page is on screen instead. The plain "return
+     * to reading, same page" close (the toggle tap and system Back) always wants true.
+     *
+     * [pageView.epd.exitFastMode] is unconditional either way — the screen-mode restore is
+     * device-wide runtime state (see [onPause]) and must happen on every close, jump or not.
+     */
+    private fun hideOverlay(cleanRefresh: Boolean = true) {
         settingsSheet.visibility = View.GONE
         tocPanel.visibility = View.GONE
         bookmarksPanel.visibility = View.GONE
@@ -470,10 +491,12 @@ open class ReaderActivity : AppCompatActivity() {
         highlights.cancelPendingSelection()
         overlay.visibility = View.GONE
         pageView.epd.exitFastMode()
-        // One clean refresh on the way out, so the page the reader returns to is crisp rather than
-        // carrying whatever ghosting fast mode accumulated while the chrome was up.
-        pageView.fullRefresh()
-        turnsSinceRefresh = 0
+        if (cleanRefresh) {
+            // One clean refresh on the way out, so the page the reader returns to is crisp rather
+            // than carrying whatever ghosting fast mode accumulated while the chrome was up.
+            pageView.fullRefresh()
+            turnsSinceRefresh = 0
+        }
     }
 
     /** Opens or closes the Aa sheet — a visibility flip (one redraw). Opening first syncs its
