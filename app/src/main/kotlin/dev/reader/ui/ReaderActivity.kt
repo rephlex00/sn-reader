@@ -712,6 +712,11 @@ open class ReaderActivity : AppCompatActivity() {
             // leaves the field agreeing with the page still on screen — the invariant the KDoc states.
             val newPages = doc.chapter(state.spineIndex, newConfig).pages
             config = newConfig
+            // The strip is keyed to the typography; a visual change makes it stale. Drop it so the
+            // preview degrades to the readout until a strip for the new config is loaded (Task 6
+            // regenerates and reloads). shownPreviewEntry is cleared so a later drag re-blits fresh.
+            previewStrip = null
+            shownPreviewEntry = null
             val newPageIndex = reflowedPageIndex(oldPages, state.pageIndex, newPages)
             state = ReadingState(state.spineIndex, newPageIndex)
             showPage(state)
@@ -1407,10 +1412,14 @@ open class ReaderActivity : AppCompatActivity() {
                 val bmp = android.graphics.BitmapFactory.decodeFile(
                     stripStore.thumbnailFile(bookFile, cfg, entry).path,
                 )
+                shownPreviewEntry = entry            // mark attempted either way — no re-decode churn
                 if (bmp != null) {
                     scrubPreview.setImageBitmap(bmp)
-                    shownPreviewEntry = entry
                     scrubPreview.visibility = View.VISIBLE
+                } else {
+                    // A missing/corrupt thumbnail: hide rather than leave a wrong page showing.
+                    scrubPreview.setImageDrawable(null)
+                    scrubPreview.visibility = View.GONE
                 }
             }
         }

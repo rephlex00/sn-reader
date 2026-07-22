@@ -1520,6 +1520,103 @@ class ReaderActivityTest {
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
     }
 
+    @Test
+    fun `a settings change drops the now-stale preview strip`() {
+        // Regression: previewStrip is keyed to the typography config it was generated against, but
+        // was only ever assigned in openFirstBook. applySettingsChange (the Aa path, also reached by
+        // rotation) reassigned config without touching previewStrip, so a font/margin change left the
+        // OLD strip's entries pointing at thumbnails for pagination that no longer exists.
+        clearReaderPrefs()
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        // Confirm the strip is live before the settings change: a drag shows the window.
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f)
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+        scrubber.onScrubCommit?.invoke(0.5f)
+        idleUntil { activity.scrubIdleForTest }
+
+        // Drive a real typography change through the Aa sheet — same seam Task 3's tests use.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.size_plus).performClick()
+
+        // The stale strip is dropped rather than served against the new pagination.
+        assertThat(activity.previewStripLoadedForTest).isFalse()
+
+        // A fresh drag degrades to the readout (window stays hidden) instead of showing a wrong page.
+        activity.findViewById<View>(R.id.settings_close).performClick()
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f)
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `a failed thumbnail decode hides the preview instead of leaving a stale one visible`() {
+        // Regression: onScrubMoved's blit only handled the bmp != null branch, so a missing/corrupt
+        // thumbnail left whatever was previously blitted on screen (now mismatched with the finger)
+        // and, because shownPreviewEntry was never set on failure, retried the same failing decode on
+        // every subsequent move at that entry.
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        val store = PreviewStripStore(RuntimeEnvironment.getApplication())
+        runBlocking { store.generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        // Corrupt the on-disk thumbnail nearest the fraction this test will drag to, so its decode
+        // fails without needing to reach into StripIndex internals.
+        val target = nearestEntry(
+            checkNotNull(store.stripFor(book, cfg)).entries,
+            0.5f,
+        )!!
+        val thumbnailFile = store.thumbnailFile(book, cfg, target)
+        assertThat(thumbnailFile.delete()).isTrue()
+
+        // Robolectric's ShadowBitmapFactory defaults allowInvalidImageData to true, which makes
+        // decodeFile hand back a synthetic placeholder bitmap for a missing/corrupt file instead of
+        // the real null a device returns — so a missing-file decode has to be forced here to actually
+        // exercise the null branch this test targets. Restored afterwards: it is a JVM-wide static
+        // that would otherwise leak into every later test in this fork.
+        org.robolectric.shadows.ShadowBitmapFactory.setAllowInvalidImageData(false)
+        try {
+            activity.showOverlayForTest()
+            val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+            val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+            scrubber.onScrubStart?.invoke()
+            scrubber.onScrubMove?.invoke(0.5f)
+
+            // The window stays hidden rather than showing a stale/mismatched bitmap, and nothing crashes.
+            assertThat(preview.visibility).isEqualTo(View.GONE)
+            assertThat(preview.drawable).isNull()
+
+            // Moving again at the same fraction re-hits the same (still-missing) file without crashing —
+            // the entry was marked attempted, so this is not an infinite decode retry, just idempotent.
+            scrubber.onScrubMove?.invoke(0.5f)
+            assertThat(preview.visibility).isEqualTo(View.GONE)
+        } finally {
+            org.robolectric.shadows.ShadowBitmapFactory.setAllowInvalidImageData(true)
+        }
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
