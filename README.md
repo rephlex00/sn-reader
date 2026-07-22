@@ -22,13 +22,17 @@ app uses **no measurable CPU at all**.
 
 ## What you get
 
-* **Your books, with covers**, scanned from a folder on the device and remembered where you left off
+* **Your books, with covers**, scanned from a folder on the device and remembered where you left
+  off; how far in you are shows as a small badge on the cover
 * **Typography that behaves like a book**: justified text with real hyphenation, generous margins,
   centered chapter openings, three bundled typefaces
 * **Two columns when you turn the tablet sideways**, a spread rather than one very wide column
 * **Pen highlighting** that knows your stylus from your palm
-* **Bookmarks, chapter jumps, and search** by title or author
-* **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for speed
+* **Bookmarks, a contents page set like a printed one, and search** by title or author
+* **A chapter scrubber**, with a tick for every chapter — drag through the whole book, and a
+  progress bar at the foot of the page marks where the current chapter ends
+* **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for
+  speed; menus repaint quickly too, without touching the page's own crisp refresh
 
 Reader opens **EPUB files only**. No PDF, no CBR, no CBZ.
 
