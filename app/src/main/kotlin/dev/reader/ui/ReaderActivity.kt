@@ -316,7 +316,13 @@ open class ReaderActivity : AppCompatActivity() {
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
         chapterScrubber = overlay.findViewById(R.id.chapter_scrubber)
-        chapterScrubber.onScrubStart = { scrubOrigin = state }
+        chapterScrubber.onScrubStart = {
+            // Cancel any still-running prior commit before starting a new drag. Without this, an
+            // old commit's showPage() can land mid-drag (a repaint during a drag, forbidden) and then
+            // null out scrubOrigin out from under this new drag, breaking a later abandon.
+            scrubJob?.cancel()
+            scrubOrigin = state
+        }
         chapterScrubber.onScrubMove = { fraction -> onScrubMoved(fraction) }
         chapterScrubber.onScrubCommit = { fraction -> onScrubCommitted(fraction) }
         chapterScrubber.onScrubCancel = { abandonScrub() }
@@ -1347,6 +1353,12 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private fun onScrubCommitted(fraction: Float) {
         scrubJob?.cancel()
+        // Lift-off is a commitment, not a draft: clear scrubOrigin synchronously, before launching
+        // the commit coroutine, so this navigation is no longer abandonable. Without this, dismissing
+        // the overlay during the ~230-360ms off-main-thread pagination below sees scrubOrigin still
+        // set and reverts the jump the user just committed (abandonScrub is now a no-op instead, since
+        // it early-returns on a null origin).
+        scrubOrigin = null
         scrubJob = lifecycleScope.launch {
             val located = locateByFraction(chapterWeights, fraction)
             val target = withContext(Dispatchers.IO) { resolveScrubTarget(located) }
@@ -1354,7 +1366,6 @@ open class ReaderActivity : AppCompatActivity() {
                 showPage(target)
                 session.drainPending()?.let { persistPosition(it) }
             }
-            scrubOrigin = null
         }
     }
 

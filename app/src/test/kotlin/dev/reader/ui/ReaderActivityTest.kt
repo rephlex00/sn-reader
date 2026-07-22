@@ -1339,6 +1339,88 @@ class ReaderActivityTest {
         assertThat(rowAfterAbandon.charOffset).isEqualTo(rowBeforeScrub.charOffset)
     }
 
+    @Test
+    fun `dismissing the overlay right after a commit does not revert the committed jump`() {
+        // Regression for the abandon-after-commit race: the commit's off-main-thread pagination
+        // takes ~230-360ms in production, and dismissing the overlay (center-tap or Back) anywhere
+        // in that window used to run abandonScrub, which saw scrubOrigin still set and reverted the
+        // navigation the user just committed. onScrubCommitted now clears scrubOrigin synchronously,
+        // before the coroutine launches, so this dismiss — fired before the looper has even been
+        // idled once — must find abandonScrub a no-op and let the commit land.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubCommit?.invoke(0.9f)
+        // Dismiss immediately — no idling in between — so this lands squarely inside the commit's
+        // still-in-flight pagination window, exactly the race the finding describes.
+        activity.hideOverlayForTest()
+        idleUntil { activity.scrubIdleForTest }
+
+        // The committed jump landed (chapter 3 of 3, not the chapter-1 starting position) ...
+        assertThat(activity.currentStateForTest.spineIndex).isGreaterThan(0)
+        // ... and it persisted, rather than being silently discarded by an abandon.
+        idleUntil { rowFor(app, book.path)!!.spineIndex > 0 }
+        assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(0)
+    }
+
+    @Test
+    fun `starting a new scrub cancels a still-running prior commit instead of rendering it later`() {
+        // Regression for the overlapping-scrubs race: previously onScrubStart overwrote scrubOrigin
+        // but never cancelled a still-running scrubJob from an earlier commit, so that old job would
+        // eventually call showPage with its stale target — a page repaint DURING the new drag, which
+        // the scrubber contract forbids. onScrubStart now cancels scrubJob first, so the stale commit
+        // must never render.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        val pagesBefore = activity.pagesShownForTest
+
+        // First drag, committed toward chapter 3 — then, crucially, NOT idled. The commit's coroutine
+        // is left suspended on Dispatchers.IO with its resumption still sitting, unprocessed, on the
+        // (paused) main looper's queue.
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubCommit?.invoke(0.9f)
+
+        // A second drag begins before that resumption is ever processed. Without the fix this is
+        // exactly where the stale job survives to render later, mid-drag.
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.1f)
+
+        // Now let everything that's going to run, run. If the first commit had survived, its
+        // showPage(chapter 3) would land here — a repaint during the still-open second drag.
+        idleUntil { activity.scrubIdleForTest }
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
+
+        // The second drag is still the one in control: committing IT (toward chapter 1) is the only
+        // render that should ever land, proving scrubOrigin/scrubJob were governed by the second
+        // drag throughout, not clobbered by the first commit.
+        scrubber.onScrubCommit?.invoke(0.1f)
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore + 1)
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
