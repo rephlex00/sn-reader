@@ -206,6 +206,15 @@ open class ReaderActivity : AppCompatActivity() {
     private var shownPreviewEntry: StripEntry? = null
 
     /**
+     * Spine chapters whose thumbnail(s) already exist — pushed to [chapterScrubber] so the track
+     * lights up chapter-by-chapter as generation runs, rather than only once the whole strip lands.
+     * Seeded from [previewStrip] when one is already on disk at open ([openFirstBook]); rebuilt from
+     * empty at the start of each [scheduleStripGeneration] run (a fresh generation starts all-dashed)
+     * and grown live by its `onChapterDone` callback.
+     */
+    private val generatedChapters = mutableSetOf<Int>()
+
+    /**
      * The Aa typography sheet — a visibility-toggled panel inside [overlay], opened by the Aa button.
      * Holds no timer or animation: showing/hiding is one `visibility` flip. Each of its controls
      * writes a [ReaderPrefs] field then live-re-paginates the current chapter via
@@ -466,6 +475,14 @@ open class ReaderActivity : AppCompatActivity() {
         }
 
         override fun firstNonEmptyFrom(spineIndex: Int): ReadingState? {
+            // [spineIndex] itself has pages: it IS the first readable position — the interface's
+            // documented contract ("the first readable position AT [spineIndex]..."). advance()
+            // instead resolves a forward PAGE TURN from (spineIndex, 0), which for a chapter that
+            // already has pages returns its SECOND page, not its first — every caller before the
+            // scrub-commit snap path only ever invoked this once pageCountFor(spineIndex) was
+            // already known to be 0 (see tocTarget/resolveStart), so that off-by-one landmine was
+            // never tripped until a snapped commit called this directly on a non-empty chapter.
+            if (pageCountFor(spineIndex) > 0) return ReadingState(spineIndex, 0)
             val nav = navigator ?: return null
             return advance(nav, ReadingState(spineIndex, 0), ::pageCountFor)
         }
@@ -536,6 +553,57 @@ open class ReaderActivity : AppCompatActivity() {
         override fun toggleFasterTurns() = this@ReaderActivity.toggleFasterTurns()
 
         override fun applyRefreshFrequency(pages: Int) = this@ReaderActivity.applyRefreshFrequency(pages)
+
+        /**
+         * Flips [ReaderPrefs.previewsEnabled]. Turning previews ON schedules generation if this book
+         * has no strip yet (mirrors [openFirstBook]'s own gate); it never deletes a strip that
+         * already exists, so a reader toggling off-then-on again gets the strip back instantly rather
+         * than paying to regenerate it. Turning previews OFF hides the floating preview window
+         * immediately — the dashing/solid track and the window are what "off" means to visit again,
+         * and holding a stale blitted bitmap or entry across the toggle would be wrong the next time
+         * a drag turns previews back on before a new one is chosen.
+         */
+        override fun togglePreviews() {
+            val prefs = ReaderPrefs(this@ReaderActivity)
+            val enabled = !prefs.previewsEnabled
+            prefs.previewsEnabled = enabled
+            chapterScrubber.setPreviewsEnabled(enabled)
+            if (enabled) {
+                if (previewStrip == null) scheduleStripGeneration()
+            } else {
+                scrubPreview.visibility = View.GONE
+                scrubPreview.setImageDrawable(null)
+                shownPreviewEntry = null
+            }
+        }
+
+        /**
+         * Deletes every strip this book owns (see [PreviewStripStore.deleteStripsFor]) and clears the
+         * in-memory mirror of it, pushing the empty set to the scrubber so the track goes back to
+         * all-dashed. Does NOT flip [ReaderPrefs.previewsEnabled] or re-schedule generation — deleting
+         * is a standalone "reclaim the disk space" action; a reader who wants it back opens the book
+         * again (or the next config change re-triggers it).
+         */
+        override fun deletePreviewsForCurrentBook() {
+            bookPath?.let { stripStore.deleteStripsFor(File(it)) }
+            previewStrip = null
+            shownPreviewEntry = null
+            generatedChapters.clear()
+            chapterScrubber.setGeneratedChapters(emptySet())
+        }
+
+        /** See [SettingsHost.previewGenerationProgress]: only meaningful mid-generation — previews
+         *  off, or a strip already loaded (complete OR simply absent with nothing running), report
+         *  null rather than a stale or zero count. */
+        override fun previewGenerationProgress(): Pair<Int, Int>? {
+            val doc = document ?: return null
+            val prefs = ReaderPrefs(this@ReaderActivity)
+            return if (prefs.previewsEnabled && previewStrip == null && stripGenerationJob?.isActive == true) {
+                generatedChapters.size to doc.spineSize
+            } else {
+                null
+            }
+        }
     }
 
     /** The app's single Room database — the panels take the DAOs they need from it. */
@@ -1171,9 +1239,19 @@ open class ReaderActivity : AppCompatActivity() {
                     // The scrubbing preview's thumbnail strip, if one has been generated for this
                     // exact (book, config) already.
                     previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, renderConfig) }
+                    // Push the previews-on/off state and the generated-chapters set (derived from the
+                    // strip just loaded, if any) to the scrubber, so a book reopened with a complete
+                    // strip already on disk shows its track solid from the first frame rather than
+                    // dashed until some later event repaints it.
+                    chapterScrubber.setPreviewsEnabled(ReaderPrefs(this@ReaderActivity).previewsEnabled)
+                    previewStrip?.let {
+                        generatedChapters.clear()
+                        generatedChapters.addAll(generatedChaptersOf(it))
+                        chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
+                    }
                     // No valid strip for this (book, config): schedule the one-shot background
-                    // generation. Absent until it completes, the preview window simply never shows —
-                    // the correct, non-crashing fallback.
+                    // generation (itself gated on previewsEnabled). Absent until it completes, the
+                    // preview window simply never shows — the correct, non-crashing fallback.
                     if (previewStrip == null) scheduleStripGeneration()
                 }
             } catch (e: CancellationException) {
@@ -1223,14 +1301,27 @@ open class ReaderActivity : AppCompatActivity() {
      * open` purely as the test seam.
      */
     protected open fun scheduleStripGeneration() {
+        if (!ReaderPrefs(this).previewsEnabled) return // off: no generation to schedule
         val file = bookPath?.let(::File) ?: return
         val cfg = config ?: return
         val previous = stripGenerationJob
+        // A fresh generation starts from empty — every chapter draws dashed until onChapterDone
+        // says otherwise, even if a stale set survived from a superseded run.
+        generatedChapters.clear()
+        chapterScrubber.setGeneratedChapters(emptySet())
         stripGenerationJob = lifecycleScope.launch {
             // Wait for any prior generator to fully stop before regenerating — see KDoc above.
             previous?.cancelAndJoin()
             try {
-                stripStore.generate(file, cfg)
+                stripStore.generate(file, cfg) { spineIndex ->
+                    // Fires on Dispatchers.Default (see generate's KDoc); marshal to the main thread
+                    // before touching the Activity's fields or any View.
+                    runOnUiThread {
+                        generatedChapters.add(spineIndex)
+                        chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
+                        settings.refresh() // live "N / M chapters" readout, a no-op while the sheet is closed
+                    }
+                }
                 stripStore.evictOverBudget(keep = file)
                 previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, cfg) }
             } catch (e: CancellationException) {
@@ -1459,28 +1550,51 @@ open class ReaderActivity : AppCompatActivity() {
 
     /**
      * A drag position: update the readout text only. Deliberately NO pagination and NO page render —
-     * the book page does not repaint until the finger lifts. The chapter title comes from the same
-     * pure TOC lookup the running foot uses; mapping the fraction to a chapter touches only
-     * chapterWeights, never the document.
+     * the book page does not repaint until the finger lifts.
+     *
+     * [snappedChapter] (from [ChapterScrubberView]'s detent) takes priority when present, for both
+     * halves of this function: the readout names the chapter it snapped to (via [chapterTitleFor]),
+     * rather than whatever chapter the raw fraction resolves to, and the preview blits that chapter's
+     * OPENING thumbnail ([entryForChapterOpening]) rather than the nearest sampled page — showing the
+     * finger the chapter it is about to land on, not a boundary page one drag-pixel either side of it.
+     * Unsnapped, both fall back to the prior fraction-based lookups ([locateByFraction]/[nearestEntry]).
      */
-    @Suppress("UNUSED_PARAMETER")
     private fun onScrubMoved(fraction: Float, snappedChapter: Int?) {
         val doc = document ?: return
-        val located = locateByFraction(chapterWeights, fraction)
+        val title = if (snappedChapter != null) {
+            chapterTitleFor(doc.toc, snappedChapter)
+        } else {
+            chapterTitleFor(doc.toc, locateByFraction(chapterWeights, fraction).spineIndex)
+        }
         scrubberView.text = getString(
             R.string.scrubber_position,
-            chapterTitleFor(doc.toc, located.spineIndex).orEmpty(),
+            title.orEmpty(),
             (fraction.coerceIn(0f, 1f) * 100).roundToInt(),
         )
 
-        // The preview blit: nearest sampled thumbnail, decoded off disk. No strip -> no window; the
-        // readout above already carries chapter + percent. Never paginates, never touches the page.
+        // Previews off: the readout above is the whole story; the window stays GONE (wherever it
+        // already was — togglePreviews hides it the moment previews go off) and no disk is touched.
+        if (!ReaderPrefs(this).previewsEnabled) return
+
+        // The preview blit: the snapped chapter's opening thumbnail, or (unsnapped) the nearest
+        // sampled page, decoded off disk. No strip -> no window; the readout above already carries
+        // chapter + percent. Never paginates, never touches the page.
         val strip = previewStrip
         val bookFile = bookPath?.let(::File)
         val cfg = config
         if (strip != null && bookFile != null && cfg != null) {
-            val entry = nearestEntry(strip.entries, fraction)
-            if (entry != null && entry != shownPreviewEntry) {
+            val entry = if (snappedChapter != null) {
+                entryForChapterOpening(strip.entries, snappedChapter)
+            } else {
+                nearestEntry(strip.entries, fraction)
+            }
+            if (entry == null) {
+                // A snapped chapter with no sampled opening (e.g. a zero-page image chapter never
+                // entered the plan): hide rather than leave a mismatched thumbnail from a moment ago.
+                scrubPreview.setImageDrawable(null)
+                scrubPreview.visibility = View.GONE
+                shownPreviewEntry = null
+            } else if (entry != shownPreviewEntry) {
                 val bmp = android.graphics.BitmapFactory.decodeFile(
                     stripStore.thumbnailFile(bookFile, cfg, entry).path,
                 )
@@ -1501,8 +1615,14 @@ open class ReaderActivity : AppCompatActivity() {
      * Lift-off: this is the only path that renders a page from a scrub. Paginate the selected chapter
      * off the main thread, show the page, persist it, and clear the scrub. One clean refresh, because
      * the page has not been drawn since the drag began.
+     *
+     * [snappedChapter], when present, resolves through [ReaderSurface.firstNonEmptyFrom] straight to
+     * that chapter's FIRST page — the fix for the reported bug: resolving even a snapped commit
+     * through the boundary fraction ([resolveScrubTarget]) could land one page into the PREVIOUS
+     * chapter, since the fraction the thumb snapped to is the chapter's start, and a `roundToInt`
+     * against the previous chapter's page count can round up to its last page. Unsnapped commits are
+     * unaffected: they still resolve through the raw fraction, same as before.
      */
-    @Suppress("UNUSED_PARAMETER")
     private fun onScrubCommitted(fraction: Float, snappedChapter: Int?) {
         scrubJob?.cancel()
         // Capture the position being LEFT now — `state` still holds it here, since showPage (inside
@@ -1523,8 +1643,13 @@ open class ReaderActivity : AppCompatActivity() {
         scrubPreview.setImageDrawable(null)
         shownPreviewEntry = null
         scrubJob = lifecycleScope.launch {
-            val located = locateByFraction(chapterWeights, fraction)
-            val target = withContext(Dispatchers.IO) { resolveScrubTarget(located) }
+            val target = withContext(Dispatchers.IO) {
+                if (snappedChapter != null) {
+                    readerSurface.firstNonEmptyFrom(snappedChapter)
+                } else {
+                    resolveScrubTarget(locateByFraction(chapterWeights, fraction))
+                }
+            }
             // Only a commit that actually moves the reader is a jump: a null target (a chapter that
             // paginates to zero pages, e.g. image-only/cover content) or a target equal to where we
             // already are pushes nothing onto the back-stack and arms no ↩ — mirroring jumpToAnchor
@@ -1617,6 +1742,21 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** True once [loadPreviewStripForTest] (or the real open-time load) has found a strip. */
     internal val previewStripLoadedForTest: Boolean get() = previewStrip != null
+
+    /** The open book's absolute path — a test's seam for building files/strips against the same book
+     *  without reaching into [Intent] extras itself. Not called in production. */
+    internal val bookPathForTest: String? get() = bookPath
+
+    /** Sets [ReaderPrefs.previewsEnabled] directly and pushes it to the scrubber, without going
+     *  through a real Aa-sheet tap — a test's way to drive the previews-off path. Not called in
+     *  production; production always goes through [SettingsHost.togglePreviews]. */
+    internal fun setPreviewsEnabledForTest(enabled: Boolean) {
+        ReaderPrefs(this).previewsEnabled = enabled
+        chapterScrubber.setPreviewsEnabled(enabled)
+    }
+
+    /** Drives the Aa sheet's per-book delete without a real tap. Not called in production. */
+    internal fun deletePreviewsForCurrentBookForTest() = settingsHost.deletePreviewsForCurrentBook()
 
     /**
      * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s

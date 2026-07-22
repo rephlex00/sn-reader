@@ -1700,6 +1700,71 @@ class ReaderActivityTest {
         }
     }
 
+    // -- Task 4 (scrubber v2.1): snap fix, previews toggle, per-book delete ---------------------
+
+    @Test
+    fun `a snapped commit opens the chapter's first page, not the previous chapter's last`() {
+        // The reported bug: a scrub snapped to a chapter tick used to resolve through the boundary
+        // fraction (locateByFraction), which landed on the PREVIOUS chapter's last page instead of
+        // the snapped chapter's own first page.
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        scrubber.onScrubCommit?.invoke(0f, 2) // snapped to chapter 2 (0-indexed; tocEpub's 3rd chapter)
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(2)
+        assertThat(activity.currentStateForTest.pageIndex).isEqualTo(0) // first page, not previous chapter's last
+    }
+
+    @Test
+    fun `turning previews off suppresses the preview window and marks the track all-solid`() {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        // Generate + load a strip so the preview window would otherwise show.
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.setPreviewsEnabledForTest(false)
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f, null)
+
+        assertThat(preview.visibility).isEqualTo(View.GONE) // no window when previews off
+    }
+
+    @Test
+    fun `deleting previews for the book clears the strip`() {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.deletePreviewsForCurrentBookForTest()
+
+        assertThat(
+            PreviewStripStore(RuntimeEnvironment.getApplication())
+                .stripFor(File(activity.bookPathForTest!!), cfg),
+        ).isNull()
+    }
+
     // -- Task 6: strip-generation triggers -------------------------------------------------------
 
     // Pins the display to exactly VIEWPORT_W x VIEWPORT_H: without it, Robolectric's

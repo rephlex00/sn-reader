@@ -496,6 +496,42 @@
                 <TextView android:id="@+id/refresh_freq_10" style="@style/AaOption" android:text="@string/refresh_every_10" />
             </LinearLayout>
 
+            <LinearLayout
+                android:id="@+id/toggle_previews"
+                style="@style/AaToggleRow">
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_previews" />
+                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_previews_switch"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <!-- Shown only while a strip is actively generating for the open book: a live
+                 "N / M chapters" readout and a way to clear it for this book. Gone otherwise,
+                 the same conditional-row pattern as refresh_frequency_row above. -->
+            <LinearLayout
+                android:id="@+id/previews_status_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/previews_generating_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingVertical="4dp"
+                    android:textColor="@android:color/black"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/previews_delete"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingVertical="6dp"
+                    android:text="@string/previews_delete"
+                    android:textColor="@android:color/black"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
         </LinearLayout>
 
     </ScrollView>

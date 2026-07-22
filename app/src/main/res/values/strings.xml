@@ -96,6 +96,9 @@
     <string name="refresh_every_3">3</string>
     <string name="refresh_every_6">6</string>
     <string name="refresh_every_10">10</string>
+    <string name="setting_previews">Page previews</string>
+    <string name="previews_generating">Generating previews… %1$d / %2$d chapters</string>
+    <string name="previews_delete">Delete previews for this book</string>
 
     <!-- Settings and folder chooser -->
     <string name="settings_title">Settings</string>
