@@ -45,3 +45,41 @@ fun chapterEndFraction(weights: List<Long>, spineIndex: Int): Float {
     val through = (0..idx).sumOf { maxOf(0L, weights[it]) }
     return (through.toFloat() / total).coerceIn(0f, 1f)
 }
+
+/**
+ * Where a whole-book fraction falls: which chapter, and how far into it. The inverse of
+ * [bookProgress], used by the scrubber to turn a release position into a reading position.
+ */
+data class BookLocation(val spineIndex: Int, val fractionWithinChapter: Float)
+
+/**
+ * Maps a whole-book [fraction] back to a chapter and a position within it, weighting chapters by
+ * [weights] exactly as [bookProgress] does. Pure.
+ *
+ * Zero-weight chapters are never landed on: they occupy no span, so the scan passes straight over
+ * them to the next chapter with real content. That matters because an empty chapter paginates to
+ * nothing, and a scrubber that could land on one would show a blank page.
+ *
+ * Defensive on the same terms as [bookProgress]: an empty or zero-total [weights] returns the start
+ * of the book, negative weights are floored at zero, and [fraction] is clamped to `[0f, 1f]` so a
+ * finger dragged past either end lands on the first or last page rather than throwing.
+ */
+fun locateByFraction(weights: List<Long>, fraction: Float): BookLocation {
+    if (weights.isEmpty()) return BookLocation(0, 0f)
+    val total = weights.sumOf { maxOf(0L, it) }
+    if (total <= 0L) return BookLocation(0, 0f)
+
+    val target = fraction.coerceIn(0f, 1f) * total
+    var consumed = 0f
+    for (index in weights.indices) {
+        val weight = maxOf(0L, weights[index]).toFloat()
+        if (weight <= 0f) continue // an empty chapter occupies no span — never land on one
+        if (target <= consumed + weight) {
+            return BookLocation(index, ((target - consumed) / weight).coerceIn(0f, 1f))
+        }
+        consumed += weight
+    }
+    // Fraction 1.0, or float drift past the final boundary: the end of the last non-empty chapter.
+    val lastNonEmpty = weights.indices.lastOrNull { maxOf(0L, weights[it]) > 0L } ?: 0
+    return BookLocation(lastNonEmpty, 1f)
+}
