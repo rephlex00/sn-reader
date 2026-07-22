@@ -1405,7 +1405,7 @@ class ReaderActivityTest {
         // A second drag begins before that resumption is ever processed. Without the fix this is
         // exactly where the stale job survives to render later, mid-drag.
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.1f)
+        scrubber.onScrubMove?.invoke(0.5f)
 
         // Now let everything that's going to run, run. If the first commit had survived, its
         // showPage(chapter 3) would land here — a repaint during the still-open second drag.
@@ -1413,14 +1413,16 @@ class ReaderActivityTest {
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
 
-        // The second drag is still the one in control: committing IT (toward chapter 1) is the only
-        // render that should ever land, proving scrubOrigin/scrubJob were governed by the second
-        // drag throughout, not clobbered by the first commit.
-        scrubber.onScrubCommit?.invoke(0.1f)
+        // The second drag is still the one in control: committing IT (toward chapter 2, a genuine
+        // move off the spineIndex-0 starting position — onScrubCommitted now skips the render
+        // entirely for a same-page commit, so this has to land somewhere new to prove a render
+        // happened at all) is the only render that should ever land, proving scrubOrigin/scrubJob
+        // were governed by the second drag throughout, not clobbered by the first commit.
+        scrubber.onScrubCommit?.invoke(0.5f)
         idleUntil { activity.scrubIdleForTest }
 
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore + 1)
-        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(1)
     }
 
     // -- Task 5: the jump back-stack -----------------------------------------------------------
@@ -1442,6 +1444,30 @@ class ReaderActivityTest {
 
         back.performClick()
         idleUntil { activity.currentStateForTest == origin }
+        assertThat(activity.currentStateForTest).isEqualTo(origin)
+        assertThat(back.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `a scrub commit that lands back on the current page does not arm the back control`() {
+        // Regression: onScrubCommitted used to push the jump back-stack unconditionally, BEFORE the
+        // target resolved — so a commit that resolves to the page already on screen (e.g. a chapter
+        // that paginates to zero pages, or simply releasing back where the drag started) still armed
+        // ↩, pointing it at a page the reader never left. The push is now guarded on `target != origin`,
+        // mirroring jumpToAnchor (6d822a3). Fraction 0f resolves to spineIndex 0 / pageIndex 0, which
+        // is exactly where openedWithToc() leaves the reader — a genuine no-op commit.
+        val controller = openedWithToc()
+        val activity = controller.get()
+        val origin = activity.currentStateForTest
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val back = activity.findViewById<TextView>(R.id.scrubber_back)
+
+        assertThat(back.visibility).isEqualTo(View.GONE)
+
+        scrubber.onScrubCommit?.invoke(0f)
+        idleUntil { activity.scrubIdleForTest }
+
         assertThat(activity.currentStateForTest).isEqualTo(origin)
         assertThat(back.visibility).isEqualTo(View.GONE)
     }

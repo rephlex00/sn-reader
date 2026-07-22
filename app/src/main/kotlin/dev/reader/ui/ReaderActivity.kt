@@ -1503,11 +1503,11 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private fun onScrubCommitted(fraction: Float) {
         scrubJob?.cancel()
-        // Push the position being LEFT onto the jump back-stack — `state` still holds it here,
-        // since showPage (inside the coroutine below) hasn't moved it yet. Unrelated to scrubOrigin
-        // below: that field is the ABANDON path's memory, this is the ↩ control's.
-        jumpStack.push(state)
-        updateBackControl()
+        // Capture the position being LEFT now — `state` still holds it here, since showPage (inside
+        // the coroutine below) hasn't moved it yet. The jump back-stack push itself is deferred until
+        // the target resolves below (see the comment there); this is unrelated to scrubOrigin below:
+        // that field is the ABANDON path's memory, this is the ↩ control's.
+        val origin = state
         // Lift-off is a commitment, not a draft: clear scrubOrigin synchronously, before launching
         // the commit coroutine, so this navigation is no longer abandonable. Without this, dismissing
         // the overlay during the ~230-360ms off-main-thread pagination below sees scrubOrigin still
@@ -1523,7 +1523,13 @@ open class ReaderActivity : AppCompatActivity() {
         scrubJob = lifecycleScope.launch {
             val located = locateByFraction(chapterWeights, fraction)
             val target = withContext(Dispatchers.IO) { resolveScrubTarget(located) }
-            if (target != null) {
+            // Only a commit that actually moves the reader is a jump: a null target (a chapter that
+            // paginates to zero pages, e.g. image-only/cover content) or a target equal to where we
+            // already are pushes nothing onto the back-stack and arms no ↩ — mirroring jumpToAnchor
+            // (6d822a3), which pushes only after its target resolves, for the same reason.
+            if (target != null && target != origin) {
+                jumpStack.push(origin)
+                updateBackControl()
                 showPage(target)
                 session.drainPending()?.let { persistPosition(it) }
             }
