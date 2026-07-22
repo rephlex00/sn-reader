@@ -1279,9 +1279,9 @@ class ReaderActivityTest {
 
         val pagesBefore = activity.pagesShownForTest
 
-        scrubber.onScrubMove?.invoke(0.4f)
-        scrubber.onScrubMove?.invoke(0.6f)
-        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.4f, null)
+        scrubber.onScrubMove?.invoke(0.6f, null)
+        scrubber.onScrubMove?.invoke(0.9f, null)
 
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
     }
@@ -1301,8 +1301,8 @@ class ReaderActivityTest {
 
         val pagesBefore = activity.pagesShownForTest
 
-        scrubber.onScrubMove?.invoke(0.9f)
-        scrubber.onScrubCommit?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
         idleUntil { activity.scrubIdleForTest }
 
         assertThat(activity.pagesShownForTest).isGreaterThan(pagesBefore)
@@ -1331,7 +1331,7 @@ class ReaderActivityTest {
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
 
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.9f, null)
         activity.abandonScrubForTest()
         idleUntil { activity.scrubIdleForTest }
 
@@ -1361,8 +1361,8 @@ class ReaderActivityTest {
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
 
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.9f)
-        scrubber.onScrubCommit?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
         // Dismiss immediately — no idling in between — so this lands squarely inside the commit's
         // still-in-flight pagination window, exactly the race the finding describes.
         activity.hideOverlayForTest()
@@ -1399,13 +1399,13 @@ class ReaderActivityTest {
         // is left suspended on Dispatchers.IO with its resumption still sitting, unprocessed, on the
         // (paused) main looper's queue.
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.9f)
-        scrubber.onScrubCommit?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
 
         // A second drag begins before that resumption is ever processed. Without the fix this is
         // exactly where the stale job survives to render later, mid-drag.
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.5f)
+        scrubber.onScrubMove?.invoke(0.5f, null)
 
         // Now let everything that's going to run, run. If the first commit had survived, its
         // showPage(chapter 3) would land here — a repaint during the still-open second drag.
@@ -1418,7 +1418,7 @@ class ReaderActivityTest {
         // entirely for a same-page commit, so this has to land somewhere new to prove a render
         // happened at all) is the only render that should ever land, proving scrubOrigin/scrubJob
         // were governed by the second drag throughout, not clobbered by the first commit.
-        scrubber.onScrubCommit?.invoke(0.5f)
+        scrubber.onScrubCommit?.invoke(0.5f, null)
         idleUntil { activity.scrubIdleForTest }
 
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore + 1)
@@ -1438,7 +1438,7 @@ class ReaderActivityTest {
 
         assertThat(back.visibility).isEqualTo(View.GONE)
 
-        scrubber.onScrubCommit?.invoke(0.9f)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
         idleUntil { activity.scrubIdleForTest }
         assertThat(back.visibility).isEqualTo(View.VISIBLE)
 
@@ -1465,7 +1465,7 @@ class ReaderActivityTest {
 
         assertThat(back.visibility).isEqualTo(View.GONE)
 
-        scrubber.onScrubCommit?.invoke(0f)
+        scrubber.onScrubCommit?.invoke(0f, null)
         idleUntil { activity.scrubIdleForTest }
 
         assertThat(activity.currentStateForTest).isEqualTo(origin)
@@ -1528,10 +1528,10 @@ class ReaderActivityTest {
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
 
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.5f)
+        scrubber.onScrubMove?.invoke(0.5f, null)
         assertThat(preview.visibility).isEqualTo(View.VISIBLE)
 
-        scrubber.onScrubCommit?.invoke(0.5f)
+        scrubber.onScrubCommit?.invoke(0.5f, null)
         idleUntil { activity.scrubIdleForTest }
         assertThat(preview.visibility).isEqualTo(View.GONE)
     }
@@ -1554,7 +1554,7 @@ class ReaderActivityTest {
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
 
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.5f)
+        scrubber.onScrubMove?.invoke(0.5f, null)
         scrubber.onScrubCancel?.invoke()
 
         assertThat(preview.visibility).isEqualTo(View.GONE)
@@ -1571,7 +1571,7 @@ class ReaderActivityTest {
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
 
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.5f)
+        scrubber.onScrubMove?.invoke(0.5f, null)
 
         // Window stays hidden (text readout carries the position); nothing crashes, nothing paginates.
         assertThat(preview.visibility).isEqualTo(View.GONE)
@@ -1596,9 +1596,9 @@ class ReaderActivityTest {
         val pagesBefore = activity.pagesShownForTest
 
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.3f)
-        scrubber.onScrubMove?.invoke(0.6f)
-        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.3f, null)
+        scrubber.onScrubMove?.invoke(0.6f, null)
+        scrubber.onScrubMove?.invoke(0.9f, null)
 
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
     }
@@ -1627,9 +1627,9 @@ class ReaderActivityTest {
 
         // Confirm the strip is live before the settings change: a drag shows the window.
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.5f)
+        scrubber.onScrubMove?.invoke(0.5f, null)
         assertThat(preview.visibility).isEqualTo(View.VISIBLE)
-        scrubber.onScrubCommit?.invoke(0.5f)
+        scrubber.onScrubCommit?.invoke(0.5f, null)
         idleUntil { activity.scrubIdleForTest }
 
         // Drive a real typography change through the Aa sheet — same seam Task 3's tests use.
@@ -1642,7 +1642,7 @@ class ReaderActivityTest {
         // A fresh drag degrades to the readout (window stays hidden) instead of showing a wrong page.
         activity.findViewById<View>(R.id.settings_close).performClick()
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.5f)
+        scrubber.onScrubMove?.invoke(0.5f, null)
         assertThat(preview.visibility).isEqualTo(View.GONE)
     }
 
@@ -1685,7 +1685,7 @@ class ReaderActivityTest {
             val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
 
             scrubber.onScrubStart?.invoke()
-            scrubber.onScrubMove?.invoke(0.5f)
+            scrubber.onScrubMove?.invoke(0.5f, null)
 
             // The window stays hidden rather than showing a stale/mismatched bitmap, and nothing crashes.
             assertThat(preview.visibility).isEqualTo(View.GONE)
@@ -1693,7 +1693,7 @@ class ReaderActivityTest {
 
             // Moving again at the same fraction re-hits the same (still-missing) file without crashing —
             // the entry was marked attempted, so this is not an infinite decode retry, just idempotent.
-            scrubber.onScrubMove?.invoke(0.5f)
+            scrubber.onScrubMove?.invoke(0.5f, null)
             assertThat(preview.visibility).isEqualTo(View.GONE)
         } finally {
             org.robolectric.shadows.ShadowBitmapFactory.setAllowInvalidImageData(true)

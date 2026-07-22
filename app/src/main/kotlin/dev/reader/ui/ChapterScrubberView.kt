@@ -8,8 +8,6 @@ import android.graphics.Path
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-import androidx.core.content.ContextCompat
-import dev.reader.R
 
 /**
  * The snap detent: within [radius] of a chapter-start tick, the fraction magnetizes to the tick —
@@ -21,6 +19,15 @@ import dev.reader.R
 fun snappedFraction(raw: Float, chapterStarts: List<Float>, radius: Float = 0.015f): Float {
     val nearest = chapterStarts.minByOrNull { kotlin.math.abs(it - raw) } ?: return raw
     return if (kotlin.math.abs(nearest - raw) <= radius) nearest else raw
+}
+
+/** The index of the chapter-start tick the raw fraction snaps to (nearest within [radius]), or null
+ *  when it snaps to none. Index-aligned with [chapterStarts], which setBook fills one-per-spine, so
+ *  the index IS the spine chapter — carried through the callbacks so a snapped commit lands on that
+ *  chapter's first page instead of resolving the boundary fraction to the previous chapter. */
+fun snappedChapterIndex(raw: Float, chapterStarts: List<Float>, radius: Float = 0.015f): Int? {
+    val nearest = chapterStarts.indices.minByOrNull { kotlin.math.abs(chapterStarts[it] - raw) } ?: return null
+    return if (kotlin.math.abs(chapterStarts[nearest] - raw) <= radius) nearest else null
 }
 
 /**
@@ -88,13 +95,13 @@ class ChapterScrubberView @JvmOverloads constructor(
     /** Fires once per gesture, on ACTION_DOWN, before the first [onScrubMove]. */
     var onScrubStart: (() -> Unit)? = null
 
-    /** The fraction under the finger, on every DOWN and MOVE. The Activity uses it to update the
-     *  readout only — never to render a page. */
-    var onScrubMove: ((Float) -> Unit)? = null
+    /** The fraction under the finger, and the chapter it snapped to (or null if unsnapped), on every
+     *  DOWN and MOVE. The Activity uses it to update the readout only — never to render a page. */
+    var onScrubMove: ((fraction: Float, snappedChapter: Int?) -> Unit)? = null
 
-    /** The final fraction, once, on ACTION_UP. The only signal that renders a page. Never fires for
-     *  a cancelled gesture. */
-    var onScrubCommit: ((Float) -> Unit)? = null
+    /** The final fraction, and the chapter it snapped to (or null), once, on ACTION_UP. The only
+     *  signal that renders a page. Never fires for a cancelled gesture. */
+    var onScrubCommit: ((fraction: Float, snappedChapter: Int?) -> Unit)? = null
 
     /** Fires once on ACTION_CANCEL. The Activity uses this to abandon the scrub and restore the
      *  page it started from — without it a cancelled drag leaves the scrubber's origin state stuck. */
@@ -103,6 +110,8 @@ class ChapterScrubberView @JvmOverloads constructor(
     private var chapterStarts: List<Float> = emptyList()
     private var progress: Float = 0f
     private var bookmarkFractions: List<Float> = emptyList()
+    private var generatedChapters: Set<Int> = emptySet()
+    private var previewsEnabled: Boolean = true
 
     // Hoisted BEFORE the Paints: inside a `Paint().apply { }` block the name `density` resolves to
     // Paint's own member (always 1.0), silently dropping dp scaling.
@@ -113,12 +122,14 @@ class ChapterScrubberView @JvmOverloads constructor(
     private val bookmarkGlyphWidthPx = 8f * density
     private val bookmarkGlyphHeightPx = 10f * density
     private val bookmarkGlyphGapPx = 4f * density
+    private val dashOnPx = 6f * density
+    private val dashOffPx = 5f * density
 
-    private val trackPaint = Paint().apply {
-        color = ContextCompat.getColor(context, R.color.reader_progress_track)
-    }
     private val markPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val bookmarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+    // The track itself must be visible on e-ink: black, same as markPaint — the faint
+    // reader_progress_track gray it used to draw with was the invisibility bug being fixed here.
+    private val trackLinePaint = markPaint
 
     /**
      * Sets the book's shape and the current position, then invalidates. [chapterStartFractions] is
@@ -144,6 +155,20 @@ class ChapterScrubberView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** The set of chapter indices whose preview thumbnails already exist — those track segments
+     *  draw solid; the rest dash, showing generation-in-progress. */
+    fun setGeneratedChapters(generated: Set<Int>) {
+        generatedChapters = generated
+        invalidate()
+    }
+
+    /** When previews are off, every segment draws solid — dashing only means something while a
+     *  preview strip is actually being built. */
+    fun setPreviewsEnabled(enabled: Boolean) {
+        previewsEnabled = enabled
+        invalidate()
+    }
+
     private fun fractionAt(x: Float): Float {
         val usable = width - thumbRadiusPx * 2f
         if (usable <= 0f) return 0f
@@ -160,23 +185,29 @@ class ChapterScrubberView @JvmOverloads constructor(
                 // PageView below, which reads a tap as a page turn.
                 parent?.requestDisallowInterceptTouchEvent(true)
                 onScrubStart?.invoke()
-                val fraction = snappedFraction(fractionAt(event.x), chapterStarts)
+                val raw = fractionAt(event.x)
+                val snap = snappedChapterIndex(raw, chapterStarts)
+                val fraction = if (snap != null) chapterStarts[snap] else raw
                 setProgress(fraction)
-                onScrubMove?.invoke(fraction)
+                onScrubMove?.invoke(fraction, snap)
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val fraction = snappedFraction(fractionAt(event.x), chapterStarts)
+                val raw = fractionAt(event.x)
+                val snap = snappedChapterIndex(raw, chapterStarts)
+                val fraction = if (snap != null) chapterStarts[snap] else raw
                 setProgress(fraction)
-                onScrubMove?.invoke(fraction)
+                onScrubMove?.invoke(fraction, snap)
                 return true
             }
 
             MotionEvent.ACTION_UP -> {
-                val fraction = snappedFraction(fractionAt(event.x), chapterStarts)
+                val raw = fractionAt(event.x)
+                val snap = snappedChapterIndex(raw, chapterStarts)
+                val fraction = if (snap != null) chapterStarts[snap] else raw
                 setProgress(fraction)
-                onScrubCommit?.invoke(fraction)
+                onScrubCommit?.invoke(fraction, snap)
                 return true
             }
 
@@ -198,7 +229,22 @@ class ChapterScrubberView @JvmOverloads constructor(
         // finger-buffer, so a thumb drifting down while dragging stays on glass, off the bezel.
         val centreY = height * 0.35f
 
-        canvas.drawRect(left, centreY - trackThicknessPx / 2f, right, centreY + trackThicknessPx / 2f, trackPaint)
+        // allSolid when previews are off OR every chapter is generated (a complete/absent strip):
+        val allSolid = !previewsEnabled ||
+            (chapterStarts.isNotEmpty() && generatedChapters.size >= chapterStarts.size)
+        for (seg in trackSegments(chapterStarts, generatedChapters, allSolid, left, right)) {
+            if (seg.solid) {
+                canvas.drawRect(
+                    seg.startX,
+                    centreY - trackThicknessPx / 2f,
+                    seg.endX,
+                    centreY + trackThicknessPx / 2f,
+                    trackLinePaint,
+                )
+            } else {
+                drawDashedSegment(canvas, seg.startX, seg.endX, centreY)
+            }
+        }
 
         for (start in chapterStarts) {
             val x = xFor(start)
@@ -210,6 +256,20 @@ class ChapterScrubberView @JvmOverloads constructor(
         }
 
         canvas.drawCircle(xFor(progress), centreY, thumbRadiusPx, markPaint)
+    }
+
+    /** A chapter whose preview isn't generated yet draws dashed rather than solid — short black
+     *  dashes at the track's thickness, no [android.graphics.DashPathEffect] since this is a static,
+     *  hand-rolled loop rather than a stroked path (keeps the fill style consistent with the solid
+     *  segments' filled rects). */
+    private fun drawDashedSegment(canvas: Canvas, startX: Float, endX: Float, centreY: Float) {
+        var x = startX
+        val period = dashOnPx + dashOffPx
+        while (x < endX) {
+            val dashEnd = (x + dashOnPx).coerceAtMost(endX)
+            canvas.drawRect(x, centreY - trackThicknessPx / 2f, dashEnd, centreY + trackThicknessPx / 2f, trackLinePaint)
+            x += period
+        }
     }
 
     /** A small filled bookmark silhouette — a rectangle with a notched (triangular) bottom, a

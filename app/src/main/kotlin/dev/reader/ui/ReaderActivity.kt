@@ -364,8 +364,8 @@ open class ReaderActivity : AppCompatActivity() {
             scrubJob?.cancel()
             scrubOrigin = state
         }
-        chapterScrubber.onScrubMove = { fraction -> onScrubMoved(fraction) }
-        chapterScrubber.onScrubCommit = { fraction -> onScrubCommitted(fraction) }
+        chapterScrubber.onScrubMove = { fraction, snap -> onScrubMoved(fraction, snap) }
+        chapterScrubber.onScrubCommit = { fraction, snap -> onScrubCommitted(fraction, snap) }
         chapterScrubber.onScrubCancel = { abandonScrub() }
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
         settings = SettingsSheet(overlay, settingsHost) { ReaderPrefs(this) }
@@ -1463,7 +1463,8 @@ open class ReaderActivity : AppCompatActivity() {
      * pure TOC lookup the running foot uses; mapping the fraction to a chapter touches only
      * chapterWeights, never the document.
      */
-    private fun onScrubMoved(fraction: Float) {
+    @Suppress("UNUSED_PARAMETER")
+    private fun onScrubMoved(fraction: Float, snappedChapter: Int?) {
         val doc = document ?: return
         val located = locateByFraction(chapterWeights, fraction)
         scrubberView.text = getString(
@@ -1501,7 +1502,8 @@ open class ReaderActivity : AppCompatActivity() {
      * off the main thread, show the page, persist it, and clear the scrub. One clean refresh, because
      * the page has not been drawn since the drag began.
      */
-    private fun onScrubCommitted(fraction: Float) {
+    @Suppress("UNUSED_PARAMETER")
+    private fun onScrubCommitted(fraction: Float, snappedChapter: Int?) {
         scrubJob?.cancel()
         // Capture the position being LEFT now — `state` still holds it here, since showPage (inside
         // the coroutine below) hasn't moved it yet. The jump back-stack push itself is deferred until

@@ -33,7 +33,7 @@ class ChapterScrubberViewTest {
     fun `dragging reports the fraction under the finger`() {
         val view = scrubber(width = 400)
         val moves = mutableListOf<Float>()
-        view.onScrubMove = { moves += it }
+        view.onScrubMove = { f, _ -> moves += f }
 
         touch(view, MotionEvent.ACTION_DOWN, 200f)
 
@@ -46,7 +46,7 @@ class ChapterScrubberViewTest {
         val view = scrubber(width = 400)
         var commits = 0
         var committed = -1f
-        view.onScrubCommit = { commits++; committed = it }
+        view.onScrubCommit = { f, _ -> commits++; committed = f }
 
         touch(view, MotionEvent.ACTION_DOWN, 100f)
         touch(view, MotionEvent.ACTION_MOVE, 300f)
@@ -60,7 +60,7 @@ class ChapterScrubberViewTest {
     fun `a fraction beyond either edge is clamped`() {
         val view = scrubber(width = 400)
         val moves = mutableListOf<Float>()
-        view.onScrubMove = { moves += it }
+        view.onScrubMove = { f, _ -> moves += f }
 
         touch(view, MotionEvent.ACTION_DOWN, -80f)
         touch(view, MotionEvent.ACTION_MOVE, 9000f)
@@ -73,7 +73,7 @@ class ChapterScrubberViewTest {
     fun `a cancelled gesture commits nothing`() {
         val view = scrubber()
         var commits = 0
-        view.onScrubCommit = { commits++ }
+        view.onScrubCommit = { _, _ -> commits++ }
 
         touch(view, MotionEvent.ACTION_DOWN, 100f)
         touch(view, MotionEvent.ACTION_CANCEL, 100f)
@@ -87,7 +87,7 @@ class ChapterScrubberViewTest {
         var cancels = 0
         var commits = 0
         view.onScrubCancel = { cancels++ }
-        view.onScrubCommit = { commits++ }
+        view.onScrubCommit = { _, _ -> commits++ }
 
         touch(view, MotionEvent.ACTION_DOWN, 100f)
         touch(view, MotionEvent.ACTION_CANCEL, 100f)
@@ -140,12 +140,42 @@ class ChapterScrubberViewTest {
     fun `a drag reports snapped fractions`() {
         val view = scrubber(width = 400) // helper exists; setBook installs starts 0f, 0.25f, 0.5f
         val moves = mutableListOf<Float>()
-        view.onScrubMove = { moves += it }
+        view.onScrubMove = { f, _ -> moves += f }
 
         // x for raw fraction ~0.26 on a 400px track lands within snap radius of 0.25.
         touch(view, MotionEvent.ACTION_DOWN, xForFraction(view, 0.26f))
 
         assertThat(moves.single()).isEqualTo(0.25f)
+    }
+
+    @Test
+    fun `a snapped drag reports the snapped chapter index`() {
+        val view = scrubber(width = 400) // setBook installs starts 0f, 0.25f, 0.5f
+        val snaps = mutableListOf<Int?>()
+        view.onScrubMove = { _, snap -> snaps += snap }
+
+        touch(view, MotionEvent.ACTION_DOWN, xForFraction(view, 0.255f)) // within radius of 0.25 = chapter 1
+        assertThat(snaps.last()).isEqualTo(1)
+    }
+
+    @Test
+    fun `an unsnapped drag reports a null snapped chapter`() {
+        val view = scrubber(width = 400)
+        val snaps = mutableListOf<Int?>()
+        view.onScrubMove = { _, snap -> snaps += snap }
+
+        touch(view, MotionEvent.ACTION_DOWN, xForFraction(view, 0.62f)) // far from any of 0/0.25/0.5
+        assertThat(snaps.last()).isNull()
+    }
+
+    @Test
+    fun `commit carries the snapped chapter`() {
+        val view = scrubber(width = 400)
+        var committedSnap: Int? = -1
+        view.onScrubCommit = { _, snap -> committedSnap = snap }
+        touch(view, MotionEvent.ACTION_DOWN, xForFraction(view, 0.005f)) // snaps to chapter 0
+        touch(view, MotionEvent.ACTION_UP, xForFraction(view, 0.005f))
+        assertThat(committedSnap).isEqualTo(0)
     }
 
     @Test

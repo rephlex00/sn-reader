@@ -190,14 +190,14 @@
                 android:layout_height="wrap_content"
                 android:clickable="true"
                 android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
+                android:minWidth="64dp"
+                android:minHeight="64dp"
                 android:gravity="center"
                 android:paddingHorizontal="12dp"
                 android:paddingVertical="12dp"
                 android:text="@string/scrubber_back"
                 android:textColor="@android:color/black"
-                android:textSize="20sp"
+                android:textSize="28sp"
                 android:visibility="gone" />
 
             <LinearLayout
