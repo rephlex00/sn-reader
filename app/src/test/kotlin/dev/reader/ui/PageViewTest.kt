@@ -262,6 +262,8 @@ class PageViewTest {
         view.epd = object : EpdRefresher {
             override val available = true
             override fun cleanRefresh(): Boolean { calls[0]++; return true }
+            override fun enterFastMode(): Boolean = false
+            override fun exitFastMode(): Boolean = false
         }
         val before = view.fullRefreshCount
         view.fullRefresh()
@@ -275,6 +277,8 @@ class PageViewTest {
         view.epd = object : EpdRefresher {
             override val available = false
             override fun cleanRefresh(): Boolean = false
+            override fun enterFastMode(): Boolean = false
+            override fun exitFastMode(): Boolean = false
         }
         val before = view.fullRefreshCount
         view.fullRefresh() // must not throw; falls back to invalidate()

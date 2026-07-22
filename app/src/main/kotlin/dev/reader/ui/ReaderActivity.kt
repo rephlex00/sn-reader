@@ -450,6 +450,9 @@ open class ReaderActivity : AppCompatActivity() {
     /** Reveals the reading chrome — one redraw, no animation. */
     private fun showOverlay() {
         highlights.hideDeleteChip() // the chip is a reading-mode affordance; it never coexists with the chrome
+        // Chrome is redrawn far too often for a clean update per frame. Fast mode is device-wide
+        // runtime state — see onPause, which is what guarantees it is given back.
+        pageView.epd.enterFastMode()
         overlay.visibility = View.VISIBLE
     }
 
@@ -466,6 +469,11 @@ open class ReaderActivity : AppCompatActivity() {
         // the page waiting for a second tap the reader has long since moved on from.
         highlights.cancelPendingSelection()
         overlay.visibility = View.GONE
+        pageView.epd.exitFastMode()
+        // One clean refresh on the way out, so the page the reader returns to is crisp rather than
+        // carrying whatever ghosting fast mode accumulated while the chrome was up.
+        pageView.fullRefresh()
+        turnsSinceRefresh = 0
     }
 
     /** Opens or closes the Aa sheet — a visibility flip (one redraw). Opening first syncs its
@@ -552,6 +560,11 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** The on-page delete chip — a test asserts a highlight-tap reveals it and its tap deletes. */
     internal val deleteChipForTest: TextView get() = highlights.deleteChipForTest
+
+    /** Delegates to the private overlay show/hide so a test can drive the fast-e-ink-mode wiring
+     *  directly, without going through a tap dispatch. */
+    internal fun showOverlayForTest() = showOverlay()
+    internal fun hideOverlayForTest() = hideOverlay()
 
     /** Pen entry points, forwarded so the tests can drive the gesture machine with exact offsets
      *  rather than depending on Robolectric's coarse text measurement. */
@@ -821,6 +834,18 @@ open class ReaderActivity : AppCompatActivity() {
     override fun onStop() {
         flushPosition()
         super.onStop()
+    }
+
+    /**
+     * Gives the panel's screen mode back — the load-bearing restore, not the one in the overlay-hide
+     * path. The mode is device-wide runtime state and is not persisted: if the process dies or the
+     * app is swiped away with the overlay open, a leaked fast mode degrades the entire device UI
+     * until something resets it. `onPause` is the last callback Android guarantees, so the restore
+     * rides here. Idempotent — a no-op when fast mode is not held.
+     */
+    override fun onPause() {
+        super.onPause()
+        pageView.epd.exitFastMode()
     }
 
     /**

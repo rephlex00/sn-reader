@@ -338,6 +338,8 @@ class ReaderActivityTest {
         pageViewOf(activity).epd = object : EpdRefresher {
             override val available = true
             override fun cleanRefresh(): Boolean { calls[0]++; return true }
+            override fun enterFastMode(): Boolean = false
+            override fun exitFastMode(): Boolean = false
         }
         // Three genuine page turns (NEXT within the multi-page chapter — multiPageEpub's 60
         // paragraphs paginate to well more than 3 pages, so none of these run off the end).
@@ -363,22 +365,77 @@ class ReaderActivityTest {
         pageViewOf(activity).epd = object : EpdRefresher {
             override val available = true
             override fun cleanRefresh(): Boolean { calls[0]++; return true }
+            override fun enterFastMode(): Boolean = false
+            override fun exitFastMode(): Boolean = false
         }
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY) // hide overlay so taps turn pages
         repeat(3) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
-        assertThat(calls[0]).isEqualTo(1) // one clean refresh across 3 turns at N=3
+        // Two: one from hiding the overlay (its own clean-on-close refresh, by design — see
+        // hideOverlay), plus one more clean refresh across the 3 turns at N=3.
+        assertThat(calls[0]).isEqualTo(2)
     }
 
     @Test
-    fun `overlay toggles do not count toward the refresh cadence`() {
+    fun `overlay toggles do not compound beyond one clean refresh per close`() {
         val controller = openedMultiPage()
         val activity = controller.get()
         val pv = pageViewOf(activity)
 
-        // Center taps only toggle the overlay — they are not page turns, so no number of them
-        // reaches the ghost-clear cadence. (Each pair of toggles returns to the hidden state.)
+        // Center taps toggle the overlay, not turn pages, so they never reach the page-turn ghost-
+        // clear cadence on their own. Hiding the overlay does trigger its own clean-on-close refresh
+        // (by design — see hideOverlay), so 10 hides across 20 toggles (each pair returns to hidden)
+        // means 10 refreshes — not the compounding page-turn-cadence count this would be otherwise.
         repeat(20) { pv.onTap!!.invoke(TapZone.TOGGLE_OVERLAY) }
-        assertThat(pv.fullRefreshCount).isEqualTo(0)
+        assertThat(pv.fullRefreshCount).isEqualTo(10)
+    }
+
+    // -- Fast e-ink screen mode for chrome --------------------------------------------------------
+
+    @Test
+    fun `showing the overlay enters fast mode and hiding it restores and refreshes`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val epd = object : EpdRefresher {
+            override val available = true
+            var fastModeHeld = false
+            override fun cleanRefresh(): Boolean = true
+            override fun enterFastMode(): Boolean { fastModeHeld = true; return true }
+            override fun exitFastMode(): Boolean { fastModeHeld = false; return true }
+        }
+        pageViewOf(activity).epd = epd
+
+        activity.showOverlayForTest()
+        assertThat(epd.fastModeHeld).isTrue()
+
+        val refreshesBefore = pageViewOf(activity).fullRefreshCount
+        activity.hideOverlayForTest()
+
+        assertThat(epd.fastModeHeld).isFalse()
+        assertThat(pageViewOf(activity).fullRefreshCount).isGreaterThan(refreshesBefore)
+    }
+
+    @Test
+    fun `onPause restores the screen mode even with the overlay still open`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val epd = object : EpdRefresher {
+            override val available = true
+            var fastModeHeld = false
+            override fun cleanRefresh(): Boolean = true
+            override fun enterFastMode(): Boolean { fastModeHeld = true; return true }
+            override fun exitFastMode(): Boolean { fastModeHeld = false; return true }
+        }
+        pageViewOf(activity).epd = epd
+
+        activity.showOverlayForTest()
+        assertThat(epd.fastModeHeld).isTrue()
+
+        controller.pause()
+
+        // The screen mode is device-wide runtime state. A leaked fast mode degrades the whole device
+        // UI, so the restore must ride on the last callback Android guarantees, not on a close handler
+        // the user can bypass by swiping the app away.
+        assertThat(epd.fastModeHeld).isFalse()
     }
 
     @Test
