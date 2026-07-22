@@ -36,15 +36,22 @@ full-quality refresh, and it is cleaned up the moment you close a panel.
 
 ### A chapter scrubber
 
-A slider now runs along the bottom of the reading chrome, with a tick for every chapter. Drag it to
-move through the whole book.
+A slider now runs along the bottom of the reading chrome, raised clear of the very edge so it is
+easier to catch with a thumb, with a tick for every chapter. Drag it to move through the whole
+book.
 
-* While you drag, the page does not repaint — only a readout showing the chapter and how far
-  through the book you are.
-* The page you land on is drawn once, when you lift your finger, rather than following your finger
-  as you drag.
-* That keeps a long scrub to a single clean refresh instead of a flurry of them — a deliberate
-  trade-off for e-ink, with no live page preview while dragging.
+* Dragging near a chapter boundary snaps to it, like a detent on the slider, so landing exactly on
+  a chapter start doesn't mean hunting for the pixel.
+* Wherever you've placed a bookmark, a small glyph marks its spot on the track.
+* A floating window above your finger shows a preview of the page you'd land on. The first time you
+  open a book, Reader renders a strip of sampled page thumbnails once in the background — a few
+  seconds, invisible while you keep reading, a few megabytes on disk — and every drag after that
+  shows the preview instantly, with no wait.
+* The page itself still never repaints while you drag — only the preview window and a readout
+  update. The full page is drawn once, when you lift your finger, keeping a long scrub to a single
+  clean refresh instead of a flurry of them.
+* **↩** appears after a jump — a scrub, a Contents tap, a bookmark or highlight jump — to return to
+  exactly where you were.
 
 ## 2026.07.2
 

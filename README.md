@@ -29,8 +29,9 @@ app uses **no measurable CPU at all**.
 * **Two columns when you turn the tablet sideways**, a spread rather than one very wide column
 * **Pen highlighting** that knows your stylus from your palm
 * **Bookmarks, a contents page set like a printed one, and search** by title or author
-* **A chapter scrubber**, with a tick for every chapter — drag through the whole book, and a
-  progress bar at the foot of the page marks where the current chapter ends
+* **A chapter scrubber**, with a tick for every chapter, a preview of the page you'd land on as you
+  drag, and **↩** to jump back — a progress bar at the foot of the page marks where the current
+  chapter ends
 * **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for
   speed; menus repaint quickly too, without touching the page's own crisp refresh
 

@@ -194,6 +194,13 @@ open class ReaderActivity : AppCompatActivity() {
     /** The strip store; also the generation trigger's collaborator (Task 6). */
     private val stripStore by lazy { PreviewStripStore(this) }
 
+    /**
+     * The one in-flight strip generation, if any — held so a config change mid-generate can cancel
+     * and relaunch rather than race a second generator over the same directory. See
+     * [scheduleStripGeneration].
+     */
+    private var stripGenerationJob: Job? = null
+
     /** The entry currently blitted, to skip redundant decodes as the finger dithers in place. */
     private var shownPreviewEntry: StripEntry? = null
 
@@ -736,10 +743,12 @@ open class ReaderActivity : AppCompatActivity() {
             val newPages = doc.chapter(state.spineIndex, newConfig).pages
             config = newConfig
             // The strip is keyed to the typography; a visual change makes it stale. Drop it so the
-            // preview degrades to the readout until a strip for the new config is loaded (Task 6
-            // regenerates and reloads). shownPreviewEntry is cleared so a later drag re-blits fresh.
+            // preview degrades to the readout until a strip for the new config is loaded.
+            // shownPreviewEntry is cleared so a later drag re-blits fresh. The old strip directory
+            // is deleted by the generator on completion; until then stripFor simply misses.
             previewStrip = null
             shownPreviewEntry = null
+            scheduleStripGeneration()
             val newPageIndex = reflowedPageIndex(oldPages, state.pageIndex, newPages)
             state = ReadingState(state.spineIndex, newPageIndex)
             showPage(state)
@@ -1159,10 +1168,12 @@ open class ReaderActivity : AppCompatActivity() {
                     // add/remove via BookmarksPanel's onBookmarksChanged callback above).
                     refreshScrubberBookmarks()
                     // The scrubbing preview's thumbnail strip, if one has been generated for this
-                    // exact (book, config) already. Absent on a first open — Task 6 wires the
-                    // generation trigger; until then this naturally stays null and the preview
-                    // window simply never shows, which is the correct, non-crashing fallback.
+                    // exact (book, config) already.
                     previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, renderConfig) }
+                    // No valid strip for this (book, config): schedule the one-shot background
+                    // generation. Absent until it completes, the preview window simply never shows —
+                    // the correct, non-crashing fallback.
+                    if (previewStrip == null) scheduleStripGeneration()
                 }
             } catch (e: CancellationException) {
                 // The activity was destroyed while open() was in flight. lifecycleScope cancelled
@@ -1198,6 +1209,31 @@ open class ReaderActivity : AppCompatActivity() {
         file,
         AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(this)),
     )
+
+    /**
+     * Schedules THE one-shot strip generation: cancel-and-relaunch (a typography change mid-generate
+     * must not leave two generators racing over the same directory), on lifecycleScope so leaving the
+     * book cancels it — generation resumes on the next open instead. The project's single authorized
+     * exception to 0%-idle: bounded (5–15 s measured), one-shot, only on first open or config change.
+     * `protected open` purely as the test seam.
+     */
+    protected open fun scheduleStripGeneration() {
+        val file = bookPath?.let(::File) ?: return
+        val cfg = config ?: return
+        stripGenerationJob?.cancel()
+        stripGenerationJob = lifecycleScope.launch {
+            try {
+                stripStore.generate(file, cfg)
+                stripStore.evictOverBudget(keep = file)
+                previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, cfg) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A failed generation degrades to no preview window — never to a crashed reader.
+                Log.w("Reader", "preview strip generation failed", e)
+            }
+        }
+    }
 
     /**
      * Bookmark glyphs for the scrubber: loaded once per open, and again whenever

@@ -29,6 +29,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
+import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -1673,6 +1674,54 @@ class ReaderActivityTest {
         }
     }
 
+    // -- Task 6: strip-generation triggers -------------------------------------------------------
+
+    // Pins the display to exactly VIEWPORT_W x VIEWPORT_H: without it, Robolectric's
+    // ActivityController.setup() delivers one implicit layout pass at its own default size BEFORE
+    // this test's explicit launchAndLayOut measure, so openFirstBook's synchronous config capture
+    // would see that wrong size and reconcileViewport would (correctly) fire a SECOND schedule to
+    // correct it — real behavior, but not what this test is isolating.
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `opening a book with no strip schedules one generation, and a second open schedules none`() {
+        // Seam: TestableReaderActivity's scheduleStripGeneration override counts calls instead of
+        // running real bitmap generation, so this asserts the DECISION, not the (multi-second) work.
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { activity.stripGenerationsScheduledForTest == 1 }
+
+        // Generate for real, against the Activity's own resolved config, so the second open finds a
+        // valid strip already on disk and has nothing to schedule.
+        runBlocking {
+            PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, activity.configForTest!!)
+        }
+
+        val second = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(second)
+        idleUntil { scrubberTextOf(second.get()).isNotEmpty() }
+        assertThat(second.get().stripGenerationsScheduledForTest).isEqualTo(0)
+    }
+
+    // See the previous test for why the display is pinned: without it, the open itself already
+    // schedules twice (a spurious Robolectric-default-size open corrected by reconcileViewport),
+    // which would swamp the count this test means to isolate.
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a typography change reschedules generation`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        idleUntil { activity.stripGenerationsScheduledForTest == 1 }
+
+        // Drive a real typography change through the Aa sheet — same seam the settings tests use
+        // (see "bumping the text size..." and "a settings change drops the now-stale preview strip").
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.size_plus).performClick()
+
+        idleUntil { activity.stripGenerationsScheduledForTest == 2 }
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
@@ -1706,7 +1755,15 @@ class ReaderActivityTest {
         /** Every document the real open produced, so tests can observe closure. */
         val openedDocuments = mutableListOf<EpubDocument>()
 
+        /** How many times [scheduleStripGeneration] was called — the trigger DECISION, counted
+         *  without paying for a real (multi-second) bitmap generation on every Activity test. */
+        var stripGenerationsScheduledForTest = 0
+
         override fun isAllFilesAccessGranted(): Boolean = accessGranted
+
+        override fun scheduleStripGeneration() {
+            stripGenerationsScheduledForTest++
+        }
 
         override fun findFirstEpub(): File? {
             findFirstCalls++
