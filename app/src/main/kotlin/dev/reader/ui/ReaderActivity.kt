@@ -604,6 +604,16 @@ open class ReaderActivity : AppCompatActivity() {
                 null
             }
         }
+
+        /** See [SettingsHost.hasPreviewsForCurrentBook]. [stripStore.stripFor] is a cheap on-disk
+         *  index read; refresh() only runs on Aa-sheet open/control-change, never on the hot path,
+         *  so paying for it here is fine. Covers the case where previews were toggled off mid-session
+         *  ([previewStrip] nulled) but a strip still sits on disk to reclaim. */
+        override fun hasPreviewsForCurrentBook(): Boolean {
+            val file = bookPath?.let(::File) ?: return false
+            val cfg = config ?: return false
+            return previewStrip != null || stripGenerationJob?.isActive == true || stripStore.stripFor(file, cfg) != null
+        }
     }
 
     /** The app's single Room database — the panels take the DAOs they need from it. */
@@ -1757,6 +1767,11 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Drives the Aa sheet's per-book delete without a real tap. Not called in production. */
     internal fun deletePreviewsForCurrentBookForTest() = settingsHost.deletePreviewsForCurrentBook()
+
+    /** See [SettingsHost.hasPreviewsForCurrentBook] — a test's way to assert the decision directly,
+     *  without needing to drive [SettingsSheet.refresh] through a real Aa-sheet open. Not called in
+     *  production. */
+    internal fun hasPreviewsForCurrentBookForTest(): Boolean = settingsHost.hasPreviewsForCurrentBook()
 
     /**
      * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s

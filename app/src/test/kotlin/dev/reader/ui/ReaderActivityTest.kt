@@ -1765,6 +1765,39 @@ class ReaderActivityTest {
         ).isNull()
     }
 
+    @Test
+    fun `the delete control stays reachable once generation completes, and hides once deleted`() {
+        // Regression: previews_delete used to live inside previews_status_row, whose visibility was
+        // driven by previewGenerationProgress() — non-null only WHILE generation is in flight. Once a
+        // book's strip finished generating, the progress row (and the delete control nested inside
+        // it) went GONE, making per-book delete unreachable for exactly the case it exists for: a
+        // completed book whose disk space a reader wants back.
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        // Generation is done (not in flight) for this book: the decision seam...
+        assertThat(activity.hasPreviewsForCurrentBookForTest()).isTrue()
+
+        // ...and the real Aa-sheet open (settings_button -> toggleSettings -> settings.refresh())
+        // shows the delete control despite the progress row having nothing to report.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.previews_status_row).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.previews_delete).visibility).isEqualTo(View.VISIBLE)
+
+        // Deleting removes the strip and, on the next refresh, hides the control again.
+        activity.findViewById<View>(R.id.previews_delete).performClick()
+        assertThat(activity.hasPreviewsForCurrentBookForTest()).isFalse()
+        assertThat(activity.findViewById<View>(R.id.previews_delete).visibility).isEqualTo(View.GONE)
+    }
+
     // -- Task 6: strip-generation triggers -------------------------------------------------------
 
     // Pins the display to exactly VIEWPORT_W x VIEWPORT_H: without it, Robolectric's

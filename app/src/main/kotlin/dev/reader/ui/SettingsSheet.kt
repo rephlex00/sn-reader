@@ -65,6 +65,13 @@ internal interface SettingsHost {
      *  generating for the open book, or null when there is nothing to report (previews off, a strip
      *  already loaded, or no generation in flight). */
     fun previewGenerationProgress(): Pair<Int, Int>?
+
+    /** Whether the delete-previews control should be reachable: a strip is generating right now,
+     *  OR one already sits on disk for the current (book, config) — the common case, since a
+     *  finished strip is exactly what a reader wants to reclaim disk space from. Deliberately NOT
+     *  tied to [previewGenerationProgress] (which reports null once generation completes) — that
+     *  coupling is what made this control disappear the moment the strip it deletes was ready. */
+    fun hasPreviewsForCurrentBook(): Boolean
 }
 
 /**
@@ -174,6 +181,10 @@ internal class SettingsSheet(
         } ?: run {
             progressRow.visibility = View.GONE
         }
+        // Independent of progressRow above: reachable whenever there is something to delete, not
+        // only while generation is in flight — see hasPreviewsForCurrentBook.
+        overlay.findViewById<View>(R.id.previews_delete).visibility =
+            if (host.hasPreviewsForCurrentBook()) View.VISIBLE else View.GONE
     }
 
     /**

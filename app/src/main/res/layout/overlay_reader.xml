@@ -505,8 +505,10 @@
             </LinearLayout>
 
             <!-- Shown only while a strip is actively generating for the open book: a live
-                 "N / M chapters" readout and a way to clear it for this book. Gone otherwise,
-                 the same conditional-row pattern as refresh_frequency_row above. -->
+                 "N / M chapters" readout. Gone otherwise, the same conditional-row pattern as
+                 refresh_frequency_row above. Visibility is driven independently of previews_delete
+                 below — that control's reachability must not depend on generation still being in
+                 flight (see previews_delete). -->
             <LinearLayout
                 android:id="@+id/previews_status_row"
                 android:layout_width="match_parent"
@@ -521,16 +523,23 @@
                     android:paddingVertical="4dp"
                     android:textColor="@android:color/black"
                     android:textSize="14sp" />
-
-                <TextView
-                    android:id="@+id/previews_delete"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingVertical="6dp"
-                    android:text="@string/previews_delete"
-                    android:textColor="@android:color/black"
-                    android:textSize="14sp" />
             </LinearLayout>
+
+            <!-- Its own independently-visibility-controlled control (not nested inside
+                 previews_status_row above): shown whenever there is a strip to reclaim disk space
+                 from — one already on disk for this (book, config), OR one generating right now —
+                 regardless of whether previews_status_row is showing. This is what keeps delete
+                 reachable once generation finishes and that row goes GONE: deleting an
+                 already-completed strip is the primary case this control exists for. -->
+            <TextView
+                android:id="@+id/previews_delete"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingVertical="6dp"
+                android:text="@string/previews_delete"
+                android:textColor="@android:color/black"
+                android:textSize="14sp"
+                android:visibility="gone" />
 
         </LinearLayout>
 
