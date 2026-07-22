@@ -2,9 +2,6 @@ package dev.reader.ui
 
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.RenderConfig
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
@@ -70,6 +67,12 @@ class PreviewStripStoreTest {
 
     @Test
     fun `a directory without an index is invisible — partial generation is ignored`() = runBlocking {
+        // This is also the cancellation-safety invariant: generate() writes the index LAST, so a
+        // job cancelled mid-generation (at any ensureActive() checkpoint) leaves exactly this
+        // shape on disk — thumbnails maybe, index never — and stripFor must treat it as absent.
+        // A prior version of this suite asserted that directly via launch{}.cancelAndJoin(), but
+        // that race resolves before generate's body starts often enough to be flaky; this test
+        // covers the same invariant deterministically.
         val book = multiChapterEpub(tempFolder.newFile("book.epub"))
         val cfg = config()
         store.generate(book, cfg)
@@ -77,17 +80,6 @@ class PreviewStripStoreTest {
         val index = store.stripFor(book, cfg)!!
         val dir = store.thumbnailFile(book, cfg, index.entries.first()).parentFile!!
         java.io.File(dir, "index").delete()
-
-        assertThat(store.stripFor(book, cfg)).isNull()
-    }
-
-    @Test
-    fun `cancellation mid-generate leaves no index behind`() = runBlocking {
-        val book = multiChapterEpub(tempFolder.newFile("book.epub"))
-        val cfg = config()
-        val job: Job = launch { store.generate(book, cfg) }
-        // Cancel promptly; whether any thumbnails were written yet, no index may exist.
-        job.cancelAndJoin()
 
         assertThat(store.stripFor(book, cfg)).isNull()
     }
@@ -105,6 +97,48 @@ class PreviewStripStoreTest {
 
         assertThat(store.stripFor(bookA, cfg)).isNull()
         assertThat(store.stripFor(bookB, cfg)).isNotNull()
+    }
+
+    @Test
+    fun `eviction is oldest-first by dir mtime, and a recent stripFor read spares a strip`() = runBlocking {
+        val bookA = multiChapterEpub(tempFolder.newFile("a.epub"))
+        val bookB = multiChapterEpub(tempFolder.newFile("b.epub"))
+        val bookC = multiChapterEpub(tempFolder.newFile("c.epub"))
+        val cfg = config()
+
+        // Each stripFor() call below doubles as the size read AND (per its own contract) a touch
+        // of that book's dir mtime — done right after each generate so it doesn't disturb the
+        // generation order, only mirrors it.
+        store.generate(bookA, cfg)
+        val sizeA = strip(bookA, cfg, store.stripFor(bookA, cfg)!!)
+        Thread.sleep(20) // distinct dir mtimes
+        store.generate(bookB, cfg)
+        val sizeB = strip(bookB, cfg, store.stripFor(bookB, cfg)!!)
+        Thread.sleep(20)
+        store.generate(bookC, cfg)
+        val sizeC = strip(bookC, cfg, store.stripFor(bookC, cfg)!!)
+
+        // Touch A's mtime so it is now the most-recently-used, leaving B as the oldest-untouched.
+        Thread.sleep(20)
+        assertThat(store.stripFor(bookA, cfg)).isNotNull()
+
+        // Exactly enough room for the two survivors (A, C) but not B too — one deletion suffices,
+        // and stops there.
+        val cap = sizeA + sizeC
+
+        store.evictOverBudget(capBytes = cap, keep = null)
+
+        assertThat(store.stripFor(bookB, cfg)).isNull()
+        assertThat(store.stripFor(bookA, cfg)).isNotNull()
+        assertThat(store.stripFor(bookC, cfg)).isNotNull()
+    }
+
+    // Mirrors evictOverBudget's own size accounting exactly: the whole dir (thumbnails + index
+    // file), not just the entries' thumbnail files, so a cap built from this total isn't quietly
+    // undersized by the index file's few dozen bytes.
+    private fun strip(book: File, cfg: RenderConfig, index: StripIndex): Long {
+        val dir = store.thumbnailFile(book, cfg, index.entries.first()).parentFile!!
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
     /**

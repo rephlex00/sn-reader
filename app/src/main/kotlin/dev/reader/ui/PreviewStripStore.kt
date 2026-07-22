@@ -89,11 +89,11 @@ class PreviewStripStore(private val context: Context) {
                 val chapter = doc.chapter(spine, config)
                 val layout = (chapter.measured as? AndroidMeasuredChapter)?.layout ?: continue
                 val p = chapter.pages.getOrNull(page) ?: continue
-                val fileName = "%03d.png".format(n)
+                val fileName = "%03d.webp".format(n)
                 val bitmap = renderThumbnail(layout, p, config)
                 try {
                     File(dir, fileName).outputStream().use { out ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, PNG_QUALITY, out)
+                        bitmap.compress(THUMBNAIL_FORMAT, THUMBNAIL_QUALITY, out)
                     }
                 } finally {
                     bitmap.recycle()
@@ -126,8 +126,8 @@ class PreviewStripStore(private val context: Context) {
     /**
      * Draws one page into a half-scale bitmap, mirroring [PageView.drawColumn]'s clip/translate:
      * white ground, content clipped to the page's own vertical span, layout translated so the
-     * page's top sits at the margin. Text is already black-on-white, so ARGB + PNG effectively
-     * stores grayscale.
+     * page's top sits at the margin. Text is already black-on-white; lossy WEBP compression
+     * (see [THUMBNAIL_FORMAT]) is what actually shrinks these to a reasonable on-disk size.
      *
      * [Page] has no bottom/height field, so the clip bottom is computed exactly as
      * [PageView.pageClipBottom] does: the page's last line's bottom (translated into this
@@ -188,7 +188,8 @@ class PreviewStripStore(private val context: Context) {
     private companion object {
         const val INDEX_FILE = "index"
         const val SCALE = 0.5f
-        const val PNG_QUALITY = 100
+        val THUMBNAIL_FORMAT = Bitmap.CompressFormat.WEBP_LOSSY
+        const val THUMBNAIL_QUALITY = 75
         const val DEFAULT_CAP_BYTES = 50L * 1024 * 1024
 
         fun sha256Hex(text: String): String {
