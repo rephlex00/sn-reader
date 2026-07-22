@@ -147,4 +147,35 @@ class ChapterScrubberViewTest {
 
         assertThat(moves.single()).isEqualTo(0.25f)
     }
+
+    @Test
+    fun `track segments span between chapter starts, marked solid by generated set`() {
+        // 3 chapters starting at 0, 0.5, 0.75 of the book; track from x=10 to x=210 (usable 200).
+        val segs = trackSegments(listOf(0f, 0.5f, 0.75f), generated = setOf(0, 2), allSolid = false, leftX = 10f, rightX = 210f)
+        assertThat(segs).hasSize(3)
+        // chapter 0: [0,0.5) -> x[10,110), solid (in set)
+        assertThat(segs[0].solid).isTrue()
+        assertThat(segs[0].startX).isWithin(0.01f).of(10f)
+        assertThat(segs[0].endX).isWithin(0.01f).of(110f)
+        // chapter 1: [0.5,0.75) -> dashed (not in set)
+        assertThat(segs[1].solid).isFalse()
+        // chapter 2: [0.75,1.0] -> to rightX, solid
+        assertThat(segs[2].solid).isTrue()
+        assertThat(segs[2].endX).isWithin(0.01f).of(210f)
+    }
+
+    @Test
+    fun `allSolid overrides the generated set`() {
+        val segs = trackSegments(listOf(0f, 0.5f), generated = emptySet(), allSolid = true, leftX = 0f, rightX = 100f)
+        assertThat(segs.all { it.solid }).isTrue()
+    }
+
+    @Test
+    fun `empty chapter starts yields one solid full-width segment`() {
+        val segs = trackSegments(emptyList(), emptySet(), allSolid = false, leftX = 5f, rightX = 95f)
+        assertThat(segs).hasSize(1)
+        assertThat(segs.single().solid).isTrue() // nothing to mark pending -> a plain visible track
+        assertThat(segs.single().startX).isEqualTo(5f)
+        assertThat(segs.single().endX).isEqualTo(95f)
+    }
 }

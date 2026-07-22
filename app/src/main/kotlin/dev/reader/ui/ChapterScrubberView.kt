@@ -38,6 +38,34 @@ fun mergedBookmarkFractions(fractions: List<Float>, mergeRadius: Float = 0.02f):
     return merged.map { cluster -> cluster.sum() / cluster.size }
 }
 
+/** One stretch of the scrubber track between two chapter ticks. [solid] draws a solid line (its
+ *  chapter's preview exists, or previews are off/complete); otherwise a dashed line (that chapter's
+ *  preview is still being generated). Pure geometry — JVM-tested; the dashing is Canvas work. */
+data class TrackSegment(val startX: Float, val endX: Float, val solid: Boolean)
+
+/**
+ * Splits the track [leftX,rightX] into one segment per chapter (bounded by consecutive chapter-start
+ * fractions, last chapter running to [rightX]). A segment is solid when [allSolid] is true (previews
+ * off, or fully generated) or its chapter index is in [generated]; otherwise dashed. With no chapter
+ * starts, one solid full-width segment — a plain visible track.
+ */
+fun trackSegments(
+    chapterStarts: List<Float>,
+    generated: Set<Int>,
+    allSolid: Boolean,
+    leftX: Float,
+    rightX: Float,
+): List<TrackSegment> {
+    if (chapterStarts.isEmpty()) return listOf(TrackSegment(leftX, rightX, solid = true))
+    val span = rightX - leftX
+    fun x(fraction: Float) = leftX + span * fraction.coerceIn(0f, 1f)
+    return chapterStarts.indices.map { i ->
+        val startX = x(chapterStarts[i])
+        val endX = if (i + 1 < chapterStarts.size) x(chapterStarts[i + 1]) else rightX
+        TrackSegment(startX, endX, solid = allSolid || i in generated)
+    }
+}
+
 /**
  * The overlay's chapter scrubber: a track spanning the whole book, a tick per chapter, and a thumb
  * at the current position. Dragging it moves through the book.

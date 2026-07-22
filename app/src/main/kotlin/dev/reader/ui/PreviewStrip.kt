@@ -115,6 +115,17 @@ fun parseStripIndex(text: String): StripIndex? {
     )
 }
 
+/** The thumbnail for a chapter's OPENING page (spineIndex, pageIndex 0), or null if that chapter
+ *  was not sampled (e.g. a zero-page image chapter). Used to show a snapped drag the chapter it
+ *  snapped to, not whatever page the boundary fraction happens to resolve to. */
+fun entryForChapterOpening(entries: List<StripEntry>, spineIndex: Int): StripEntry? =
+    entries.firstOrNull { it.spineIndex == spineIndex && it.pageIndex == 0 }
+
+/** The set of spine chapters that have at least one thumbnail — i.e. whose preview exists. Derived
+ *  from a loaded index so a complete strip lights the whole timeline solid at once. */
+fun generatedChaptersOf(index: StripIndex): Set<Int> =
+    index.entries.mapTo(mutableSetOf()) { it.spineIndex }
+
 /** The drag's lookup: the entry whose fraction is closest to [fraction]. Entries are sorted by
  *  fraction (the generator writes them that way); binary search, ties go to the earlier entry. */
 fun nearestEntry(entries: List<StripEntry>, fraction: Float): StripEntry? {

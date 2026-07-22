@@ -82,4 +82,23 @@ class PreviewStripTest {
         assertThat(nearestEntry(entries, 2f)!!.fileName).isEqualTo("c")
         assertThat(nearestEntry(emptyList(), 0.5f)).isNull()
     }
+
+    @Test
+    fun `entryForChapterOpening finds the page-0 entry for a chapter`() {
+        val entries = listOf(
+            StripEntry(0.0f, 0, 0, "a"), StripEntry(0.1f, 0, 4, "b"),
+            StripEntry(0.4f, 2, 0, "c"), StripEntry(0.6f, 2, 3, "d"),
+        )
+        assertThat(entryForChapterOpening(entries, 0)!!.fileName).isEqualTo("a")
+        assertThat(entryForChapterOpening(entries, 2)!!.fileName).isEqualTo("c")
+        assertThat(entryForChapterOpening(entries, 1)).isNull() // chapter 1 has no sampled pages
+    }
+
+    @Test
+    fun `generatedChaptersOf is the distinct spine indices present`() {
+        val index = StripIndex("h", 1L, 2L, 10, listOf(
+            StripEntry(0f, 0, 0, "a"), StripEntry(0.2f, 0, 3, "b"), StripEntry(0.5f, 3, 0, "c"),
+        ))
+        assertThat(generatedChaptersOf(index)).containsExactly(0, 3)
+    }
 }
