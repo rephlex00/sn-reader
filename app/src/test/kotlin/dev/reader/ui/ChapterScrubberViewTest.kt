@@ -23,10 +23,13 @@ class ChapterScrubberViewTest {
         event.recycle()
     }
 
-    /** Inverts the view's fractionAt geometry (thumbRadius inset), mirroring its math exactly. */
+    /** Inverts the view's fractionAt geometry (padding-based track ends), mirroring its math
+     *  exactly. Programmatic test views carry no XML padding, so paddingLeft/Right are both 0 and
+     *  this collapses to fraction * width — the simplest possible mapping. */
     private fun xForFraction(view: ChapterScrubberView, fraction: Float): Float {
-        val thumbRadiusPx = 7f // density 1.0 in Robolectric's default environment
-        return thumbRadiusPx + fraction * (view.width - thumbRadiusPx * 2f)
+        val left = view.paddingLeft.toFloat()
+        val right = view.width - view.paddingRight.toFloat()
+        return left + fraction * (right - left)
     }
 
     @Test
@@ -127,16 +130,6 @@ class ChapterScrubberViewTest {
     }
 
     @Test
-    fun `bookmark fractions merge within the radius`() {
-        assertThat(mergedBookmarkFractions(listOf(0.10f, 0.11f, 0.50f))).hasSize(2)
-        assertThat(mergedBookmarkFractions(emptyList())).isEmpty()
-        // A merged cluster is represented once, near its members.
-        val merged = mergedBookmarkFractions(listOf(0.10f, 0.11f, 0.12f))
-        assertThat(merged).hasSize(1)
-        assertThat(merged.single()).isWithin(0.02f).of(0.11f)
-    }
-
-    @Test
     fun `a drag reports snapped fractions`() {
         val view = scrubber(width = 400) // helper exists; setBook installs starts 0f, 0.25f, 0.5f
         val moves = mutableListOf<Float>()
@@ -207,5 +200,73 @@ class ChapterScrubberViewTest {
         assertThat(segs.single().solid).isTrue() // nothing to mark pending -> a plain visible track
         assertThat(segs.single().startX).isEqualTo(5f)
         assertThat(segs.single().endX).isEqualTo(95f)
+    }
+
+    @Test
+    fun `clusteredTickMarks passes single ticks through untouched`() {
+        val marks = clusteredTickMarks(listOf(10f, 50f, 90f), minGapPx = 6f)
+        assertThat(marks).hasSize(3)
+        assertThat(marks.map { it.cluster }).containsExactly(false, false, false).inOrder()
+        assertThat(marks.map { it.x }).containsExactly(10f, 50f, 90f).inOrder()
+    }
+
+    @Test
+    fun `clusteredTickMarks merges a dense run to its mean x`() {
+        // Three ticks within 6px of each other collapse to one cluster mark at their mean.
+        val marks = clusteredTickMarks(listOf(10f, 12f, 14f, 90f), minGapPx = 6f)
+        assertThat(marks).hasSize(2)
+        assertThat(marks[0].cluster).isTrue()
+        assertThat(marks[0].x).isWithin(0.01f).of(12f) // mean of 10, 12, 14
+        assertThat(marks[1]).isEqualTo(TickMark(90f, cluster = false))
+    }
+
+    @Test
+    fun `clusteredTickMarks merges dense runs at both ends independently`() {
+        val marks = clusteredTickMarks(listOf(0f, 1f, 2f, 500f, 900f, 901f, 902f), minGapPx = 6f)
+        assertThat(marks).hasSize(3)
+        assertThat(marks[0].cluster).isTrue()
+        assertThat(marks[0].x).isWithin(0.01f).of(1f)
+        assertThat(marks[1]).isEqualTo(TickMark(500f, cluster = false))
+        assertThat(marks[2].cluster).isTrue()
+        assertThat(marks[2].x).isWithin(0.01f).of(901f)
+    }
+
+    @Test
+    fun `clusteredTickMarks on an empty list is empty`() {
+        assertThat(clusteredTickMarks(emptyList(), minGapPx = 6f)).isEmpty()
+    }
+
+    @Test
+    fun `clusteredTickMarks is deterministic`() {
+        val xs = listOf(0f, 3f, 5f, 40f, 41f, 200f)
+        assertThat(clusteredTickMarks(xs, minGapPx = 6f)).isEqualTo(clusteredTickMarks(xs, minGapPx = 6f))
+    }
+
+    @Test
+    fun `bookmarkGlyphs merges bookmarks closer than the gap`() {
+        val glyphs = bookmarkGlyphs(listOf(10f, 11f, 200f), minGapPx = 6f)
+        assertThat(glyphs).hasSize(2)
+        assertThat(glyphs[0].stacked).isTrue()
+        assertThat(glyphs[0].x).isWithin(0.01f).of(10.5f)
+        assertThat(glyphs[1]).isEqualTo(BookmarkGlyph(200f, stacked = false))
+    }
+
+    @Test
+    fun `bookmarkGlyphs leaves well-separated bookmarks single`() {
+        val glyphs = bookmarkGlyphs(listOf(10f, 100f, 300f), minGapPx = 6f)
+        assertThat(glyphs).hasSize(3)
+        assertThat(glyphs.all { !it.stacked }).isTrue()
+    }
+
+    @Test
+    fun `bookmarkGlyphs on an empty list is empty`() {
+        assertThat(bookmarkGlyphs(emptyList(), minGapPx = 6f)).isEmpty()
+    }
+
+    @Test
+    fun `bookmarkGlyphs sorts unsorted input before merging`() {
+        val glyphs = bookmarkGlyphs(listOf(200f, 10f, 11f), minGapPx = 6f)
+        assertThat(glyphs).hasSize(2)
+        assertThat(glyphs.map { it.x }).containsExactly(10.5f, 200f).inOrder()
     }
 }

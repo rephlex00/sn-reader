@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
@@ -169,6 +170,13 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var overlay: View
     private lateinit var titleView: TextView
     private lateinit var scrubberView: TextView
+
+    /** The last text [setRestingReadout] wrote to [scrubberView] — the "page X of Y · N left in
+     *  chapter" line, or the no-text-fallback. Restored onto [scrubberView] once strip generation's
+     *  transient "preparing previews · N%" readout (scheduleStripGeneration's onChapterDone) is
+     *  done overwriting it. Drag readouts ([onScrubMoved]) deliberately bypass this — they own the
+     *  readout only for the gesture's duration and never touch what it should read at rest. */
+    private var restingReadout: CharSequence = ""
 
     /**
      * The chapter scrubber beneath [scrubberView] in the bottom bar. Reports whole-book fractions;
@@ -362,6 +370,11 @@ open class ReaderActivity : AppCompatActivity() {
         // after the overlay, so it draws above both the page and the chrome.
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
+        // Literata + tabular numerals: the readout's digits (page counts, percentages) must not
+        // shift width as they change, and the XML's default sans doesn't carry tabular figures.
+        // 16sp/black stay as set in overlay_reader.xml — only the face and figure style change here.
+        scrubberView.typeface = ResourcesCompat.getFont(this, R.font.literata)
+        scrubberView.fontFeatureSettings = "tnum"
         chapterScrubber = overlay.findViewById(R.id.chapter_scrubber)
         scrubberBackView = overlay.findViewById(R.id.scrubber_back)
         scrubberBackView.setOnClickListener { onBackJump() }
@@ -1226,7 +1239,7 @@ open class ReaderActivity : AppCompatActivity() {
                     showMessage(R.string.error_book_no_text)
                     // showPage never ran, so the scrubber was never set; give the overlay (if the
                     // reader opens it on this broken book) a coherent readout instead of a blank.
-                    scrubberView.text = getString(R.string.error_no_text_short)
+                    setRestingReadout(getString(R.string.error_no_text_short))
                 } else {
                     showPage(start)
                     // Write the resolved start back immediately: stamps lastOpenedAtMs (so the
@@ -1330,10 +1343,25 @@ open class ReaderActivity : AppCompatActivity() {
                         generatedChapters.add(spineIndex)
                         chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
                         settings.refresh() // live "N / M chapters" readout, a no-op while the sheet is closed
+                        // Mirror the same progress into the resting readout — but only at rest: mid-drag
+                        // the readout belongs to the finger (chapter + percent, onScrubMoved), and this
+                        // per-chapter callback must not steal it out from under an in-flight gesture.
+                        if (scrubOrigin == null) {
+                            val spineSize = (document?.spineSize ?: 1).coerceAtLeast(1)
+                            scrubberView.text = getString(
+                                R.string.previews_preparing,
+                                generatedChapters.size * 100 / spineSize,
+                            )
+                        }
                     }
                 }
                 stripStore.evictOverBudget(keep = file)
                 previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, cfg) }
+                // Generation is done and previewStrip just reloaded above (back on the launch's
+                // main-thread context after that withContext returns): give the resting readout
+                // back its own line rather than leaving the transient "preparing previews · 100%"
+                // stuck on screen.
+                scrubberView.text = restingReadout
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1362,7 +1390,7 @@ open class ReaderActivity : AppCompatActivity() {
             val dao = (application as ReaderApplication).database.bookmarkDao()
             val marks = withContext(Dispatchers.IO) { dao.bookmarksFor(path) }
             val fractions = marks.map { readerSurface.progressFor(it.spineIndex, it.charOffset) }
-            chapterScrubber.setBookmarks(mergedBookmarkFractions(fractions))
+            chapterScrubber.setBookmarks(fractions)
         }
     }
 
@@ -1469,6 +1497,19 @@ open class ReaderActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Sets [scrubberView]'s text AND remembers it as [restingReadout] — the resting page readout
+     * ("page X of Y · N left in chapter", or the no-text fallback), as opposed to a transient
+     * readout (strip-generation progress, a drag position) that must eventually give the line back.
+     * Every call site that sets the RESTING readout goes through this instead of writing
+     * `scrubberView.text` directly, so scheduleStripGeneration knows what to restore once its own
+     * "preparing previews · N%" readout is done overwriting it.
+     */
+    private fun setRestingReadout(text: CharSequence) {
+        restingReadout = text
+        scrubberView.text = text
+    }
+
     private fun showPage(next: ReadingState) {
         pagesShownForTest++
         val doc = document ?: return
@@ -1493,7 +1534,7 @@ open class ReaderActivity : AppCompatActivity() {
         // Keep the overlay's read-only readout current with the page just shown, so it is right the
         // next time the overlay opens. Reuses the chapter already fetched above — no extra work, and
         // page turns only happen while the overlay is hidden anyway.
-        scrubberView.text = scrubberText(pageIndex, chapter.pages.size)
+        setRestingReadout(scrubberText(pageIndex, chapter.pages.size))
 
         // Unchecked downcast through the TextMeasurer seam: MeasuredChapter itself stays
         // Android-free, but PageView needs the real StaticLayout to draw. Safe today because

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The ↩ return control's armed seat: a 2dp INK ring, no fill, inset 12dp inside its 64dp tap
+     target so the drawn ring reads as a calm 40dp circle while the reach stays generous. A
+     layer-list (not a plain shape's own padding, which would only pad content, not the ring itself)
+     so the inset is exact and independent of the TextView's own gravity/centering. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:left="12dp"
+        android:top="12dp"
+        android:right="12dp"
+        android:bottom="12dp">
+        <shape android:shape="oval">
+            <stroke
+                android:width="2dp"
+                android:color="#1A1A1A" />
+        </shape>
+    </item>
+</layer-list>

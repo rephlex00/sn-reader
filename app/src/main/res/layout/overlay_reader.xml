@@ -158,9 +158,11 @@
         android:scaleType="fitCenter"
         android:visibility="gone" />
 
-    <!-- Bottom scrubber: read-only "page X of Y" readout, anchored to the bottom edge. The ↩ jump
-         back-stack control sits to the LEFT of the readout+scrubber column so it shares the bar
-         without crowding either. -->
+    <!-- Bottom scrubber: read-only "page X of Y" readout above a full-width timeline, anchored to
+         the bottom edge. The ↩ jump back-stack control gets its own fixed seat at the head of the
+         readout row (v2 design: "a home", not a loose glyph crowding a weighted column) — it sits
+         in a FrameLayout alongside the readout rather than beside it in a horizontal row, so the
+         readout stays independently centered and ↩ appearing/disappearing never reflows anything. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -173,58 +175,49 @@
             android:layout_height="2dp"
             android:background="@android:color/black" />
 
-        <LinearLayout
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/scrubber"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="16dp"
+                android:textColor="@android:color/black"
+                android:textSize="16sp" />
 
             <!-- Pops the jump back-stack (JumpStack): returns to the position left by the last
                  scrub commit or Contents/bookmark/highlight jump. GONE whenever the stack is empty
                  — see ReaderActivity.updateBackControl. A glyph rather than a word: the reader-back
                  control at the top already reads "Back" for leaving the book, so this needed its
-                 own mark. -->
+                 own mark. Anchored to the track's own left cap (return_seat.xml's 12dp inset centers
+                 the drawn 40dp ring at x≈36dp of this 64dp target) rather than left adrift at the
+                 screen edge. -->
             <TextView
                 android:id="@+id/scrubber_back"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="start|center_vertical"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/return_seat"
                 android:clickable="true"
                 android:focusable="true"
-                android:minWidth="64dp"
-                android:minHeight="64dp"
                 android:gravity="center"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="12dp"
                 android:text="@string/scrubber_back"
-                android:textColor="@android:color/black"
-                android:textSize="28sp"
+                android:textColor="#1A1A1A"
+                android:textSize="22sp"
                 android:visibility="gone" />
 
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
+        </FrameLayout>
 
-                <TextView
-                    android:id="@+id/scrubber"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:paddingHorizontal="16dp"
-                    android:paddingTop="16dp"
-                    android:textColor="@android:color/black"
-                    android:textSize="16sp" />
-
-                <dev.reader.ui.ChapterScrubberView
-                    android:id="@+id/chapter_scrubber"
-                    android:layout_width="match_parent"
-                    android:layout_height="88dp"
-                    android:paddingHorizontal="16dp" />
-
-            </LinearLayout>
-
-        </LinearLayout>
+        <dev.reader.ui.ChapterScrubberView
+            android:id="@+id/chapter_scrubber"
+            android:layout_width="match_parent"
+            android:layout_height="88dp"
+            android:paddingHorizontal="16dp" />
 
     </LinearLayout>
 
