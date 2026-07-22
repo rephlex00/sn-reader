@@ -41,17 +41,24 @@ easier to catch with a thumb, with a tick for every chapter. Drag it to move thr
 book.
 
 * Dragging near a chapter boundary snaps to it, like a detent on the slider, so landing exactly on
-  a chapter start doesn't mean hunting for the pixel.
+  a chapter start doesn't mean hunting for the pixel. Releasing on a snapped chapter now opens that
+  chapter's first page — it used to occasionally land on the tail end of the chapter before it.
 * Wherever you've placed a bookmark, a small glyph marks its spot on the track.
 * A floating window above your finger shows a preview of the page you'd land on. The first time you
   open a book, Reader renders a strip of sampled page thumbnails once in the background — a few
   seconds, invisible while you keep reading, a few megabytes on disk — and every drag after that
-  shows the preview instantly, with no wait.
+  shows the preview instantly, with no wait. The track itself is visible now, and while that strip
+  is being built each chapter's stretch draws dashed until its thumbnails are ready, then turns
+  solid — open the scrubber early in a fresh book and you can watch it fill in.
 * The page itself still never repaints while you drag — only the preview window and a readout
   update. The full page is drawn once, when you lift your finger, keeping a long scrub to a single
   clean refresh instead of a flurry of them.
 * **↩** appears after a jump — a scrub, a Contents tap, a bookmark or highlight jump — to return to
-  exactly where you were.
+  exactly where you were, and it's a bit bigger now, easier to catch with a thumb.
+* Page previews can be turned off from the Aa sheet, for anyone who'd rather skip the background
+  generation entirely — the track goes solid and the window stops appearing. A live count while a
+  strip is being built shows how many chapters are done, and a book's previews can be deleted to
+  reclaim the disk space without touching the toggle.
 
 ## 2026.07.2
 
