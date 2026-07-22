@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.google.common.truth.Truth.assertThat
@@ -1419,6 +1420,104 @@ class ReaderActivityTest {
 
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore + 1)
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
+    }
+
+    // -- Task 4: the floating preview window --------------------------------------------------
+
+    @Test
+    fun `dragging shows the preview window and lifting hides it`() {
+        // Strip generation is Task 6, so this test generates one itself, against the Activity's OWN
+        // resolved RenderConfig (configForTest), then re-runs the load (loadPreviewStripForTest) —
+        // exactly the ordering a real generation-then-later-open would produce.
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f)
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+
+        scrubber.onScrubCommit?.invoke(0.5f)
+        idleUntil { activity.scrubIdleForTest }
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `a cancelled drag also hides the preview`() {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f)
+        scrubber.onScrubCancel?.invoke()
+
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `without a strip the preview shows no image but the drag still works`() {
+        // A fresh book: no strip generated (this is the primary guarantee — it needs no strip and
+        // must never crash or paginate).
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f)
+
+        // Window stays hidden (text readout carries the position); nothing crashes, nothing paginates.
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(preview.drawable).isNull()
+    }
+
+    @Test
+    fun `the page still never renders during a drag with the preview active`() {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val pagesBefore = activity.pagesShownForTest
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.3f)
+        scrubber.onScrubMove?.invoke(0.6f)
+        scrubber.onScrubMove?.invoke(0.9f)
+
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
     }
 
     // -- Harness --------------------------------------------------------------------------------

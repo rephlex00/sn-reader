@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
@@ -176,6 +177,23 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var chapterScrubber: ChapterScrubberView
 
     /**
+     * The floating page-preview window over [chapterScrubber]: the sampled thumbnail nearest the
+     * finger, blitted from [previewStrip] during a drag. GONE at rest and whenever no strip is
+     * loaded — see [onScrubMoved]. Never the book page itself; that view never repaints mid-drag.
+     */
+    private lateinit var scrubPreview: ImageView
+
+    /** The open book's thumbnail strip, or null when none is generated yet (first open, generation
+     *  still running, or generation failed). Loaded once per open, off the main thread. */
+    private var previewStrip: StripIndex? = null
+
+    /** The strip store; also the generation trigger's collaborator (Task 6). */
+    private val stripStore by lazy { PreviewStripStore(this) }
+
+    /** The entry currently blitted, to skip redundant decodes as the finger dithers in place. */
+    private var shownPreviewEntry: StripEntry? = null
+
+    /**
      * The Aa typography sheet — a visibility-toggled panel inside [overlay], opened by the Aa button.
      * Holds no timer or animation: showing/hiding is one `visibility` flip. Each of its controls
      * writes a [ReaderPrefs] field then live-re-paginates the current chapter via
@@ -316,6 +334,7 @@ open class ReaderActivity : AppCompatActivity() {
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
         chapterScrubber = overlay.findViewById(R.id.chapter_scrubber)
+        scrubPreview = overlay.findViewById(R.id.scrub_preview)
         chapterScrubber.onScrubStart = {
             // Cancel any still-running prior commit before starting a new drag. Without this, an
             // old commit's showPage() can land mid-drag (a repaint during a drag, forbidden) and then
@@ -1106,6 +1125,11 @@ open class ReaderActivity : AppCompatActivity() {
                     // Bookmark glyphs for the scrubber: loaded once per open (and again on
                     // add/remove via BookmarksPanel's onBookmarksChanged callback above).
                     refreshScrubberBookmarks()
+                    // The scrubbing preview's thumbnail strip, if one has been generated for this
+                    // exact (book, config) already. Absent on a first open — Task 6 wires the
+                    // generation trigger; until then this naturally stays null and the preview
+                    // window simply never shows, which is the correct, non-crashing fallback.
+                    previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, renderConfig) }
                 }
             } catch (e: CancellationException) {
                 // The activity was destroyed while open() was in flight. lifecycleScope cancelled
@@ -1371,6 +1395,25 @@ open class ReaderActivity : AppCompatActivity() {
             chapterTitleFor(doc.toc, located.spineIndex).orEmpty(),
             (fraction.coerceIn(0f, 1f) * 100).roundToInt(),
         )
+
+        // The preview blit: nearest sampled thumbnail, decoded off disk. No strip -> no window; the
+        // readout above already carries chapter + percent. Never paginates, never touches the page.
+        val strip = previewStrip
+        val bookFile = bookPath?.let(::File)
+        val cfg = config
+        if (strip != null && bookFile != null && cfg != null) {
+            val entry = nearestEntry(strip.entries, fraction)
+            if (entry != null && entry != shownPreviewEntry) {
+                val bmp = android.graphics.BitmapFactory.decodeFile(
+                    stripStore.thumbnailFile(bookFile, cfg, entry).path,
+                )
+                if (bmp != null) {
+                    scrubPreview.setImageBitmap(bmp)
+                    shownPreviewEntry = entry
+                    scrubPreview.visibility = View.VISIBLE
+                }
+            }
+        }
     }
 
     /**
@@ -1386,6 +1429,12 @@ open class ReaderActivity : AppCompatActivity() {
         // set and reverts the jump the user just committed (abandonScrub is now a no-op instead, since
         // it early-returns on a null origin).
         scrubOrigin = null
+        // The preview window belongs to the drag, not to the page it lands on: hide it the moment
+        // the finger commits, synchronously, same as scrubOrigin above — the render below is a
+        // separate, later thing.
+        scrubPreview.visibility = View.GONE
+        scrubPreview.setImageDrawable(null)
+        shownPreviewEntry = null
         scrubJob = lifecycleScope.launch {
             val located = locateByFraction(chapterWeights, fraction)
             val target = withContext(Dispatchers.IO) { resolveScrubTarget(located) }
@@ -1404,6 +1453,9 @@ open class ReaderActivity : AppCompatActivity() {
         val origin = scrubOrigin ?: return
         scrubJob?.cancel()
         scrubOrigin = null
+        scrubPreview.visibility = View.GONE
+        scrubPreview.setImageDrawable(null)
+        shownPreviewEntry = null
         // Restore the readout to the page actually on screen; the page itself never moved.
         showPage(origin)
     }
@@ -1436,6 +1488,28 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Drives the overlay-hide/Back abandon path directly, without a real touch dispatch. */
     internal fun abandonScrubForTest() = abandonScrub()
+
+    // -- Preview-strip test seams -------------------------------------------------------------------
+    // Strip GENERATION is Task 6; until then a test that needs the preview window to actually show
+    // must generate a strip itself, against the Activity's own RenderConfig, then re-run the load
+    // that normally only happens once, at open. These three seams are exactly that path.
+
+    /** The Activity's own resolved RenderConfig for this open — what a test must generate a strip
+     *  against for [previewStrip] to recognize it as a match. */
+    internal val configForTest: RenderConfig? get() = config
+
+    /** Re-runs the strip load [openFirstBook] does once, e.g. after a test has generated a strip for
+     *  this exact (book, config) on disk after the fact. Not called in production. */
+    internal fun loadPreviewStripForTest() {
+        val file = bookPath?.let(::File) ?: return
+        val cfg = config ?: return
+        lifecycleScope.launch {
+            previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, cfg) }
+        }
+    }
+
+    /** True once [loadPreviewStripForTest] (or the real open-time load) has found a strip. */
+    internal val previewStripLoadedForTest: Boolean get() = previewStrip != null
 
     /**
      * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s

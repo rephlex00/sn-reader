@@ -142,6 +142,22 @@
 
     </LinearLayout>
 
+    <!-- The scrubbing preview: the sampled page nearest the finger, blitted from the on-disk
+         thumbnail strip. Visible only during a drag. A separate small view, so its repaints are
+         its own region — the book page underneath NEVER repaints during a drag (the v1 contract).
+         Half screen: 374x499dp at the Nomad's 1.875 density = ~702x936px. -->
+    <ImageView
+        android:id="@+id/scrub_preview"
+        android:layout_width="374dp"
+        android:layout_height="499dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="140dp"
+        android:background="@drawable/preview_window_border"
+        android:contentDescription="@null"
+        android:padding="2dp"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
     <!-- Bottom scrubber: read-only "page X of Y" readout, anchored to the bottom edge. -->
     <LinearLayout
         android:layout_width="match_parent"
