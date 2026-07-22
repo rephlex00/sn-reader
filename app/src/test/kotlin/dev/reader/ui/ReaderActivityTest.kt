@@ -1266,6 +1266,79 @@ class ReaderActivityTest {
         assertThat(after).isAtMost(1f)
     }
 
+    // -- Task 6: chapter scrubber — no page render during a drag, only on release ---------------
+
+    @Test
+    fun `dragging the scrubber renders no page — only the readout moves`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        val pagesBefore = activity.pagesShownForTest
+
+        scrubber.onScrubMove?.invoke(0.4f)
+        scrubber.onScrubMove?.invoke(0.6f)
+        scrubber.onScrubMove?.invoke(0.9f)
+
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
+    }
+
+    @Test
+    fun `committing the scrub renders the selected page and persists it`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        val pagesBefore = activity.pagesShownForTest
+
+        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubCommit?.invoke(0.9f)
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.pagesShownForTest).isGreaterThan(pagesBefore)
+        assertThat(activity.currentStateForTest.spineIndex).isGreaterThan(0)
+        // The DB row is the load-bearing assertion — persistPosition takes a Locator, so this is
+        // how a commit's write is observed, not an invented in-memory seam.
+        idleUntil { rowFor(app, book.path)!!.spineIndex > 0 }
+        assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(0)
+    }
+
+    @Test
+    fun `abandoning a scrub restores the starting position and persists nothing`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val startState = activity.currentStateForTest
+        // The open-time write already landed; capture the row as it stands so a scrub that
+        // persists nothing can be proven by the row staying exactly here.
+        val rowBeforeScrub = rowFor(app, book.path)!!
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f)
+        activity.abandonScrubForTest()
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.currentStateForTest).isEqualTo(startState)
+        val rowAfterAbandon = rowFor(app, book.path)!!
+        assertThat(rowAfterAbandon.spineIndex).isEqualTo(rowBeforeScrub.spineIndex)
+        assertThat(rowAfterAbandon.charOffset).isEqualTo(rowBeforeScrub.charOffset)
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses

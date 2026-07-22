@@ -161,9 +161,15 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:paddingHorizontal="16dp"
-            android:paddingVertical="16dp"
+            android:paddingTop="16dp"
             android:textColor="@android:color/black"
             android:textSize="16sp" />
+
+        <dev.reader.ui.ChapterScrubberView
+            android:id="@+id/chapter_scrubber"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:paddingHorizontal="16dp" />
 
     </LinearLayout>
 
