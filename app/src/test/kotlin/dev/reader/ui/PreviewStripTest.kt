@@ -40,6 +40,16 @@ class PreviewStripTest {
     }
 
     @Test
+    fun `a many-chapter book stays within the cap`() {
+        // 91 chapters, 4-9 pages each — a realistic novel. Openings (91) plus fills must not exceed cap.
+        val counts = List(91) { 4 + (it % 6) }
+        val plan = samplePlan(counts, cap = 120)
+        assertThat(plan.size).isAtMost(120)
+        // Every chapter still gets its opening.
+        assertThat(counts.indices.all { ch -> plan.any { it == ch to 0 } }).isTrue()
+    }
+
+    @Test
     fun `config hash changes with any rendering field and is stable otherwise`() {
         assertThat(configHash(config())).isEqualTo(configHash(config()))
         assertThat(configHash(config(textSizePx = 42f))).isNotEqualTo(configHash(config()))

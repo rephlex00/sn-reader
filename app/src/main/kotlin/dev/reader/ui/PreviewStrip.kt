@@ -33,9 +33,14 @@ data class StripIndex(
 /**
  * Which (spineIndex, pageIndex) pairs get thumbnails: every non-empty chapter's first page, plus
  * evenly spaced fills inside long chapters, allocated proportionally to page count up to [cap]
- * total. Chapter openings are never sacrificed to the cap — recognising "which chapter is this" is
- * the preview's first job — so a pathological 300-chapter book may exceed [cap] by its openings
- * alone, which is fine: openings are the cheapest thumbnails to choose and the dearest to lose.
+ * total. Fills strictly respect the cap: each chapter's share is floored (no per-chapter minimum),
+ * so the sum of fills never exceeds the remaining budget after openings — short and medium
+ * chapters whose proportional share rounds to 0 get only their opening, and interior fills
+ * concentrate in the longest chapters, where sampling within the chapter actually matters.
+ * Chapter openings themselves are never sacrificed to the cap — recognising "which chapter is
+ * this" is the preview's first job — so a pathological 300-chapter book may exceed [cap] by its
+ * openings alone, which is fine: openings are the cheapest thumbnails to choose and the dearest
+ * to lose.
  */
 fun samplePlan(pageCounts: List<Int>, cap: Int = 120): List<Pair<Int, Int>> {
     val openings = pageCounts.indices.filter { pageCounts[it] > 0 }.map { it to 0 }
@@ -49,8 +54,11 @@ fun samplePlan(pageCounts: List<Int>, cap: Int = 120): List<Pair<Int, Int>> {
         // that single slot would just re-add page 1 next to the opening's page 0, not give a
         // meaningfully "evenly spaced" sample. Fills only earn their keep past 2 pages.
         if (count <= 2) continue
-        // Proportional share of the fill budget, at least 1 fill for any multi-page chapter.
-        val share = ((count.toFloat() / totalPages) * fillBudget).toInt().coerceAtLeast(1)
+        // Proportional share of the fill budget, floored — no per-chapter minimum. Because
+        // sum(floor(count/total * budget)) <= budget, this keeps total fills within fillBudget;
+        // medium chapters whose share rounds to 0 get only their opening, so interior fills
+        // concentrate in the longest chapters, where in-chapter sampling actually matters.
+        val share = ((count.toFloat() / totalPages) * fillBudget).toInt()
         val step = count.toFloat() / (share + 1)
         for (k in 1..share) {
             val page = (step * k).toInt().coerceIn(1, count - 1)
