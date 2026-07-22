@@ -51,6 +51,19 @@ class PreviewStripStoreTest {
     }
 
     @Test
+    fun `generate reports each sampled chapter once, in ascending order`() = runBlocking {
+        val book = multiChapterEpub(tempFolder.newFile("book.epub"))
+        val done = mutableListOf<Int>()
+        store.generate(book, config()) { spineIndex -> done += spineIndex }
+
+        // Every chapter that got at least one thumbnail is reported exactly once, ascending.
+        val index = store.stripFor(book, config())!!
+        assertThat(done).isEqualTo(generatedChaptersOf(index).sorted())
+        assertThat(done).isInOrder()
+        assertThat(done.toSet().size).isEqualTo(done.size) // no duplicates
+    }
+
+    @Test
     fun `a config change invalidates the strip`() = runBlocking {
         val book = multiChapterEpub(tempFolder.newFile("book.epub"))
         store.generate(book, config())

@@ -66,8 +66,18 @@ class PreviewStripStore(private val context: Context) {
      * The whole generation job. Runs on [Dispatchers.Default] (CPU-bound layout + compress), checks
      * cancellation between pages, and deletes any stale sibling strips (old configs) for this book
      * on success. Cancellation at ANY point is safe: the index is the last thing written.
+     *
+     * [onChapterDone] is invoked once per spine index that produced at least one thumbnail, in
+     * ascending order, as the plan (already sorted by spine then page) moves off that chapter — and
+     * once more after the loop for the last chapter. It fires on this coroutine's own dispatcher
+     * ([Dispatchers.Default]), never the main thread: the caller must marshal to the main thread
+     * itself, and should keep the callback cheap since it runs inline with generation.
      */
-    suspend fun generate(bookFile: File, config: RenderConfig) = withContext(Dispatchers.Default) {
+    suspend fun generate(
+        bookFile: File,
+        config: RenderConfig,
+        onChapterDone: (spineIndex: Int) -> Unit = {},
+    ) = withContext(Dispatchers.Default) {
         val dir = stripDir(bookFile, config)
         dir.deleteRecursively()
         dir.mkdirs()
@@ -83,9 +93,18 @@ class PreviewStripStore(private val context: Context) {
             val cumulative = pageCounts.runningFold(0) { acc, n -> acc + n }
 
             val entries = ArrayList<StripEntry>(plan.size)
+            var currentSpine = -1
+            var currentSpineProduced = false
             for ((n, sample) in plan.withIndex()) {
                 ensureActive()
                 val (spine, page) = sample
+                if (spine != currentSpine) {
+                    // The plan is sorted by (spineIndex, pageIndex), so all samples for a chapter
+                    // are contiguous: moving to a new spine means the previous one is complete.
+                    if (currentSpineProduced) onChapterDone(currentSpine)
+                    currentSpine = spine
+                    currentSpineProduced = false
+                }
                 val chapter = doc.chapter(spine, config)
                 val layout = (chapter.measured as? AndroidMeasuredChapter)?.layout ?: continue
                 val p = chapter.pages.getOrNull(page) ?: continue
@@ -104,7 +123,11 @@ class PreviewStripStore(private val context: Context) {
                     pageIndex = page,
                     fileName = fileName,
                 )
+                currentSpineProduced = true
             }
+            // Flush the last chapter in the plan — its "spine changed" trigger never fires because
+            // there is no following sample.
+            if (currentSpineProduced) onChapterDone(currentSpine)
 
             val index = StripIndex(
                 configHash = configHash(config),
