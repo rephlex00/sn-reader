@@ -1,22 +1,27 @@
 package dev.reader.ui
 
+import android.content.Context
 import android.graphics.Typeface
 import android.util.TypedValue
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.core.content.res.ResourcesCompat
 import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
 
 /**
  * The overlay's table-of-contents list — a dumb, monochrome RecyclerView adapter over already-built
- * [TocRow]s (see [tocRows]): one TextView per entry, indented by [TocRow.depth], the current chapter
- * bolded, tapping one invokes [onEntryClick].
+ * [TocRow]s (see [tocRows]): one row per entry, set as a printed contents page (title · leader dots
+ * · whole-book percentage), indented by [TocRow.depth], the current chapter bolded, tapping one
+ * invokes [onEntryClick].
  *
- * It holds no async work, no cache and no timer: the whole list is submitted at once from the
- * already-parsed `doc.toc`, so it costs nothing at rest — the TOC panel is GONE and this adapter's
- * rows are only ever touched on a deliberate tap. [ReaderActivity] nulls the RecyclerView's
- * `itemAnimator`, so [submit]'s rebind is one e-ink redraw rather than an animated shuffle.
+ * It holds no async work, no cache and no timer — beyond the one-time Literata resolve below — and
+ * the whole list is submitted at once from the already-parsed `doc.toc`, so it costs nothing at
+ * rest — the TOC panel is GONE and this adapter's rows are only ever touched on a deliberate tap.
+ * [ReaderActivity] nulls the RecyclerView's `itemAnimator`, so [submit]'s rebind is one e-ink redraw
+ * rather than an animated shuffle.
  */
 internal class TocAdapter(
     private val onEntryClick: (TocRow) -> Unit,
@@ -38,29 +43,81 @@ internal class TocAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TocViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_toc_entry, parent, false)
-        return TocViewHolder(view as TextView)
+        return TocViewHolder(view, bookTypeface(parent.context))
     }
 
     override fun onBindViewHolder(holder: TocViewHolder, position: Int) {
         holder.bind(rows[position], onEntryClick)
     }
 
-    class TocViewHolder(private val label: TextView) : RecyclerView.ViewHolder(label) {
+    /**
+     * Literata, resolved once for the whole adapter and reused by every row.
+     *
+     * Never per-bind: `ResourcesCompat.getFont` is real file work, and a contents list rebinds every
+     * row on each open. The Aa sheet defers its font loading for the same reason
+     * (`SettingsSheet.loadFontPreviewsOnce`).
+     */
+    private var cachedTypeface: Typeface? = null
+
+    private fun bookTypeface(context: Context): Typeface? {
+        cachedTypeface?.let { return it }
+        val resolved = ResourcesCompat.getFont(context, R.font.literata)
+        cachedTypeface = resolved
+        return resolved
+    }
+
+    class TocViewHolder(
+        itemView: View,
+        // internal, not private: a test reads this to assert the resolve-once cache actually
+        // hands every holder the SAME Typeface instance, rather than merely asserting the suite
+        // stays green (which a regression moving bookTypeface into onBindViewHolder would too).
+        internal val bookFace: Typeface?,
+    ) : RecyclerView.ViewHolder(itemView) {
+
+        private val title: TextView = itemView.findViewById(R.id.toc_title)
+        private val percent: TextView = itemView.findViewById(R.id.toc_percent)
+
         fun bind(row: TocRow, onEntryClick: (TocRow) -> Unit) {
-            label.text = row.title
+            title.text = row.title
+            percent.text = itemView.context.getString(R.string.toc_percent, row.progressPercent)
+
+            // A printed contents page sets its entries in the book's own face, not the UI's.
+            title.typeface = bookFace
+            percent.typeface = bookFace
 
             // Nesting is shown as extra left padding, one step per depth level, keeping the base
             // padding so a top-level entry still clears the edge. A flat indent, no tree glyphs.
-            val dm = label.resources.displayMetrics
+            val dm = itemView.resources.displayMetrics
             val base = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, BASE_PADDING_DP, dm).toInt()
             val step = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, INDENT_STEP_DP, dm).toInt()
-            label.setPadding(base + row.depth * step, label.paddingTop, base, label.paddingBottom)
+            itemView.setPadding(base + row.depth * step, itemView.paddingTop, base, itemView.paddingBottom)
 
-            // The current chapter is the single marker: bold. No background/selection state to
-            // animate — the e-ink constraint, the same choice the Aa sheet makes for its options.
-            label.setTypeface(null, if (row.isCurrent) Typeface.BOLD else Typeface.NORMAL)
+            // Two markers, both typeface-based rather than background-based, because a background
+            // selection state would need to animate or ghost: the current chapter is bold, and a
+            // nested entry is italic the way a sub-section is set in a printed contents page.
+            //
+            // Resolved through Typeface.create(bookFace, style) rather than the two-arg
+            // TextView.setTypeface(tf, style), to satisfy a Robolectric artifact, not a real
+            // defect: under Robolectric, ResourcesCompat.getFont(R.font.literata)'s base Typeface
+            // reports getStyle() == 400 (a font-weight value the shadow surfaces from the family's
+            // metadata) rather than the expected NORMAL == 0, and the two-arg setter's NORMAL case
+            // assigns that Typeface as-is instead of routing through Typeface.create — failing the
+            // plain-row assertion below on a style Android itself never actually reports. The two
+            // overloads are not otherwise equivalent: setTypeface(tf, style) additionally computes
+            // `need = style & ~tf.getStyle()` and sets synthetic bold/skew (setFakeBoldText /
+            // setTextSkewX) for whichever bit tf's own style doesn't already cover, which
+            // Typeface.create never does. That is harmless here — literata.xml ships real
+            // 400/700 x normal/italic cuts, so every style below resolves to a genuine cut, never a
+            // synthesized one — but a family lacking a true italic would lose the nested-entry
+            // italic here rather than falling back to a faux slant.
+            val style = when {
+                row.isCurrent -> Typeface.BOLD
+                row.depth > 0 -> Typeface.ITALIC
+                else -> Typeface.NORMAL
+            }
+            title.typeface = Typeface.create(bookFace, style)
 
-            label.setOnClickListener { onEntryClick(row) }
+            itemView.setOnClickListener { onEntryClick(row) }
         }
     }
 

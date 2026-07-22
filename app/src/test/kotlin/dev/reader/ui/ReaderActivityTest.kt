@@ -338,6 +338,8 @@ class ReaderActivityTest {
         pageViewOf(activity).epd = object : EpdRefresher {
             override val available = true
             override fun cleanRefresh(): Boolean { calls[0]++; return true }
+            override fun enterFastMode(): Boolean = false
+            override fun exitFastMode(): Boolean = false
         }
         // Three genuine page turns (NEXT within the multi-page chapter — multiPageEpub's 60
         // paragraphs paginate to well more than 3 pages, so none of these run off the end).
@@ -363,22 +365,119 @@ class ReaderActivityTest {
         pageViewOf(activity).epd = object : EpdRefresher {
             override val available = true
             override fun cleanRefresh(): Boolean { calls[0]++; return true }
+            override fun enterFastMode(): Boolean = false
+            override fun exitFastMode(): Boolean = false
         }
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY) // hide overlay so taps turn pages
         repeat(3) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
-        assertThat(calls[0]).isEqualTo(1) // one clean refresh across 3 turns at N=3
+        // Two: one from hiding the overlay (its own clean-on-close refresh, by design — see
+        // hideOverlay), plus one more clean refresh across the 3 turns at N=3.
+        assertThat(calls[0]).isEqualTo(2)
     }
 
     @Test
-    fun `overlay toggles do not count toward the refresh cadence`() {
+    fun `overlay toggles do not compound beyond one clean refresh per close`() {
         val controller = openedMultiPage()
         val activity = controller.get()
         val pv = pageViewOf(activity)
 
-        // Center taps only toggle the overlay — they are not page turns, so no number of them
-        // reaches the ghost-clear cadence. (Each pair of toggles returns to the hidden state.)
+        // Center taps toggle the overlay, not turn pages, so they never reach the page-turn ghost-
+        // clear cadence on their own. Hiding the overlay does trigger its own clean-on-close refresh
+        // (by design — see hideOverlay), so 10 hides across 20 toggles (each pair returns to hidden)
+        // means 10 refreshes — not the compounding page-turn-cadence count this would be otherwise.
         repeat(20) { pv.onTap!!.invoke(TapZone.TOGGLE_OVERLAY) }
-        assertThat(pv.fullRefreshCount).isEqualTo(0)
+        assertThat(pv.fullRefreshCount).isEqualTo(10)
+    }
+
+    // -- Fast e-ink screen mode for chrome --------------------------------------------------------
+
+    @Test
+    fun `showing the overlay enters fast mode and hiding it restores and refreshes`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val epd = object : EpdRefresher {
+            override val available = true
+            var fastModeHeld = false
+            override fun cleanRefresh(): Boolean = true
+            override fun enterFastMode(): Boolean { fastModeHeld = true; return true }
+            override fun exitFastMode(): Boolean { fastModeHeld = false; return true }
+        }
+        pageViewOf(activity).epd = epd
+
+        activity.showOverlayForTest()
+        assertThat(epd.fastModeHeld).isTrue()
+
+        val refreshesBefore = pageViewOf(activity).fullRefreshCount
+        activity.hideOverlayForTest()
+
+        assertThat(epd.fastModeHeld).isFalse()
+        assertThat(pageViewOf(activity).fullRefreshCount).isGreaterThan(refreshesBefore)
+    }
+
+    @Test
+    fun `onPause restores the screen mode even with the overlay still open`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val epd = object : EpdRefresher {
+            override val available = true
+            var fastModeHeld = false
+            override fun cleanRefresh(): Boolean = true
+            override fun enterFastMode(): Boolean { fastModeHeld = true; return true }
+            override fun exitFastMode(): Boolean { fastModeHeld = false; return true }
+        }
+        pageViewOf(activity).epd = epd
+
+        activity.showOverlayForTest()
+        assertThat(epd.fastModeHeld).isTrue()
+
+        controller.pause()
+
+        // The screen mode is device-wide runtime state. A leaked fast mode degrades the whole device
+        // UI, so the restore must ride on the last callback Android guarantees, not on a close handler
+        // the user can bypass by swiping the app away.
+        assertThat(epd.fastModeHeld).isFalse()
+    }
+
+    @Test
+    fun `a Contents jump clean-refreshes only the destination page, not the page being left`() {
+        // The bug this guards: hideOverlay's own clean-on-close refresh used to fire unconditionally
+        // on every close, including the Contents/Bookmarks/Highlights jump path — flashing the OLD
+        // page clean (via closeOverlay) before goTo ever drew the destination, and leaving the
+        // destination itself un-clean-refreshed (showPage only invalidate()s).
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        // Opens on chapter 0.
+        assertThat(activity.currentTopOffsetForTest()!!.spineIndex).isEqualTo(0)
+
+        // Records which chapter was on screen (per the Activity's own state) at the moment each
+        // clean refresh actually fired — a refresh recorded against chapter 0 would mean the page
+        // being LEFT flashed clean before the jump landed.
+        val refreshedAtSpineIndex = mutableListOf<Int?>()
+        pageViewOf(activity).epd = object : EpdRefresher {
+            override val available = true
+            override fun cleanRefresh(): Boolean {
+                refreshedAtSpineIndex += activity.currentTopOffsetForTest()?.spineIndex
+                return true
+            }
+            override fun enterFastMode(): Boolean = false
+            override fun exitFastMode(): Boolean = false
+        }
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        val refreshesBefore = pageViewOf(activity).fullRefreshCount
+        clickTocRow(activity, position = 1) // tocEpub's second nav entry -> chapter index 1
+
+        // Exactly one clean refresh for the whole jump (not zero, not two — no flash of the old page
+        // AND no missing refresh of the new one), and it landed once chapter 1 was already on screen.
+        assertThat(pageViewOf(activity).fullRefreshCount - refreshesBefore).isEqualTo(1)
+        assertThat(refreshedAtSpineIndex).containsExactly(1)
+        assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
     }
 
     @Test
@@ -616,7 +715,7 @@ class ReaderActivityTest {
             TocEntry(title = "Two-a", spineIndex = 2, depth = 1),
         )
 
-        val rows = tocRows(toc, currentSpineIndex = 1)
+        val rows = tocRows(toc, currentSpineIndex = 1) { _, _ -> 0f }
 
         // Order and depth are passed through untouched.
         assertThat(rows.map { it.title }).containsExactly("One", "Two", "Two-a").inOrder()
@@ -627,7 +726,21 @@ class ReaderActivityTest {
 
     @Test
     fun `tocRows on an empty toc is empty (the No contents case)`() {
-        assertThat(tocRows(emptyList(), currentSpineIndex = 0)).isEmpty()
+        assertThat(tocRows(emptyList(), currentSpineIndex = 0) { _, _ -> 0f }).isEmpty()
+    }
+
+    @Test
+    fun `rows carry a whole-book percentage from progressFor`() {
+        val toc = listOf(
+            TocEntry(title = "Ashes", spineIndex = 0, charOffset = 0, depth = 0),
+            TocEntry(title = "Winter", spineIndex = 2, charOffset = 40, depth = 0),
+        )
+
+        val rows = tocRows(toc, currentSpineIndex = 0) { spineIndex, _ ->
+            if (spineIndex == 0) 0f else 0.436f
+        }
+
+        assertThat(rows.map { it.progressPercent }).containsExactly(0, 44).inOrder()
     }
 
     @Test
@@ -696,6 +809,28 @@ class ReaderActivityTest {
         assertThat(list.visibility).isEqualTo(View.VISIBLE)
         // tocEpub's nav declares three chapters; the reader opens on chapter 0.
         assertThat(list.adapter!!.itemCount).isEqualTo(3)
+    }
+
+    @Test
+    fun `opening the Contents panel does not paginate a chapter it has not visited`() {
+        // The bug this guards: TocPanel.refresh() used to build each row's percentage through
+        // ReaderSurface.progressFor, which paginates its chapter on a cache miss — so opening a
+        // per-chapter Contents list paginated every chapter in the book just to display, undoing
+        // the whole point of lazy pagination. isChapterCachedForTest is the same read-only cache
+        // peek the prefetch tests use, so this proves it without needing a fake EpubDocument
+        // (which isn't possible: EpubDocument has a private constructor and isn't open).
+        val controller = openedWithToc()
+        val activity = controller.get()
+        // Opening chapter 0 paginates it; settling on it schedules a background prefetch of
+        // chapter 1 (the only forward neighbour). Chapter 2 is never touched by either — it is
+        // the one tocEpub entry the panel could only reach by paginating it itself.
+        assertThat(activity.isChapterCachedForTest(2)).isFalse()
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.VISIBLE)
+
+        assertThat(activity.isChapterCachedForTest(2)).isFalse()
     }
 
     @Test
@@ -1129,6 +1264,161 @@ class ReaderActivityTest {
         assertThat(after!!).isGreaterThan(before!!)
         assertThat(after).isAtLeast(0f)
         assertThat(after).isAtMost(1f)
+    }
+
+    // -- Task 6: chapter scrubber — no page render during a drag, only on release ---------------
+
+    @Test
+    fun `dragging the scrubber renders no page — only the readout moves`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        val pagesBefore = activity.pagesShownForTest
+
+        scrubber.onScrubMove?.invoke(0.4f)
+        scrubber.onScrubMove?.invoke(0.6f)
+        scrubber.onScrubMove?.invoke(0.9f)
+
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
+    }
+
+    @Test
+    fun `committing the scrub renders the selected page and persists it`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        val pagesBefore = activity.pagesShownForTest
+
+        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubCommit?.invoke(0.9f)
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.pagesShownForTest).isGreaterThan(pagesBefore)
+        assertThat(activity.currentStateForTest.spineIndex).isGreaterThan(0)
+        // The DB row is the load-bearing assertion — persistPosition takes a Locator, so this is
+        // how a commit's write is observed, not an invented in-memory seam.
+        idleUntil { rowFor(app, book.path)!!.spineIndex > 0 }
+        assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(0)
+    }
+
+    @Test
+    fun `abandoning a scrub restores the starting position and persists nothing`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val startState = activity.currentStateForTest
+        // The open-time write already landed; capture the row as it stands so a scrub that
+        // persists nothing can be proven by the row staying exactly here.
+        val rowBeforeScrub = rowFor(app, book.path)!!
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f)
+        activity.abandonScrubForTest()
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.currentStateForTest).isEqualTo(startState)
+        val rowAfterAbandon = rowFor(app, book.path)!!
+        assertThat(rowAfterAbandon.spineIndex).isEqualTo(rowBeforeScrub.spineIndex)
+        assertThat(rowAfterAbandon.charOffset).isEqualTo(rowBeforeScrub.charOffset)
+    }
+
+    @Test
+    fun `dismissing the overlay right after a commit does not revert the committed jump`() {
+        // Regression for the abandon-after-commit race: the commit's off-main-thread pagination
+        // takes ~230-360ms in production, and dismissing the overlay (center-tap or Back) anywhere
+        // in that window used to run abandonScrub, which saw scrubOrigin still set and reverted the
+        // navigation the user just committed. onScrubCommitted now clears scrubOrigin synchronously,
+        // before the coroutine launches, so this dismiss — fired before the looper has even been
+        // idled once — must find abandonScrub a no-op and let the commit land.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubCommit?.invoke(0.9f)
+        // Dismiss immediately — no idling in between — so this lands squarely inside the commit's
+        // still-in-flight pagination window, exactly the race the finding describes.
+        activity.hideOverlayForTest()
+        idleUntil { activity.scrubIdleForTest }
+
+        // The committed jump landed (chapter 3 of 3, not the chapter-1 starting position) ...
+        assertThat(activity.currentStateForTest.spineIndex).isGreaterThan(0)
+        // ... and it persisted, rather than being silently discarded by an abandon.
+        idleUntil { rowFor(app, book.path)!!.spineIndex > 0 }
+        assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(0)
+    }
+
+    @Test
+    fun `starting a new scrub cancels a still-running prior commit instead of rendering it later`() {
+        // Regression for the overlapping-scrubs race: previously onScrubStart overwrote scrubOrigin
+        // but never cancelled a still-running scrubJob from an earlier commit, so that old job would
+        // eventually call showPage with its stale target — a page repaint DURING the new drag, which
+        // the scrubber contract forbids. onScrubStart now cancels scrubJob first, so the stale commit
+        // must never render.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        val pagesBefore = activity.pagesShownForTest
+
+        // First drag, committed toward chapter 3 — then, crucially, NOT idled. The commit's coroutine
+        // is left suspended on Dispatchers.IO with its resumption still sitting, unprocessed, on the
+        // (paused) main looper's queue.
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubCommit?.invoke(0.9f)
+
+        // A second drag begins before that resumption is ever processed. Without the fix this is
+        // exactly where the stale job survives to render later, mid-drag.
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.1f)
+
+        // Now let everything that's going to run, run. If the first commit had survived, its
+        // showPage(chapter 3) would land here — a repaint during the still-open second drag.
+        idleUntil { activity.scrubIdleForTest }
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
+
+        // The second drag is still the one in control: committing IT (toward chapter 1) is the only
+        // render that should ever land, proving scrubOrigin/scrubJob were governed by the second
+        // drag throughout, not clobbered by the first commit.
+        scrubber.onScrubCommit?.invoke(0.1f)
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore + 1)
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
     }
 
     // -- Harness --------------------------------------------------------------------------------

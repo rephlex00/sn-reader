@@ -28,7 +28,10 @@ import dev.reader.engine.TocEntry
 import dev.reader.engine.advance
 import dev.reader.engine.advanceSpread
 import dev.reader.engine.bookProgress
+import dev.reader.engine.BookLocation
+import dev.reader.engine.chapterEndFraction
 import dev.reader.engine.chapterTitleFor
+import dev.reader.engine.locateByFraction
 import dev.reader.engine.pageIndexFor
 import dev.reader.engine.reflowedPageIndex
 import dev.reader.engine.retreat
@@ -46,6 +49,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
  * The overlay's read-only page readout, chapter-relative: `page X of Y · N left in chapter`, where
@@ -62,8 +66,9 @@ internal fun scrubberText(pageIndex: Int, pageCount: Int): String {
 /**
  * One row of the Contents panel — the display projection of a [TocEntry] for [TocAdapter]. [depth]
  * drives the indent; [isCurrent] (whether this entry's chapter is the one being read) drives the
- * bold marker; [spineIndex]/[charOffset] are what a tap jumps to. Kept as a flat data class, out of
- * the View, so the list-building rules below are unit-testable without a RecyclerView.
+ * bold marker; [spineIndex]/[charOffset] are what a tap jumps to; [progressPercent] is the
+ * whole-book position the leader dots run to. Kept as a flat data class, out of the View, so the
+ * list-building rules below are unit-testable without a RecyclerView.
  */
 internal data class TocRow(
     val title: String,
@@ -71,15 +76,29 @@ internal data class TocRow(
     val charOffset: Int,
     val depth: Int,
     val isCurrent: Boolean,
+    val progressPercent: Int,
 )
 
 /**
  * Projects the parsed [toc] into [TocRow]s in list (spine) order, marking every entry whose chapter
- * is [currentSpineIndex] as the current one. A pure function of its two arguments — the testable
- * seam behind the Contents list — so order, depth passthrough and current-chapter marking are
+ * is [currentSpineIndex] as the current one, and resolving each entry's whole-book percentage
+ * through [progressForRow]. A pure function of its arguments — the testable seam behind the
+ * Contents list — so order, depth passthrough, current-chapter marking and percentages are all
  * verifiable without an Activity. An empty [toc] yields an empty list (the "No contents" case).
+ *
+ * [progressForRow] is called once per TOC entry, so it MUST be byte-weighted and paginate nothing —
+ * [ReaderSurface.chapterStartProgress], never [ReaderSurface.progressFor]. `progressFor` resolves
+ * through the current pagination (a cache-miss chapter read: parse + `StaticLayout` measure), which
+ * is fine for the one anchor a bookmark or highlight asks about, but calling it once per entry here
+ * would paginate every chapter in the book just to open the panel — the eager work this reader
+ * exists to avoid, and worse, would evict the chapter actually being read from the bounded LRU
+ * chapter cache. The real caller ([TocPanel.refresh]) wires this to `chapterStartProgress`.
  */
-internal fun tocRows(toc: List<TocEntry>, currentSpineIndex: Int): List<TocRow> =
+internal fun tocRows(
+    toc: List<TocEntry>,
+    currentSpineIndex: Int,
+    progressForRow: (Int, Int) -> Float,
+): List<TocRow> =
     toc.map { entry ->
         TocRow(
             title = entry.title,
@@ -87,6 +106,8 @@ internal fun tocRows(toc: List<TocEntry>, currentSpineIndex: Int): List<TocRow> 
             charOffset = entry.charOffset,
             depth = entry.depth,
             isCurrent = entry.spineIndex == currentSpineIndex,
+            progressPercent = (progressForRow(entry.spineIndex, entry.charOffset).coerceIn(0f, 1f) * 100)
+                .roundToInt(),
         )
     }
 
@@ -146,6 +167,13 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var overlay: View
     private lateinit var titleView: TextView
     private lateinit var scrubberView: TextView
+
+    /**
+     * The chapter scrubber beneath [scrubberView] in the bottom bar. Reports whole-book fractions;
+     * see [onScrubMoved]/[onScrubCommitted]/[abandonScrub] for the no-live-preview contract this
+     * Activity enforces on top of it.
+     */
+    private lateinit var chapterScrubber: ChapterScrubberView
 
     /**
      * The Aa typography sheet — a visibility-toggled panel inside [overlay], opened by the Aa button.
@@ -217,6 +245,21 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private var prefetchJob: Job? = null
 
+    /**
+     * The one in-flight commit render, if any — set only on lift-off, never during a drag. Held so a
+     * newer commit can cancel a still-running one, the same cancel-and-relaunch shape [prefetchJob]
+     * uses. One-shot: it paginates the selected chapter off the main thread, shows the page, and
+     * completes. Costs nothing at rest.
+     */
+    private var scrubJob: Job? = null
+
+    /**
+     * Where the current scrub started, or null when no scrub is in flight. A scrub that is abandoned
+     * — the overlay dismissed, Back pressed, the gesture cancelled — returns here and persists
+     * nothing, so an exploratory drag can never lose the reader's place.
+     */
+    private var scrubOrigin: ReadingState? = null
+
     /** Page turns since the last full-panel refresh; drives the [shouldFullRefresh] ghost-clear. */
     private var turnsSinceRefresh = 0
 
@@ -250,6 +293,11 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private var opening = false
 
+    /** Incremented at the top of every [showPage] call — a test's only way to prove a drag renders
+     *  no page: it reads this before and after a run of [onScrubMoved] calls and asserts it is
+     *  unchanged, since only [onScrubCommitted] (lift-off) is allowed to call [showPage]. */
+    internal var pagesShownForTest: Int = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyRotationLock(ReaderPrefs(this).rotationLocked)
@@ -267,6 +315,17 @@ open class ReaderActivity : AppCompatActivity() {
         // after the overlay, so it draws above both the page and the chrome.
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
+        chapterScrubber = overlay.findViewById(R.id.chapter_scrubber)
+        chapterScrubber.onScrubStart = {
+            // Cancel any still-running prior commit before starting a new drag. Without this, an
+            // old commit's showPage() can land mid-drag (a repaint during a drag, forbidden) and then
+            // null out scrubOrigin out from under this new drag, breaking a later abandon.
+            scrubJob?.cancel()
+            scrubOrigin = state
+        }
+        chapterScrubber.onScrubMove = { fraction -> onScrubMoved(fraction) }
+        chapterScrubber.onScrubCommit = { fraction -> onScrubCommitted(fraction) }
+        chapterScrubber.onScrubCancel = { abandonScrub() }
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
         settings = SettingsSheet(overlay, settingsHost) { ReaderPrefs(this) }
         tocPanel = overlay.findViewById(R.id.toc_panel)
@@ -378,12 +437,25 @@ open class ReaderActivity : AppCompatActivity() {
             return bookProgress(chapterWeights, spineIndex, pageIndexFor(pages, charOffset), pages.size)
         }
 
+        override fun chapterStartProgress(spineIndex: Int): Float =
+            bookProgress(chapterWeights, spineIndex, 0, 1)
+
         override fun goTo(target: ReadingState) {
             showPage(target)
             flushPosition()
+            // goTo is only ever reached via jumpToAnchor (Contents/Bookmarks/Highlights), whose
+            // preceding closeOverlay() deliberately skipped its own clean refresh (see hideOverlay) —
+            // so this is the one clean refresh of the DESTINATION page for the whole jump. showPage
+            // only invalidate()s, so without this the landed-on page would carry whatever ghosting
+            // accumulated while the chrome (fast mode) was up, exactly the "crisp on return" promise
+            // a plain overlay close gets from hideOverlay's own refresh.
+            pageView.fullRefresh()
+            turnsSinceRefresh = 0
         }
 
-        override fun closeOverlay() = hideOverlay()
+        // The jump path: skips hideOverlay's own clean refresh (which would flash the page being
+        // LEFT) — goTo above supplies the one clean refresh of the DESTINATION page instead.
+        override fun closeOverlay() = hideOverlay(cleanRefresh = false)
 
         override fun message(messageId: Int) = showMessage(messageId)
 
@@ -428,13 +500,31 @@ open class ReaderActivity : AppCompatActivity() {
     /** Reveals the reading chrome — one redraw, no animation. */
     private fun showOverlay() {
         highlights.hideDeleteChip() // the chip is a reading-mode affordance; it never coexists with the chrome
+        // Chrome is redrawn far too often for a clean update per frame. Fast mode is device-wide
+        // runtime state — see onPause, which is what guarantees it is given back.
+        pageView.epd.enterFastMode()
         overlay.visibility = View.VISIBLE
     }
 
-    /** Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet, the
+    /**
+     * Dismisses the reading chrome — one redraw, no animation. Also closes the Aa sheet, the
      * Contents panel, and the Bookmarks panel, so the overlay always reopens to its bare bar rather
-     * than a stale open panel. */
-    private fun hideOverlay() {
+     * than a stale open panel.
+     *
+     * [cleanRefresh] is false only on the jump path ([readerSurface]'s `closeOverlay`, called by
+     * [jumpToAnchor] before [goTo] draws a DIFFERENT page): a clean refresh here would flash the page
+     * being LEFT, and still leave the destination un-clean-refreshed once [goTo] draws over it —
+     * [goTo] does its own single refresh after the new page is on screen instead. The plain "return
+     * to reading, same page" close (the toggle tap and system Back) always wants true.
+     *
+     * [pageView.epd.exitFastMode] is unconditional either way — the screen-mode restore is
+     * device-wide runtime state (see [onPause]) and must happen on every close, jump or not.
+     */
+    private fun hideOverlay(cleanRefresh: Boolean = true) {
+        // A scrub still in flight when the overlay closes (Back, the toggle tap, a jump) is
+        // abandoned first: the page never moved during the drag, so this just clears scrubOrigin
+        // and re-syncs the readout/thumb. A no-op when no scrub is in flight.
+        abandonScrub()
         settingsSheet.visibility = View.GONE
         tocPanel.visibility = View.GONE
         bookmarksPanel.visibility = View.GONE
@@ -444,6 +534,13 @@ open class ReaderActivity : AppCompatActivity() {
         // the page waiting for a second tap the reader has long since moved on from.
         highlights.cancelPendingSelection()
         overlay.visibility = View.GONE
+        pageView.epd.exitFastMode()
+        if (cleanRefresh) {
+            // One clean refresh on the way out, so the page the reader returns to is crisp rather
+            // than carrying whatever ghosting fast mode accumulated while the chrome was up.
+            pageView.fullRefresh()
+            turnsSinceRefresh = 0
+        }
     }
 
     /** Opens or closes the Aa sheet — a visibility flip (one redraw). Opening first syncs its
@@ -530,6 +627,11 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** The on-page delete chip — a test asserts a highlight-tap reveals it and its tap deletes. */
     internal val deleteChipForTest: TextView get() = highlights.deleteChipForTest
+
+    /** Delegates to the private overlay show/hide so a test can drive the fast-e-ink-mode wiring
+     *  directly, without going through a tap dispatch. */
+    internal fun showOverlayForTest() = showOverlay()
+    internal fun hideOverlayForTest() = hideOverlay()
 
     /** Pen entry points, forwarded so the tests can drive the gesture machine with exact offsets
      *  rather than depending on Robolectric's coarse text measurement. */
@@ -799,6 +901,18 @@ open class ReaderActivity : AppCompatActivity() {
     override fun onStop() {
         flushPosition()
         super.onStop()
+    }
+
+    /**
+     * Gives the panel's screen mode back — the load-bearing restore, not the one in the overlay-hide
+     * path. The mode is device-wide runtime state and is not persisted: if the process dies or the
+     * app is swiped away with the overlay open, a leaked fast mode degrades the entire device UI
+     * until something resets it. `onPause` is the last callback Android guarantees, so the restore
+     * rides here. Idempotent — a no-op when fast mode is not held.
+     */
+    override fun onPause() {
+        super.onPause()
+        pageView.epd.exitFastMode()
     }
 
     /**
@@ -1128,6 +1242,7 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     private fun showPage(next: ReadingState) {
+        pagesShownForTest++
         val doc = document ?: return
         val cfg = config ?: return
         val chapter: PaginatedChapter = doc.chapter(next.spineIndex, cfg)
@@ -1174,7 +1289,24 @@ open class ReaderActivity : AppCompatActivity() {
         // Persistence is independent of the display toggle — hiding the bar must not blank the
         // library's progress.
         currentBookProgress = bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
-        pageView.setProgress(if (showProgressBar) currentBookProgress else null)
+        // Ticks and thumb follow the page, so opening the overlay always shows the true position.
+        // Skipped mid-scrub: the finger owns the thumb until it lifts. Placed after
+        // currentBookProgress is (re)computed above — the scrubber must show the fraction of the
+        // page just drawn, not the one before it.
+        if (scrubOrigin == null) {
+            chapterScrubber.setBook(
+                chapterStartFractions = chapterWeights.indices.map { i ->
+                    if (i == 0) 0f else chapterEndFraction(chapterWeights, i - 1)
+                },
+                progress = currentBookProgress,
+            )
+        }
+        // The tick is computed from chapterWeights alone — no pagination, no new state — and is
+        // suppressed with the bar itself so hiding the bar hides all of it.
+        pageView.setProgress(
+            if (showProgressBar) currentBookProgress else null,
+            if (showProgressBar) chapterEndFraction(chapterWeights, state.spineIndex) else null,
+        )
         // Same once-per-turn readout as the progress bar and scrubber above — chapterTitleFor is the
         // same pure TOC lookup the bookmarks/highlights rows already use.
         pageView.setRunningFoot(
@@ -1197,6 +1329,86 @@ open class ReaderActivity : AppCompatActivity() {
         // One shot; see schedulePrefetch. Reuses chapter.pages.size — no extra work.
         schedulePrefetch(chapter.pages.size)
     }
+
+    /**
+     * A drag position: update the readout text only. Deliberately NO pagination and NO page render —
+     * the book page does not repaint until the finger lifts. The chapter title comes from the same
+     * pure TOC lookup the running foot uses; mapping the fraction to a chapter touches only
+     * chapterWeights, never the document.
+     */
+    private fun onScrubMoved(fraction: Float) {
+        val doc = document ?: return
+        val located = locateByFraction(chapterWeights, fraction)
+        scrubberView.text = getString(
+            R.string.scrubber_position,
+            chapterTitleFor(doc.toc, located.spineIndex).orEmpty(),
+            (fraction.coerceIn(0f, 1f) * 100).roundToInt(),
+        )
+    }
+
+    /**
+     * Lift-off: this is the only path that renders a page from a scrub. Paginate the selected chapter
+     * off the main thread, show the page, persist it, and clear the scrub. One clean refresh, because
+     * the page has not been drawn since the drag began.
+     */
+    private fun onScrubCommitted(fraction: Float) {
+        scrubJob?.cancel()
+        // Lift-off is a commitment, not a draft: clear scrubOrigin synchronously, before launching
+        // the commit coroutine, so this navigation is no longer abandonable. Without this, dismissing
+        // the overlay during the ~230-360ms off-main-thread pagination below sees scrubOrigin still
+        // set and reverts the jump the user just committed (abandonScrub is now a no-op instead, since
+        // it early-returns on a null origin).
+        scrubOrigin = null
+        scrubJob = lifecycleScope.launch {
+            val located = locateByFraction(chapterWeights, fraction)
+            val target = withContext(Dispatchers.IO) { resolveScrubTarget(located) }
+            if (target != null) {
+                showPage(target)
+                session.drainPending()?.let { persistPosition(it) }
+            }
+        }
+    }
+
+    /**
+     * Returns to where the scrub began and writes nothing. Called when the overlay is dismissed or
+     * Back is pressed with a scrub in flight.
+     */
+    private fun abandonScrub() {
+        val origin = scrubOrigin ?: return
+        scrubJob?.cancel()
+        scrubOrigin = null
+        // Restore the readout to the page actually on screen; the page itself never moved.
+        showPage(origin)
+    }
+
+    /**
+     * Turns a [BookLocation] into a real [ReadingState], paginating the chapter (off the main thread)
+     * only now, on commit — never during the drag. `EpubDocument.chapter()` memoises per
+     * `(config, spineIndex)`, so a chapter already visited resolves from cache.
+     */
+    private fun resolveScrubTarget(located: BookLocation): ReadingState? {
+        val doc = document ?: return null
+        val cfg = config ?: return null
+        val pageCount = doc.chapter(located.spineIndex, cfg).pages.size
+        if (pageCount == 0) return null
+        val pageIndex = ((pageCount - 1) * located.fractionWithinChapter).roundToInt()
+            .coerceIn(0, pageCount - 1)
+        return ReadingState(located.spineIndex, pageIndex)
+    }
+
+    // -- Scrub test seams -------------------------------------------------------------------------
+    // The scrub commit render is a background coroutine with no other observable production surface,
+    // so these read-only hooks let ReaderActivityTest wait for it and assert its no-preview contract
+    // without widening the production API. None is called in production.
+
+    /** True when no commit render is in flight — a test waits on this after a commit or an abandon. */
+    internal val scrubIdleForTest: Boolean get() = scrubJob?.isActive != true
+
+    /** The reader's current position — a test's "did the page actually move" probe. */
+    internal val currentStateForTest: ReadingState get() = state
+
+    /** Drives the overlay-hide/Back abandon path directly, without a real touch dispatch. */
+    internal fun abandonScrubForTest() = abandonScrub()
 
     /**
      * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s

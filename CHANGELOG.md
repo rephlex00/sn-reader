@@ -4,6 +4,48 @@ Notable changes, newest first. Versions are `YYYY.MM.build` — the year and mon
 plus a counter within that month. Each release's APK is on the
 [Releases page](https://github.com/rephlex00/sn-reader/releases).
 
+## Unreleased
+
+### Reading progress moves onto the cover
+
+In the library, a book's reading percentage now sits as a small badge in the corner of its cover,
+instead of a line of text under the title. That line is freed up for readable books; only a book
+that cannot be opened still uses it, to say why.
+
+### The progress bar marks where the chapter ends
+
+The thin progress bar at the foot of a page now carries a short tick at the point the current
+chapter ends, alongside the mark for how far you are through the whole book. Glance at it and you
+can tell how much of the chapter is left, not just how far into the book you are.
+
+### A contents page, set like a printed one
+
+Contents now reads like the contents page of a printed book rather than a plain list: the book's
+own serif face (Literata), a letterspaced "Contents" heading over a rule, and leader dots running
+from each entry across to its place in the book. The current chapter is bold; nested entries are
+italic.
+
+That place is shown as a percentage rather than a page number, on purpose — a real page number
+would mean paginating the whole book every time you open Contents, which Reader avoids.
+
+### Menus repaint faster
+
+Menus and panels — Contents, Bookmarks, Highlights, the Aa sheet — now open in a fast e-ink refresh
+mode, so scrolling and tapping in them repaints quickly. The book page itself still gets the crisp,
+full-quality refresh, and it is cleaned up the moment you close a panel.
+
+### A chapter scrubber
+
+A slider now runs along the bottom of the reading chrome, with a tick for every chapter. Drag it to
+move through the whole book.
+
+* While you drag, the page does not repaint — only a readout showing the chapter and how far
+  through the book you are.
+* The page you land on is drawn once, when you lift your finger, rather than following your finger
+  as you drag.
+* That keeps a long scrub to a single clean refresh instead of a flurry of them — a deliberate
+  trade-off for e-ink, with no live page preview while dragging.
+
 ## 2026.07.2
 
 ### Landscape reading, in two columns

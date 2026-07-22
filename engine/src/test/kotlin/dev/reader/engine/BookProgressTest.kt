@@ -87,4 +87,70 @@ class BookProgressTest {
         // Assert we reach completion at the final page.
         assertThat(progressSequence.last()).isEqualTo(1f)
     }
+
+    @Test
+    fun `chapter end fraction is the cumulative weight through the chapter`() {
+        val weights = listOf(10L, 30L, 60L)
+        assertThat(chapterEndFraction(weights, 0)).isWithin(1e-6f).of(0.1f)
+        assertThat(chapterEndFraction(weights, 1)).isWithin(1e-6f).of(0.4f)
+        assertThat(chapterEndFraction(weights, 2)).isWithin(1e-6f).of(1.0f)
+    }
+
+    @Test
+    fun `chapter end fraction survives degenerate weights`() {
+        assertThat(chapterEndFraction(emptyList(), 0)).isEqualTo(0f)
+        assertThat(chapterEndFraction(listOf(0L, 0L), 1)).isEqualTo(0f)
+        assertThat(chapterEndFraction(listOf(-5L, 10L), 1)).isWithin(1e-6f).of(1.0f)
+    }
+
+    @Test
+    fun `chapter end fraction clamps an out of range spine index`() {
+        val weights = listOf(10L, 30L)
+        assertThat(chapterEndFraction(weights, 99)).isWithin(1e-6f).of(1.0f)
+        assertThat(chapterEndFraction(weights, -3)).isWithin(1e-6f).of(0.25f)
+    }
+
+    @Test
+    fun `locates the chapter containing a whole-book fraction`() {
+        val weights = listOf(10L, 30L, 60L)
+
+        assertThat(locateByFraction(weights, 0f).spineIndex).isEqualTo(0)
+        assertThat(locateByFraction(weights, 0.05f).spineIndex).isEqualTo(0)
+        assertThat(locateByFraction(weights, 0.2f).spineIndex).isEqualTo(1)
+        assertThat(locateByFraction(weights, 0.9f).spineIndex).isEqualTo(2)
+    }
+
+    @Test
+    fun `reports how far into the located chapter the fraction falls`() {
+        val weights = listOf(10L, 30L, 60L)
+
+        // 0.25 of the book: 0.10 consumed by chapter 0, so 0.15 into chapter 1's 0.30 span.
+        val located = locateByFraction(weights, 0.25f)
+        assertThat(located.spineIndex).isEqualTo(1)
+        assertThat(located.fractionWithinChapter).isWithin(1e-5f).of(0.5f)
+    }
+
+    @Test
+    fun `clamps out of range fractions to the ends of the book`() {
+        val weights = listOf(10L, 30L)
+
+        assertThat(locateByFraction(weights, -1f)).isEqualTo(BookLocation(0, 0f))
+
+        val end = locateByFraction(weights, 2f)
+        assertThat(end.spineIndex).isEqualTo(1)
+        assertThat(end.fractionWithinChapter).isWithin(1e-5f).of(1f)
+    }
+
+    @Test
+    fun `degenerate weights locate the start of the book`() {
+        assertThat(locateByFraction(emptyList(), 0.5f)).isEqualTo(BookLocation(0, 0f))
+        assertThat(locateByFraction(listOf(0L, 0L), 0.5f)).isEqualTo(BookLocation(0, 0f))
+    }
+
+    @Test
+    fun `locateByFraction skips zero weight chapters rather than landing on one`() {
+        val weights = listOf(10L, 0L, 30L)
+
+        assertThat(locateByFraction(weights, 0.5f).spineIndex).isEqualTo(2)
+    }
 }
