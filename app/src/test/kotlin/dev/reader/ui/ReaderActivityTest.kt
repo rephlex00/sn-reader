@@ -1422,6 +1422,62 @@ class ReaderActivityTest {
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
     }
 
+    // -- Task 5: the jump back-stack -----------------------------------------------------------
+
+    @Test
+    fun `a scrub commit arms the back control and tapping it returns and disarms when empty`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        val origin = activity.currentStateForTest
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val back = activity.findViewById<TextView>(R.id.scrubber_back)
+
+        assertThat(back.visibility).isEqualTo(View.GONE)
+
+        scrubber.onScrubCommit?.invoke(0.9f)
+        idleUntil { activity.scrubIdleForTest }
+        assertThat(back.visibility).isEqualTo(View.VISIBLE)
+
+        back.performClick()
+        idleUntil { activity.currentStateForTest == origin }
+        assertThat(activity.currentStateForTest).isEqualTo(origin)
+        assertThat(back.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `page turns never arm the back control`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.NEXT)
+        activity.showOverlayForTest()
+
+        assertThat(activity.findViewById<TextView>(R.id.scrubber_back).visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `a contents jump pushes too`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        val origin = activity.currentStateForTest
+        activity.showOverlayForTest()
+        activity.findViewById<View>(R.id.contents_button).performClick()
+
+        clickTocRow(activity, position = 1) // tocEpub's second nav entry -> a different chapter
+
+        assertThat(activity.currentStateForTest).isNotEqualTo(origin)
+
+        activity.showOverlayForTest()
+        val back = activity.findViewById<TextView>(R.id.scrubber_back)
+        assertThat(back.visibility).isEqualTo(View.VISIBLE)
+
+        back.performClick()
+        idleUntil { activity.currentStateForTest == origin }
+        assertThat(activity.currentStateForTest).isEqualTo(origin)
+        assertThat(back.visibility).isEqualTo(View.GONE)
+    }
+
     // -- Task 4: the floating preview window --------------------------------------------------
 
     @Test

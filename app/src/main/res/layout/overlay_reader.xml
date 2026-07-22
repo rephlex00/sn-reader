@@ -158,7 +158,9 @@
         android:scaleType="fitCenter"
         android:visibility="gone" />
 
-    <!-- Bottom scrubber: read-only "page X of Y" readout, anchored to the bottom edge. -->
+    <!-- Bottom scrubber: read-only "page X of Y" readout, anchored to the bottom edge. The ↩ jump
+         back-stack control sits to the LEFT of the readout+scrubber column so it shares the bar
+         without crowding either. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -171,21 +173,58 @@
             android:layout_height="2dp"
             android:background="@android:color/black" />
 
-        <TextView
-            android:id="@+id/scrubber"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center"
-            android:paddingHorizontal="16dp"
-            android:paddingTop="16dp"
-            android:textColor="@android:color/black"
-            android:textSize="16sp" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <dev.reader.ui.ChapterScrubberView
-            android:id="@+id/chapter_scrubber"
-            android:layout_width="match_parent"
-            android:layout_height="88dp"
-            android:paddingHorizontal="16dp" />
+            <!-- Pops the jump back-stack (JumpStack): returns to the position left by the last
+                 scrub commit or Contents/bookmark/highlight jump. GONE whenever the stack is empty
+                 — see ReaderActivity.updateBackControl. A glyph rather than a word: the reader-back
+                 control at the top already reads "Back" for leaving the book, so this needed its
+                 own mark. -->
+            <TextView
+                android:id="@+id/scrubber_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="12dp"
+                android:text="@string/scrubber_back"
+                android:textColor="@android:color/black"
+                android:textSize="20sp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/scrubber"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:paddingHorizontal="16dp"
+                    android:paddingTop="16dp"
+                    android:textColor="@android:color/black"
+                    android:textSize="16sp" />
+
+                <dev.reader.ui.ChapterScrubberView
+                    android:id="@+id/chapter_scrubber"
+                    android:layout_width="match_parent"
+                    android:layout_height="88dp"
+                    android:paddingHorizontal="16dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
 
     </LinearLayout>
 

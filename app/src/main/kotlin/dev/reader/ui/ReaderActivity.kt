@@ -176,6 +176,10 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private lateinit var chapterScrubber: ChapterScrubberView
 
+    /** The ↩ control beside [chapterScrubber]: pops [jumpStack]. GONE whenever the stack is empty —
+     *  see [updateBackControl]. */
+    private lateinit var scrubberBackView: TextView
+
     /**
      * The floating page-preview window over [chapterScrubber]: the sampled thumbnail nearest the
      * finger, blitted from [previewStrip] during a drag. GONE at rest and whenever no strip is
@@ -281,6 +285,14 @@ open class ReaderActivity : AppCompatActivity() {
     /** Page turns since the last full-panel refresh; drives the [shouldFullRefresh] ghost-clear. */
     private var turnsSinceRefresh = 0
 
+    /**
+     * The jump back-stack: every JUMP (a scrub commit, a Contents/bookmark/highlight jump via
+     * [ReaderSurface.pushJump]) pushes the position being left; [onBackJump] pops. Page turns never
+     * push. In-memory, per book-open — cleared in [openFirstBook] alongside [previewStrip]/bookmarks,
+     * since a new book is a new session. Costs nothing at rest: no timer, no observer.
+     */
+    private val jumpStack = JumpStack()
+
     /** Whether the Aa font options have been given their preview typefaces yet (loaded once, on
      * the first sheet-open — see [loadFontPreviewsOnce]). */
 
@@ -334,6 +346,8 @@ open class ReaderActivity : AppCompatActivity() {
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
         chapterScrubber = overlay.findViewById(R.id.chapter_scrubber)
+        scrubberBackView = overlay.findViewById(R.id.scrubber_back)
+        scrubberBackView.setOnClickListener { onBackJump() }
         scrubPreview = overlay.findViewById(R.id.scrub_preview)
         chapterScrubber.onScrubStart = {
             // Cancel any still-running prior commit before starting a new drag. Without this, an
@@ -477,6 +491,11 @@ open class ReaderActivity : AppCompatActivity() {
         // LEFT) — goTo above supplies the one clean refresh of the DESTINATION page instead.
         override fun closeOverlay() = hideOverlay(cleanRefresh = false)
 
+        override fun pushJump() {
+            jumpStack.push(state)
+            updateBackControl()
+        }
+
         override fun message(messageId: Int) = showMessage(messageId)
 
         override fun error(messageId: Int, cause: Throwable) = showError(messageId, cause)
@@ -524,6 +543,10 @@ open class ReaderActivity : AppCompatActivity() {
         // runtime state — see onPause, which is what guarantees it is given back.
         pageView.epd.enterFastMode()
         overlay.visibility = View.VISIBLE
+        // Reflects the jump stack as it stands now — a jump made with the chrome hidden (there is
+        // none today, but this keeps the control honest regardless) or a stack a prior showOverlay
+        // already reflected both resolve to the same visibility here.
+        updateBackControl()
     }
 
     /**
@@ -1127,6 +1150,11 @@ open class ReaderActivity : AppCompatActivity() {
                     // by the system itself, on a book tapped from the portrait-pinned library while
                     // the reader held the device sideways. See reconcileViewport.
                     reconcileViewport()
+                    // A new book is a new session: the jump back-stack from whatever was open
+                    // before (if anything) means nothing here, and hanging onto it would let ↩
+                    // "return" to a position in a book that is no longer open.
+                    jumpStack.clear()
+                    updateBackControl()
                     // Bookmark glyphs for the scrubber: loaded once per open (and again on
                     // add/remove via BookmarksPanel's onBookmarksChanged callback above).
                     refreshScrubberBookmarks()
@@ -1432,6 +1460,11 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private fun onScrubCommitted(fraction: Float) {
         scrubJob?.cancel()
+        // Push the position being LEFT onto the jump back-stack — `state` still holds it here,
+        // since showPage (inside the coroutine below) hasn't moved it yet. Unrelated to scrubOrigin
+        // below: that field is the ABANDON path's memory, this is the ↩ control's.
+        jumpStack.push(state)
+        updateBackControl()
         // Lift-off is a commitment, not a draft: clear scrubOrigin synchronously, before launching
         // the commit coroutine, so this navigation is no longer abandonable. Without this, dismissing
         // the overlay during the ~230-360ms off-main-thread pagination below sees scrubOrigin still
@@ -1452,6 +1485,20 @@ open class ReaderActivity : AppCompatActivity() {
                 session.drainPending()?.let { persistPosition(it) }
             }
         }
+    }
+
+    /** Pops one jump and navigates there, UNDER the still-open chrome — like a scrub commit, not a
+     *  Contents jump. No fullRefresh (the overlay is open; the clean refresh lands when it closes)
+     *  and no closeOverlay (so repeated taps walk back). Does NOT push — back is one-way. */
+    private fun onBackJump() {
+        val target = jumpStack.pop() ?: return
+        showPage(target)
+        session.drainPending()?.let { persistPosition(it) }
+        updateBackControl()
+    }
+
+    private fun updateBackControl() {
+        scrubberBackView.visibility = if (jumpStack.isEmpty) View.GONE else View.VISIBLE
     }
 
     /**
