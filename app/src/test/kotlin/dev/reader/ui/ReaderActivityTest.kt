@@ -1537,6 +1537,44 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `the preview bridges the commit — visible until the chosen page renders, then hides`() {
+        // Lift-off starts a ~230-360ms background pagination before the chosen page can draw.
+        // Hiding the preview at lift-off left the OLD page on screen with no feedback for that
+        // window (and a second touch there cancels the commit), which on the device read as "the
+        // slider did nothing". The preview — already showing the chosen page — must stay up until
+        // the real page has rendered beneath it. Deterministic under Robolectric: the commit
+        // coroutine suspends at its IO hop until the looper is pumped, so the visibility right
+        // after invoke IS the mid-commit state.
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        // Mid-commit (pagination still pending on IO): the bridge holds — no dead window.
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+
+        idleUntil { activity.scrubIdleForTest }
+        // The chosen page has rendered; the bridge comes down.
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(activity.currentStateForTest.spineIndex).isGreaterThan(0)
+    }
+
+    @Test
     fun `a cancelled drag also hides the preview`() {
         val book = tocEpub(tempFolder.newFile("book.epub"))
         val controller = readerFor(intentWithExtra(book.path))

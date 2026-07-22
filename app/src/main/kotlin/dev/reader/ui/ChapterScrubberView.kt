@@ -127,9 +127,11 @@ class ChapterScrubberView @JvmOverloads constructor(
 
     private val markPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val bookmarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
-    // The track itself must be visible on e-ink: black, same as markPaint — the faint
-    // reader_progress_track gray it used to draw with was the invisibility bug being fixed here.
-    private val trackLinePaint = markPaint
+    // The track is a MID-GRAY (#666, matching reader_text_secondary): visible on 16-level e-ink but
+    // fainter than the black chapter ticks and thumb, so the ticks read as the emphasis and the line
+    // as the quieter rail. (Plain black — the first fix for the invisible faint-gray track — read as
+    // too heavy against the ticks; this is the calibrated middle.)
+    private val trackLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0x66, 0x66, 0x66) }
 
     /**
      * Sets the book's shape and the current position, then invalidates. [chapterStartFractions] is

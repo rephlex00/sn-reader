@@ -1646,12 +1646,14 @@ open class ReaderActivity : AppCompatActivity() {
         // set and reverts the jump the user just committed (abandonScrub is now a no-op instead, since
         // it early-returns on a null origin).
         scrubOrigin = null
-        // The preview window belongs to the drag, not to the page it lands on: hide it the moment
-        // the finger commits, synchronously, same as scrubOrigin above — the render below is a
-        // separate, later thing.
-        scrubPreview.visibility = View.GONE
-        scrubPreview.setImageDrawable(null)
-        shownPreviewEntry = null
+        // The preview window deliberately STAYS UP through the commit. Lift-off starts a
+        // ~230-360ms off-main-thread pagination before the chosen page can draw; hiding the
+        // preview at lift-off left the OLD page on screen with zero feedback for that window,
+        // which read as "the slider did nothing" — and a natural second touch in that window
+        // cancels the in-flight commit (the race guard in onScrubStart), making the choice
+        // silently vanish. The preview is already showing the chosen page, so it bridges the
+        // gap honestly; it comes down inside the coroutine, after the real page has rendered
+        // beneath it (every terminal path below hides it).
         scrubJob = lifecycleScope.launch {
             val target = withContext(Dispatchers.IO) {
                 if (snappedChapter != null) {
@@ -1669,7 +1671,21 @@ open class ReaderActivity : AppCompatActivity() {
                 updateBackControl()
                 showPage(target)
                 session.drainPending()?.let { persistPosition(it) }
+            } else {
+                // A no-op commit: the drag ended on the page already being read (target == origin, or
+                // a target that paginates to nothing). showPage never runs, so the thumb — moved all
+                // over during the drag — would otherwise be left stranded, the slider lying about
+                // where the reader is. currentBookProgress still holds this page's fraction (no
+                // showPage ran during the drag), so snap the thumb back to the truth.
+                chapterScrubber.setProgress(currentBookProgress)
             }
+            // The page under the window is now correct (freshly rendered, or unchanged for a no-op):
+            // the bridge has done its job, take the preview down. A commit cancelled before reaching
+            // here (a new drag's race guard) leaves the window up on purpose — the new drag is
+            // already re-blitting it, and its own commit will take it down.
+            scrubPreview.visibility = View.GONE
+            scrubPreview.setImageDrawable(null)
+            shownPreviewEntry = null
         }
     }
 
