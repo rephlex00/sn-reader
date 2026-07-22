@@ -4,11 +4,39 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import androidx.core.content.ContextCompat
 import dev.reader.R
+
+/**
+ * The snap detent: within [radius] of a chapter-start tick, the fraction magnetizes to the tick —
+ * landing exactly on a chapter opening is what a scrubber is mostly FOR, and a fingertip cannot hit
+ * a 2px target unaided. Outside the radius the raw fraction passes through untouched, so the detent
+ * is escapable by simply dragging on (a detent, not a wall). Nearest tick wins when two are in
+ * range. Pure — JVM-tested.
+ */
+fun snappedFraction(raw: Float, chapterStarts: List<Float>, radius: Float = 0.015f): Float {
+    val nearest = chapterStarts.minByOrNull { kotlin.math.abs(it - raw) } ?: return raw
+    return if (kotlin.math.abs(nearest - raw) <= radius) nearest else raw
+}
+
+/**
+ * Collapses bookmark fractions closer than [mergeRadius] into one glyph position (their mean):
+ * three bookmarks on adjacent pages are one place in the book at timeline resolution, and three
+ * overlapping glyphs would render as smudge. Pure — JVM-tested.
+ */
+fun mergedBookmarkFractions(fractions: List<Float>, mergeRadius: Float = 0.02f): List<Float> {
+    if (fractions.isEmpty()) return emptyList()
+    val sorted = fractions.sorted()
+    val merged = mutableListOf<MutableList<Float>>(mutableListOf(sorted.first()))
+    for (f in sorted.drop(1)) {
+        if (f - merged.last().last() <= mergeRadius) merged.last().add(f) else merged.add(mutableListOf(f))
+    }
+    return merged.map { cluster -> cluster.sum() / cluster.size }
+}
 
 /**
  * The overlay's chapter scrubber: a track spanning the whole book, a tick per chapter, and a thumb
@@ -46,6 +74,7 @@ class ChapterScrubberView @JvmOverloads constructor(
 
     private var chapterStarts: List<Float> = emptyList()
     private var progress: Float = 0f
+    private var bookmarkFractions: List<Float> = emptyList()
 
     // Hoisted BEFORE the Paints: inside a `Paint().apply { }` block the name `density` resolves to
     // Paint's own member (always 1.0), silently dropping dp scaling.
@@ -53,11 +82,15 @@ class ChapterScrubberView @JvmOverloads constructor(
     private val trackThicknessPx = 2f * density
     private val tickHeightPx = 7f * density
     private val thumbRadiusPx = 7f * density
+    private val bookmarkGlyphWidthPx = 8f * density
+    private val bookmarkGlyphHeightPx = 10f * density
+    private val bookmarkGlyphGapPx = 4f * density
 
     private val trackPaint = Paint().apply {
         color = ContextCompat.getColor(context, R.color.reader_progress_track)
     }
     private val markPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+    private val bookmarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
 
     /**
      * Sets the book's shape and the current position, then invalidates. [chapterStartFractions] is
@@ -66,6 +99,14 @@ class ChapterScrubberView @JvmOverloads constructor(
     fun setBook(chapterStartFractions: List<Float>, progress: Float) {
         this.chapterStarts = chapterStartFractions
         this.progress = progress.coerceIn(0f, 1f)
+        invalidate()
+    }
+
+    /** Bookmark glyph positions (already merged — see mergedBookmarkFractions). Informational only:
+     *  glyphs are not tap targets in v2; snap-to-tick and glyph-tap would fight over the same fat
+     *  finger. Set once per book open. */
+    fun setBookmarks(fractions: List<Float>) {
+        bookmarkFractions = fractions
         invalidate()
     }
 
@@ -91,21 +132,21 @@ class ChapterScrubberView @JvmOverloads constructor(
                 // PageView below, which reads a tap as a page turn.
                 parent?.requestDisallowInterceptTouchEvent(true)
                 onScrubStart?.invoke()
-                val fraction = fractionAt(event.x)
+                val fraction = snappedFraction(fractionAt(event.x), chapterStarts)
                 setProgress(fraction)
                 onScrubMove?.invoke(fraction)
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val fraction = fractionAt(event.x)
+                val fraction = snappedFraction(fractionAt(event.x), chapterStarts)
                 setProgress(fraction)
                 onScrubMove?.invoke(fraction)
                 return true
             }
 
             MotionEvent.ACTION_UP -> {
-                val fraction = fractionAt(event.x)
+                val fraction = snappedFraction(fractionAt(event.x), chapterStarts)
                 setProgress(fraction)
                 onScrubCommit?.invoke(fraction)
                 return true
@@ -125,7 +166,9 @@ class ChapterScrubberView @JvmOverloads constructor(
         val left = thumbRadiusPx
         val right = width - thumbRadiusPx
         if (right <= left) return
-        val centreY = height / 2f
+        // Raised off height / 2f: the lower portion of the (taller, 88dp) view is inert
+        // finger-buffer, so a thumb drifting down while dragging stays on glass, off the bezel.
+        val centreY = height * 0.35f
 
         canvas.drawRect(left, centreY - trackThicknessPx / 2f, right, centreY + trackThicknessPx / 2f, trackPaint)
 
@@ -134,6 +177,27 @@ class ChapterScrubberView @JvmOverloads constructor(
             canvas.drawRect(x, centreY - tickHeightPx / 2f, x + density, centreY + tickHeightPx / 2f, markPaint)
         }
 
+        for (fraction in bookmarkFractions) {
+            drawBookmarkGlyph(canvas, xFor(fraction), centreY - trackThicknessPx / 2f - bookmarkGlyphGapPx)
+        }
+
         canvas.drawCircle(xFor(progress), centreY, thumbRadiusPx, markPaint)
+    }
+
+    /** A small filled bookmark silhouette — a rectangle with a notched (triangular) bottom, a
+     *  5-point Path — centred horizontally at [x], its bottom edge at [bottomY]. */
+    private fun drawBookmarkGlyph(canvas: Canvas, x: Float, bottomY: Float) {
+        val halfWidth = bookmarkGlyphWidthPx / 2f
+        val topY = bottomY - bookmarkGlyphHeightPx
+        val notchY = bottomY - bookmarkGlyphHeightPx * 0.35f
+        val path = Path().apply {
+            moveTo(x - halfWidth, topY)
+            lineTo(x + halfWidth, topY)
+            lineTo(x + halfWidth, bottomY)
+            lineTo(x, notchY)
+            lineTo(x - halfWidth, bottomY)
+            close()
+        }
+        canvas.drawPath(path, bookmarkPaint)
     }
 }

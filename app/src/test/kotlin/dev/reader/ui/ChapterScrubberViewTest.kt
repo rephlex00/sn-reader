@@ -23,6 +23,12 @@ class ChapterScrubberViewTest {
         event.recycle()
     }
 
+    /** Inverts the view's fractionAt geometry (thumbRadius inset), mirroring its math exactly. */
+    private fun xForFraction(view: ChapterScrubberView, fraction: Float): Float {
+        val thumbRadiusPx = 7f // density 1.0 in Robolectric's default environment
+        return thumbRadiusPx + fraction * (view.width - thumbRadiusPx * 2f)
+    }
+
     @Test
     fun `dragging reports the fraction under the finger`() {
         val view = scrubber(width = 400)
@@ -101,5 +107,44 @@ class ChapterScrubberViewTest {
         touch(view, MotionEvent.ACTION_MOVE, 200f)
 
         assertThat(starts).isEqualTo(1)
+    }
+
+    @Test
+    fun `snapping magnetizes within the radius and releases outside it`() {
+        val starts = listOf(0f, 0.25f, 0.5f)
+        assertThat(snappedFraction(0.26f, starts)).isEqualTo(0.25f)
+        assertThat(snappedFraction(0.24f, starts)).isEqualTo(0.25f)
+        assertThat(snappedFraction(0.30f, starts)).isEqualTo(0.30f)
+        assertThat(snappedFraction(0.007f, starts)).isEqualTo(0f)
+        assertThat(snappedFraction(0.4f, emptyList())).isEqualTo(0.4f)
+    }
+
+    @Test
+    fun `snap prefers the nearest tick when two are in radius`() {
+        val starts = listOf(0.50f, 0.52f)
+        assertThat(snappedFraction(0.505f, starts)).isEqualTo(0.50f)
+        assertThat(snappedFraction(0.515f, starts)).isEqualTo(0.52f)
+    }
+
+    @Test
+    fun `bookmark fractions merge within the radius`() {
+        assertThat(mergedBookmarkFractions(listOf(0.10f, 0.11f, 0.50f))).hasSize(2)
+        assertThat(mergedBookmarkFractions(emptyList())).isEmpty()
+        // A merged cluster is represented once, near its members.
+        val merged = mergedBookmarkFractions(listOf(0.10f, 0.11f, 0.12f))
+        assertThat(merged).hasSize(1)
+        assertThat(merged.single()).isWithin(0.02f).of(0.11f)
+    }
+
+    @Test
+    fun `a drag reports snapped fractions`() {
+        val view = scrubber(width = 400) // helper exists; setBook installs starts 0f, 0.25f, 0.5f
+        val moves = mutableListOf<Float>()
+        view.onScrubMove = { moves += it }
+
+        // x for raw fraction ~0.26 on a 400px track lands within snap radius of 0.25.
+        touch(view, MotionEvent.ACTION_DOWN, xForFraction(view, 0.26f))
+
+        assertThat(moves.single()).isEqualTo(0.25f)
     }
 }

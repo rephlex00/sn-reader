@@ -31,6 +31,9 @@ internal class BookmarksPanel(
     private val scope: CoroutineScope,
     private val bookmarks: BookmarkDao,
     private val books: BookDao,
+    // Notified every time this panel re-reads the book's bookmarks (open, add, remove) — the
+    // scrubber's glyphs hang off the same read instead of a standing observer of their own.
+    private val onBookmarksChanged: () -> Unit = {},
 ) {
 
     private val list: RecyclerView = overlay.findViewById(R.id.bookmarks_list)
@@ -63,6 +66,7 @@ internal class BookmarksPanel(
 
             val onThisPage = bookmarkOnCurrentPage(marks)
             toggle.setText(if (onThisPage != null) R.string.bookmark_remove else R.string.bookmark_add)
+            onBookmarksChanged()
         }
     }
 

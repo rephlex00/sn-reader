@@ -334,6 +334,7 @@ open class ReaderActivity : AppCompatActivity() {
         bookmarks = BookmarksPanel(
             overlay, readerSurface, lifecycleScope,
             database.bookmarkDao(), database.bookDao(),
+            onBookmarksChanged = ::refreshScrubberBookmarks,
         )
         highlightsPanel = overlay.findViewById(R.id.highlights_panel)
         highlights = HighlightsController(
@@ -1102,6 +1103,9 @@ open class ReaderActivity : AppCompatActivity() {
                     // by the system itself, on a book tapped from the portrait-pinned library while
                     // the reader held the device sideways. See reconcileViewport.
                     reconcileViewport()
+                    // Bookmark glyphs for the scrubber: loaded once per open (and again on
+                    // add/remove via BookmarksPanel's onBookmarksChanged callback above).
+                    refreshScrubberBookmarks()
                 }
             } catch (e: CancellationException) {
                 // The activity was destroyed while open() was in flight. lifecycleScope cancelled
@@ -1137,6 +1141,29 @@ open class ReaderActivity : AppCompatActivity() {
         file,
         AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(this)),
     )
+
+    /**
+     * Bookmark glyphs for the scrubber: loaded once per open, and again whenever
+     * [BookmarksPanel] re-reads its list (open/add/remove), via the callback wired at
+     * construction — no standing observer, so a reader sitting on a page costs nothing.
+     *
+     * Rows come off [Dispatchers.IO]; [ReaderSurface.progressFor] runs after that `withContext`
+     * returns, on the main thread, because it can paginate an uncached chapter and the reader's
+     * document cache is main-thread-only. This is a handful of bookmarks through already-cached
+     * chapters at most — not the whole-TOC pagination trap [ReaderSurface.chapterStartProgress]
+     * exists for — and a bookmark's glyph should sit at its true page. If a book with bookmarks
+     * scattered across many unvisited chapters makes this open-path pagination cost show up,
+     * chapterStartProgress is the coarser, free fallback.
+     */
+    private fun refreshScrubberBookmarks() {
+        val path = bookPath ?: return
+        lifecycleScope.launch {
+            val dao = (application as ReaderApplication).database.bookmarkDao()
+            val marks = withContext(Dispatchers.IO) { dao.bookmarksFor(path) }
+            val fractions = marks.map { readerSurface.progressFor(it.spineIndex, it.charOffset) }
+            chapterScrubber.setBookmarks(mergedBookmarkFractions(fractions))
+        }
+    }
 
     /**
      * The standalone-launch fallback (no [EXTRA_BOOK_PATH] on the intent): the first EPUB under
