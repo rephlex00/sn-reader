@@ -1698,11 +1698,40 @@ open class ReaderActivity : AppCompatActivity() {
         // gap honestly; it comes down inside the coroutine, after the real page has rendered
         // beneath it (every terminal path below hides it).
         scrubJob = lifecycleScope.launch {
-            val target = withContext(Dispatchers.IO) {
-                if (snappedChapter != null) {
-                    readerSurface.firstNonEmptyFrom(snappedChapter)
-                } else {
-                    resolveScrubTarget(locateByFraction(chapterWeights, fraction))
+            // Resolve the landing page WITHOUT touching the chapter cache off the main thread. The
+            // cache is a LinkedHashMap(accessOrder = true) — "even a read mutates link order" — and
+            // is main-thread-only by contract; the prefetch honours that by computing with the PURE
+            // paginate() off-main and installing via publish() back on main. This block used to call
+            // doc.chapter()/firstNonEmptyFrom inside Dispatchers.IO instead, racing the cache
+            // against exactly the main-thread traffic a just-committed page guarantees (its
+            // showPage's own chapter() and its prefetch's publish). That data race was the
+            // intermittent "scrubbing after a page selection misbehaves" seen on the device. Same
+            // choreography as the prefetch now: pure paginate off-main, publish + resolve on main.
+            val doc = document
+            val cfg = config
+            var target: ReadingState? = null
+            if (doc != null && cfg != null) {
+                val located = locateByFraction(chapterWeights, fraction)
+                val spine = snappedChapter ?: located.spineIndex
+                try {
+                    if (!doc.isPaginated(spine, cfg)) {
+                        val paginated = withContext(Dispatchers.Default) { doc.paginate(spine, cfg) }
+                        doc.publish(spine, cfg, paginated) // main thread — the sanctioned install
+                    }
+                    // Main thread from here: every cache touch is single-threaded again.
+                    target = if (snappedChapter != null) {
+                        readerSurface.firstNonEmptyFrom(snappedChapter)
+                    } else {
+                        resolveScrubTarget(located)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A corrupt chapter surfaces on its first (lazy) read — right here, on the first
+                    // scrub into it. Every other jump path reports and stays put; a scrub commit now
+                    // does the same, falling through with no target into the no-op branch below.
+                    // (The old code had NO guard: a corrupt chapter mid-scrub crashed the reader.)
+                    showError(R.string.error_open_section, e)
                 }
             }
             // Only a commit that actually moves the reader is a jump: a null target (a chapter that
@@ -1762,9 +1791,11 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * Turns a [BookLocation] into a real [ReadingState], paginating the chapter (off the main thread)
-     * only now, on commit — never during the drag. `EpubDocument.chapter()` memoises per
-     * `(config, spineIndex)`, so a chapter already visited resolves from cache.
+     * Turns a [BookLocation] into a real [ReadingState]. MAIN THREAD ONLY: `chapter()`'s cache is a
+     * `LinkedHashMap(accessOrder = true)` where even a read mutates link order, so this must never
+     * run on a background dispatcher. The commit path pre-warms the target chapter off-main via the
+     * pure `paginate()` + main-thread `publish()` (the prefetch's own choreography), so the
+     * `chapter()` call here is a cheap, safe cache hit.
      */
     private fun resolveScrubTarget(located: BookLocation): ReadingState? {
         val doc = document ?: return null
