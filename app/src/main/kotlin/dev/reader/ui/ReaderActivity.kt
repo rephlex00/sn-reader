@@ -1360,8 +1360,10 @@ open class ReaderActivity : AppCompatActivity() {
                 // Generation is done and previewStrip just reloaded above (back on the launch's
                 // main-thread context after that withContext returns): give the resting readout
                 // back its own line rather than leaving the transient "preparing previews · 100%"
-                // stuck on screen.
-                scrubberView.text = restingReadout
+                // stuck on screen. Gated on not-mid-drag, same as the per-chapter ticks above — a
+                // finger holding still after DOWN would otherwise see its live "Chapter N · P%"
+                // stomped by the resting text until the next MOVE.
+                if (scrubOrigin == null) scrubberView.text = restingReadout
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
