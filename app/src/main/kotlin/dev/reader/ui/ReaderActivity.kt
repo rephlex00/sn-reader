@@ -47,6 +47,7 @@ import dev.reader.formats.render.SpannedChapterBuilder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -1213,15 +1214,21 @@ open class ReaderActivity : AppCompatActivity() {
     /**
      * Schedules THE one-shot strip generation: cancel-and-relaunch (a typography change mid-generate
      * must not leave two generators racing over the same directory), on lifecycleScope so leaving the
-     * book cancels it — generation resumes on the next open instead. The project's single authorized
-     * exception to 0%-idle: bounded (5–15 s measured), one-shot, only on first open or config change.
-     * `protected open` purely as the test seam.
+     * book cancels it — generation resumes on the next open instead. The relaunch JOINS the previous
+     * job before touching the (possibly same) strip directory — a bare cancel() doesn't wait for the
+     * prior coroutine to actually stop, so without the join a mid-open rotation (which schedules once
+     * for the corrected config and again from the open path, same config, same dir) could still run
+     * two generators over one directory concurrently. The project's single authorized exception to
+     * 0%-idle: bounded (5–15 s measured), one-shot, only on first open or config change. `protected
+     * open` purely as the test seam.
      */
     protected open fun scheduleStripGeneration() {
         val file = bookPath?.let(::File) ?: return
         val cfg = config ?: return
-        stripGenerationJob?.cancel()
+        val previous = stripGenerationJob
         stripGenerationJob = lifecycleScope.launch {
+            // Wait for any prior generator to fully stop before regenerating — see KDoc above.
+            previous?.cancelAndJoin()
             try {
                 stripStore.generate(file, cfg)
                 stripStore.evictOverBudget(keep = file)

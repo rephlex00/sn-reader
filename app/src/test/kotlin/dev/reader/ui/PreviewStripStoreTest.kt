@@ -2,7 +2,10 @@ package dev.reader.ui
 
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.RenderConfig
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -83,6 +86,34 @@ class PreviewStripStoreTest {
 
         assertThat(store.stripFor(book, cfg)).isNull()
     }
+
+    @Test
+    fun `cancelling one generation and immediately launching another leaves exactly one valid, complete strip`() =
+        runBlocking {
+            // Mirrors ReaderActivity.scheduleStripGeneration's relaunch (post-fix): the first
+            // generator over this exact directory is cancelled and JOINED — guaranteed fully
+            // stopped, not just asked to stop — before the second is launched over the same
+            // (book, config) dir. Proves that sequence never leaves a corrupt/partial strip and
+            // never lets an exception escape, regardless of how far the first generator got.
+            val book = multiChapterEpub(tempFolder.newFile("book.epub"))
+            val cfg = config()
+
+            val first = launch { store.generate(book, cfg) }
+            yield() // let it start real work (open the doc, begin measuring) before cutting it off
+            first.cancelAndJoin()
+
+            val second = launch { store.generate(book, cfg) }
+            second.join()
+
+            val index = store.stripFor(book, cfg)
+            assertThat(index).isNotNull()
+            assertThat(index!!.entries).isNotEmpty()
+            for (e in index.entries) {
+                val f = store.thumbnailFile(book, cfg, e)
+                assertThat(f.exists()).isTrue()
+                assertThat(f.length()).isGreaterThan(0L)
+            }
+        }
 
     @Test
     fun `eviction deletes oldest strips until under budget, sparing the kept book`() = runBlocking {
