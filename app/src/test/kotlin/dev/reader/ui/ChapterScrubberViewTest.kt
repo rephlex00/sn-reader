@@ -401,6 +401,50 @@ class ChapterScrubberViewTest {
     }
 
     @Test
+    fun `a bounce while a palm is co-touching still never commits under the finger`() {
+        // The compound case the review caught: with a palm resting on the strip, the bounced
+        // finger's re-contact arrives as ACTION_POINTER_DOWN (the screen was never empty), not
+        // ACTION_DOWN — without its own arm the grace would expire and commit while the finger is
+        // back on the glass, the exact invariant this machine exists to protect.
+        val view = scrubber(width = 400)
+        var commits = 0
+        var starts = 0
+        var committed = -1f
+        view.onScrubCommit = { f, _ -> commits++; committed = f }
+        view.onScrubStart = { starts++ }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)                        // finger, id 0
+        view.onTouchEvent(twoPointerEvent(
+            MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            100f, 350f,                                                    // palm lands, id 1
+        ))
+        view.onTouchEvent(twoPointerEvent(
+            MotionEvent.ACTION_POINTER_UP or (0 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            100f, 350f,                                                    // firmware phantom-lifts the finger
+        ))
+        assertThat(view.gestureStateForTest).isEqualTo("PENDING_COMMIT")
+
+        view.onTouchEvent(twoPointerEvent(
+            MotionEvent.ACTION_POINTER_DOWN or (0 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            300f, 350f,                                                    // finger re-contacts 10ms later
+        ))
+        assertThat(view.gestureStateForTest).isEqualTo("TRACKING")         // session resumed, not committed
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+        assertThat(commits).isEqualTo(0)                                   // the stale grace timer is dead
+
+        view.onTouchEvent(twoPointerEvent(
+            MotionEvent.ACTION_POINTER_UP or (0 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            300f, 350f,                                                    // the REAL lift
+        ))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(commits).isEqualTo(1)
+        assertThat(starts).isEqualTo(1)                                    // one continuous session
+        assertThat(committed).isWithin(0.05f).of(0.75f)                    // at the finger's x, never the palm's
+    }
+
+    @Test
     fun `cancel during tracking abandons and cancel during grace abandons too`() {
         val view = scrubber(width = 400)
         var commits = 0

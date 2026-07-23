@@ -356,6 +356,23 @@ class ChapterScrubberView @JvmOverloads constructor(
                 return true
             }
 
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // A non-first contact. While TRACKING this is a palm/second finger landing —
+                // ignored, the owning pointer keeps the gesture. But during the commit grace it is
+                // the BOUNCED FINGER RETURNING while the palm never left: with another contact
+                // still on the glass, the re-touch arrives as POINTER_DOWN, not DOWN, so without
+                // this arm the grace would expire and commit under a finger that is back on the
+                // strip — the exact invariant this machine exists to protect, in the compound
+                // palm+bounce case. Adopt the new contact as the owner and resume the session.
+                if (gestureState == GestureState.PENDING_COMMIT) {
+                    removeCallbacks(graceExpiry)
+                    activePointerId = event.getPointerId(event.actionIndex)
+                    gestureState = GestureState.TRACKING
+                    applyPosition(event.getX(event.actionIndex), emitMove = true)
+                }
+                return true
+            }
+
             MotionEvent.ACTION_MOVE -> {
                 if (gestureState != GestureState.TRACKING) return true
                 val x = trackedX(event) ?: return true // only OUR pointer moves the thumb
