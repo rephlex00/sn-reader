@@ -3,6 +3,7 @@ package dev.reader.ui
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -1342,6 +1343,45 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `an abandoned scrub restores readout and thumb WITHOUT repainting the page`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val pagesBefore = activity.pagesShownForTest
+        val restingText = scrubberTextOf(activity)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        activity.abandonScrubForTest()
+
+        // The origin page never left the screen: a cancel must not flash the panel with showPage.
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
+        assertThat(scrubberTextOf(activity)).isEqualTo(restingText)
+    }
+
+    @Test
+    fun `closing the overlay during the commit grace flushes the commit instead of dropping it`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        // showOverlayForTest only flips visibility (GONE -> VISIBLE); Robolectric does not run a
+        // real Choreographer pass on its own, so the scrubber — measured out at 0x0 while GONE —
+        // needs an explicit re-layout before its real pixel width can back xForFraction below.
+        layOutAt(controller, VIEWPORT_W, VIEWPORT_H)
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val origin = activity.currentStateForTest
+
+        touchScrubber(scrubber, MotionEvent.ACTION_DOWN, xForFraction(scrubber, 0.9f))
+        touchScrubber(scrubber, MotionEvent.ACTION_UP, xForFraction(scrubber, 0.9f))
+        // Grace is open; the reader closes the chrome before it expires.
+        activity.hideOverlayForTest()
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.currentStateForTest).isNotEqualTo(origin) // the lift was honored
+    }
+
+    @Test
     fun `dismissing the overlay right after a commit does not revert the committed jump`() {
         // Regression for the abandon-after-commit race: the commit's off-main-thread pagination
         // takes ~230-360ms in production, and dismissing the overlay (center-tap or Back) anywhere
@@ -2239,6 +2279,24 @@ class ReaderActivityTest {
 
     private fun scrubberTextOf(activity: ReaderActivity): String =
         activity.findViewById<TextView>(R.id.scrubber).text.toString()
+
+    /** Dispatches a real single-pointer touch to a laid-out [ChapterScrubberView] — the grace-flush
+     *  test needs the view's own gesture state machine (DOWN/UP), not the callback seams the other
+     *  scrub tests invoke directly. y is an arbitrary point inside the 88dp-tall strip. */
+    private fun touchScrubber(scrubber: ChapterScrubberView, action: Int, x: Float) {
+        val event = MotionEvent.obtain(0L, 0L, action, x, 30f, 0)
+        scrubber.onTouchEvent(event)
+        event.recycle()
+    }
+
+    /** Inverts the view's fractionAt geometry (padding-based track ends) for a real, laid-out
+     *  scrubber — this one carries the 16dp horizontal padding from overlay_reader.xml, at
+     *  Robolectric's default density 1.0 (16dp == 16px). */
+    private fun xForFraction(scrubber: ChapterScrubberView, fraction: Float): Float {
+        val left = scrubber.paddingLeft.toFloat()
+        val right = scrubber.width - scrubber.paddingRight.toFloat()
+        return left + fraction * (right - left)
+    }
 
     /** Reads back the row for [path] on a background thread (Room forbids main-thread queries). */
     private fun rowFor(app: ReaderApplication, path: String): BookEntity? =

@@ -663,6 +663,11 @@ open class ReaderActivity : AppCompatActivity() {
      * device-wide runtime state (see [onPause]) and must happen on every close, jump or not.
      */
     private fun hideOverlay(cleanRefresh: Boolean = true) {
+        // A lift still sitting in its commit grace window when the overlay closes is a COMMITTED
+        // navigation the reader already made — flush it synchronously first so it lands via
+        // onScrubCommit (which clears scrubOrigin) rather than being caught by the abandonScrub
+        // below and discarded as if the finger were still down. No-op when no grace is open.
+        chapterScrubber.flushPendingCommit()
         // A scrub still in flight when the overlay closes (Back, the toggle tap, a jump) is
         // abandoned first: the page never moved during the drag, so this just clears scrubOrigin
         // and re-syncs the readout/thumb. A no-op when no scrub is in flight.
@@ -1062,6 +1067,11 @@ open class ReaderActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         pageView.epd.exitFastMode()
+        // A lift still inside its commit grace window when the app is backgrounded (Home, app
+        // switcher, an incoming call) is a committed navigation — flush it now rather than let the
+        // process pause with it unresolved. chapterScrubber may not exist yet if onPause somehow
+        // races initialization; guard defensively.
+        if (::chapterScrubber.isInitialized) chapterScrubber.flushPendingCommit()
     }
 
     /**
@@ -1786,8 +1796,13 @@ open class ReaderActivity : AppCompatActivity() {
         scrubPreview.visibility = View.GONE
         scrubPreview.setImageDrawable(null)
         shownPreviewEntry = null
-        // Restore the readout to the page actually on screen; the page itself never moved.
-        showPage(origin)
+        // The origin page never left the screen during the drag, so there is NOTHING to repaint —
+        // and repainting anyway (the old showPage(origin) here) flashed the panel mid-gesture,
+        // which read as "the scrubber did something on its own" every time the system cancelled a
+        // touch (the EMR pen hovering fires palm-rejection CANCELs on this hardware). Restore the
+        // two things the drag actually moved: the readout text and the thumb.
+        scrubberView.text = restingReadout
+        chapterScrubber.setProgress(currentBookProgress)
     }
 
     /**
