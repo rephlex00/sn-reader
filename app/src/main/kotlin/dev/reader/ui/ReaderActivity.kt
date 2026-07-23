@@ -1699,6 +1699,21 @@ open class ReaderActivity : AppCompatActivity() {
         // set and reverts the jump the user just committed (abandonScrub is now a no-op instead, since
         // it early-returns on a null origin).
         scrubOrigin = null
+        // Durable down-payment on the commit. The exact landing page is only known after the
+        // coroutine's pagination below — but that coroutine rides lifecycleScope, so a lift
+        // followed within the grace by a fast teardown (double-Back, swipe-away; onPause flushes
+        // the grace straight into this call) cancels it before showPage/persist ever run, silently
+        // discarding a navigation the reader committed. When the commit changes CHAPTER — knowable
+        // synchronously from byte weights alone, no pagination — write (chapter, offset 0) through
+        // the app-scoped writer now, and let the coroutine refine it to the exact page. Death
+        // mid-commit then reopens at the committed chapter's start instead of quietly reverting to
+        // the origin. Same-chapter commits skip the down-payment: the stored position is already
+        // inside the right chapter, and a coarse offset-0 write would WORSEN a rare death there
+        // (chapter start vs the exact page already stored).
+        val coarseChapter = snappedChapter ?: locateByFraction(chapterWeights, fraction).spineIndex
+        if (coarseChapter != origin.spineIndex) {
+            persistPosition(Locator(coarseChapter, 0))
+        }
         // The preview window deliberately STAYS UP through the commit. Lift-off starts a
         // ~230-360ms off-main-thread pagination before the chosen page can draw; hiding the
         // preview at lift-off left the OLD page on screen with zero feedback for that window,
@@ -1835,6 +1850,12 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Drives the overlay-hide/Back abandon path directly, without a real touch dispatch. */
     internal fun abandonScrubForTest() = abandonScrub()
+
+    /** Kills an in-flight commit resolution where a teardown's lifecycleScope cancellation would —
+     *  the seam behind the durable-down-payment test. */
+    internal fun cancelScrubJobForTest() {
+        scrubJob?.cancel()
+    }
 
     // -- Preview-strip test seams -------------------------------------------------------------------
     // Strip GENERATION is Task 6; until then a test that needs the preview window to actually show

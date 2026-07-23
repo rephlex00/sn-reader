@@ -1382,6 +1382,38 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `a commit killed before it resolves still leaves a durable coarse position`() {
+        // The commit coroutine rides lifecycleScope: a lift flushed by onPause and immediately
+        // followed by teardown (fast double-Back, swipe-away) cancels it before showPage/persist
+        // run. The synchronous down-payment in onScrubCommitted — (committed chapter, offset 0)
+        // through the app-scoped writer — is what keeps that death from silently reverting the
+        // navigation: reopening lands at the committed chapter's start, not back at the origin.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val originChapter = activity.currentStateForTest.spineIndex
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        // Lift-off at 0.9 of the book: a different chapter, so the down-payment fires. The commit
+        // coroutine is suspended at its off-main pagination when the invoke returns — cancel it
+        // there, exactly where a teardown's lifecycleScope cancellation would land.
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        activity.cancelScrubJobForTest()
+
+        idleUntil { rowFor(app, book.path)!!.spineIndex != originChapter }
+        assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(originChapter)
+        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(0)
+        // The page itself never moved — the coroutine died before showPage.
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(originChapter)
+    }
+
+    @Test
     fun `dismissing the overlay right after a commit does not revert the committed jump`() {
         // Regression for the abandon-after-commit race: the commit's off-main-thread pagination
         // takes ~230-360ms in production, and dismissing the overlay (center-tap or Back) anywhere
