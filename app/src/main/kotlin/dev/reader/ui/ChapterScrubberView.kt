@@ -159,8 +159,9 @@ class ChapterScrubberView @JvmOverloads constructor(
     private var generatedChapters: Set<Int> = emptySet()
     private var previewsEnabled: Boolean = true
 
-    /** True from ACTION_DOWN through ACTION_UP/CANCEL. Drives the thumb's size (the ONLY grab
-     *  signal — no color, no shadow) and gates the snapped-detent tick. */
+    /** True from ACTION_DOWN through the gesture's commit/cancel (including the PENDING_COMMIT
+     *  grace window — see the gesture state machine below). Drives the thumb's size (the ONLY
+     *  grab signal — no color, no shadow) and gates the snapped-detent tick. */
     private var dragging: Boolean = false
 
     /** The chapter index the current drag is snapped to, or null. Only meaningful while [dragging];
@@ -267,56 +268,134 @@ class ChapterScrubberView @JvmOverloads constructor(
         return left + (right - left) * fraction.coerceIn(0f, 1f)
     }
 
+    // ---- Gesture state machine ----------------------------------------------------------------
+    // IDLE -> (down) TRACKING -> (our pointer lifts) PENDING_COMMIT -> (grace expires) commit -> IDLE
+    //                                 |                    |(down within grace) -> TRACKING (bounce absorbed)
+    //                                 |(cancel) abandon    |(cancel) abandon
+    //
+    // Raw ACTION_UP is NOT a commit: e-ink capacitive firmware delivers phantom lifts (contact
+    // bounce, edge dropout), and committing on one navigated the book while the reader's finger
+    // was still on the glass — the bug this machine exists to kill. A lift only commits if it
+    // STAYS lifted for [commitGraceMsForTest]; a re-touch inside the window resumes the same
+    // session invisibly. The timer is a one-shot postDelayed armed only by a lift — nothing runs
+    // at rest.
+    //
+    // Pointer discipline: the pointer id captured on DOWN owns the gesture. All coordinates come
+    // from that pointer via findPointerIndex; other pointers (a palm heel, a second fingertip)
+    // are ignored entirely, and only OUR pointer's lift opens the grace window.
+
+    private var gestureState = GestureState.IDLE
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
+    private var pendingFraction = 0f
+    private var pendingSnap: Int? = null
+
+    internal var commitGraceMsForTest: Long = COMMIT_GRACE_MS
+
+    internal val gestureStateForTest: String get() = gestureState.name
+
+    private enum class GestureState { IDLE, TRACKING, PENDING_COMMIT }
+
+    private val graceExpiry = Runnable {
+        if (gestureState == GestureState.PENDING_COMMIT) {
+            gestureState = GestureState.IDLE
+            activePointerId = MotionEvent.INVALID_POINTER_ID
+            dragging = false
+            currentSnapIndex = null
+            invalidate()
+            onScrubCommit?.invoke(pendingFraction, pendingSnap)
+        }
+    }
+
+    /** Commits a lift that is still inside its grace window RIGHT NOW — the overlay is closing or
+     *  the Activity is pausing, and dropping a lift the reader meant would lose their navigation.
+     *  No-op in any other state. */
+    fun flushPendingCommit() {
+        if (gestureState != GestureState.PENDING_COMMIT) return
+        removeCallbacks(graceExpiry)
+        graceExpiry.run()
+    }
+
+    private fun trackedX(event: MotionEvent): Float? {
+        val index = event.findPointerIndex(activePointerId)
+        return if (index >= 0) event.getX(index) else null
+    }
+
+    private fun applyPosition(x: Float, emitMove: Boolean) {
+        val raw = fractionAt(x)
+        val snap = snappedChapterIndex(raw, chapterStarts)
+        currentSnapIndex = snap
+        val fraction = if (snap != null) chapterStarts[snap] else raw
+        pendingFraction = fraction
+        pendingSnap = snap
+        setProgress(fraction)
+        if (emitMove) onScrubMove?.invoke(fraction, snap)
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 // Claim the gesture: the overlay's root would otherwise let it fall through to the
                 // PageView below, which reads a tap as a page turn.
                 parent?.requestDisallowInterceptTouchEvent(true)
-                onScrubStart?.invoke()
-                dragging = true
-                val raw = fractionAt(event.x)
-                val snap = snappedChapterIndex(raw, chapterStarts)
-                currentSnapIndex = snap
-                val fraction = if (snap != null) chapterStarts[snap] else raw
-                setProgress(fraction)
-                onScrubMove?.invoke(fraction, snap)
+                activePointerId = event.getPointerId(0)
+                when (gestureState) {
+                    GestureState.PENDING_COMMIT -> {
+                        // Contact bounce: the "lift" was firmware noise. Resume the SAME session —
+                        // no start, no commit, visually seamless (thumb stayed drag-sized).
+                        removeCallbacks(graceExpiry)
+                        gestureState = GestureState.TRACKING
+                        applyPosition(event.getX(0), emitMove = true)
+                    }
+                    else -> {
+                        gestureState = GestureState.TRACKING
+                        onScrubStart?.invoke()
+                        dragging = true
+                        applyPosition(event.getX(0), emitMove = true)
+                    }
+                }
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val raw = fractionAt(event.x)
-                val snap = snappedChapterIndex(raw, chapterStarts)
-                currentSnapIndex = snap
-                val fraction = if (snap != null) chapterStarts[snap] else raw
-                setProgress(fraction)
-                onScrubMove?.invoke(fraction, snap)
+                if (gestureState != GestureState.TRACKING) return true
+                val x = trackedX(event) ?: return true // only OUR pointer moves the thumb
+                applyPosition(x, emitMove = true)
                 return true
             }
 
-            MotionEvent.ACTION_UP -> {
-                val raw = fractionAt(event.x)
-                val snap = snappedChapterIndex(raw, chapterStarts)
-                val fraction = if (snap != null) chapterStarts[snap] else raw
-                setProgress(fraction)
-                dragging = false
-                currentSnapIndex = null
-                invalidate() // back to rest-size thumb, detent tick gone
-                onScrubCommit?.invoke(fraction, snap)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                if (gestureState != GestureState.TRACKING) return true
+                // Only OUR pointer's lift matters; a palm lifting is not a gesture event.
+                val liftedId = event.getPointerId(event.actionIndex)
+                if (liftedId != activePointerId) return true
+                trackedX(event)?.let { applyPosition(it, emitMove = false) }
+                gestureState = GestureState.PENDING_COMMIT
+                // Thumb stays drag-sized and the preview stays up: if this lift is a bounce, the
+                // resume is invisible; if it is real, the commit path restores rest visuals.
+                postDelayed(graceExpiry, commitGraceMsForTest)
                 return true
             }
 
             // A cancelled gesture commits nothing: the Activity restores the position the scrub
             // started from, so an interrupted drag leaves the reader where it was.
             MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(graceExpiry)
+                val wasActive = gestureState != GestureState.IDLE
+                gestureState = GestureState.IDLE
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 dragging = false
                 currentSnapIndex = null
                 invalidate()
-                onScrubCancel?.invoke()
+                if (wasActive) onScrubCancel?.invoke()
                 return true
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(graceExpiry)
+        super.onDetachedFromWindow()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -457,5 +536,10 @@ class ChapterScrubberView @JvmOverloads constructor(
         private const val GRAPHITE = 0xFF555555.toInt()
         private const val STEEL = 0xFF8A8A8A.toInt()
         private const val MIST = 0xFFB9B9B9.toInt()
+
+        // A lift commits only after staying lifted this long — see the gesture state machine doc
+        // above onTouchEvent. Long enough to absorb an e-ink contact-bounce phantom lift, short
+        // enough that a genuine release still reads as instant to the reader.
+        private const val COMMIT_GRACE_MS = 200L
     }
 }

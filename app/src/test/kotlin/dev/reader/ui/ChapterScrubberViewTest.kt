@@ -1,17 +1,40 @@
 package dev.reader.ui
 
+import android.app.Activity
+import android.os.Looper
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import com.google.common.truth.Truth.assertThat
+import java.time.Duration
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 
 @RunWith(RobolectricTestRunner::class)
 class ChapterScrubberViewTest {
 
+    // Attached to a real Activity window, not just laid out in isolation: the grace-window timer
+    // uses View.postDelayed, which queues into an internal RunQueue (not the main Looper's real
+    // queue) until the view has an AttachInfo — an unattached view's postDelayed would silently
+    // never fire under shadowOf(Looper.getMainLooper()).idleFor(...). A fixed-size FrameLayout host
+    // forces the child to exactly [width]x60 regardless of the emulated device's own screen size.
     private fun scrubber(width: Int = 400): ChapterScrubberView {
-        val view = ChapterScrubberView(RuntimeEnvironment.getApplication())
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val view = ChapterScrubberView(activity)
+        val container = FrameLayout(activity)
+        activity.setContentView(container, ViewGroup.LayoutParams(width, 60))
+        container.addView(view, ViewGroup.LayoutParams(width, 60))
+        // The window's own traversal is async (Choreographer-posted) — don't rely on its timing
+        // for the exact pixel bounds the tests reason about; measure/layout the child ourselves,
+        // same as the original bare `view.layout(0, 0, width, 60)` did before attachment mattered.
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(60, View.MeasureSpec.EXACTLY),
+        )
         view.layout(0, 0, width, 60)
         view.setBook(chapterStartFractions = listOf(0f, 0.25f, 0.5f), progress = 0f)
         return view
@@ -54,6 +77,7 @@ class ChapterScrubberViewTest {
         touch(view, MotionEvent.ACTION_DOWN, 100f)
         touch(view, MotionEvent.ACTION_MOVE, 300f)
         touch(view, MotionEvent.ACTION_UP, 300f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
 
         assertThat(commits).isEqualTo(1)
         assertThat(committed).isWithin(0.05f).of(0.75f)
@@ -168,6 +192,7 @@ class ChapterScrubberViewTest {
         view.onScrubCommit = { _, snap -> committedSnap = snap }
         touch(view, MotionEvent.ACTION_DOWN, xForFraction(view, 0.005f)) // snaps to chapter 0
         touch(view, MotionEvent.ACTION_UP, xForFraction(view, 0.005f))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
         assertThat(committedSnap).isEqualTo(0)
     }
 
@@ -268,5 +293,150 @@ class ChapterScrubberViewTest {
         val glyphs = bookmarkGlyphs(listOf(200f, 10f, 11f), minGapPx = 6f)
         assertThat(glyphs).hasSize(2)
         assertThat(glyphs.map { it.x }).containsExactly(10.5f, 200f).inOrder()
+    }
+
+    /** Two-pointer MotionEvent: [action] with pointer ids 0 and 1 at (x0, x1), y mid-strip. */
+    private fun twoPointerEvent(action: Int, x0: Float, x1: Float): MotionEvent {
+        val props = arrayOf(
+            MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_FINGER },
+            MotionEvent.PointerProperties().apply { id = 1; toolType = MotionEvent.TOOL_TYPE_FINGER },
+        )
+        val coords = arrayOf(
+            MotionEvent.PointerCoords().apply { x = x0; y = 30f; pressure = 1f; size = 1f },
+            MotionEvent.PointerCoords().apply { x = x1; y = 30f; pressure = 1f; size = 1f },
+        )
+        return MotionEvent.obtain(0L, 0L, action, 2, props, coords, 0, 0, 1f, 1f, 0, 0, 0, 0)
+    }
+
+    @Test
+    fun `a lift does not commit until the grace window expires`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        view.onScrubCommit = { _, _ -> commits++ }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)
+        touch(view, MotionEvent.ACTION_UP, 100f)
+
+        assertThat(commits).isEqualTo(0) // lifted, but the grace window is still open
+        assertThat(view.gestureStateForTest).isEqualTo("PENDING_COMMIT")
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+        assertThat(commits).isEqualTo(1) // stayed lifted -> the commit is real
+        assertThat(view.gestureStateForTest).isEqualTo("IDLE")
+    }
+
+    @Test
+    fun `a contact bounce — up then immediate down — never commits`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        var starts = 0
+        val moves = mutableListOf<Float>()
+        view.onScrubCommit = { _, _ -> commits++ }
+        view.onScrubStart = { starts++ }
+        view.onScrubMove = { f, _ -> moves += f }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)
+        touch(view, MotionEvent.ACTION_MOVE, 200f)
+        touch(view, MotionEvent.ACTION_UP, 200f)      // firmware bounce: phantom lift...
+        touch(view, MotionEvent.ACTION_DOWN, 205f)    // ...contact re-established 0ms later
+        touch(view, MotionEvent.ACTION_MOVE, 300f)
+        touch(view, MotionEvent.ACTION_UP, 300f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(commits).isEqualTo(1)                       // exactly one, at the REAL lift
+        assertThat(starts).isEqualTo(1)                        // one continuous session, one start
+        assertThat(moves.last()).isWithin(0.05f).of(0.75f)     // tracking resumed seamlessly
+    }
+
+    @Test
+    fun `the grace commit carries the lift position, not the resume position`() {
+        val view = scrubber(width = 400)
+        var committed = -1f
+        view.onScrubCommit = { f, _ -> committed = f }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)
+        touch(view, MotionEvent.ACTION_UP, 300f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(committed).isWithin(0.05f).of(0.75f)
+    }
+
+    @Test
+    fun `a second pointer cannot steal the gesture or move the thumb`() {
+        val view = scrubber(width = 400)
+        val moves = mutableListOf<Float>()
+        view.onScrubMove = { f, _ -> moves += f }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)                       // finger (id 0) owns it
+        view.onTouchEvent(twoPointerEvent(
+            MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            100f, 350f,                                                   // palm lands at 350
+        ))
+        view.onTouchEvent(twoPointerEvent(MotionEvent.ACTION_MOVE, 120f, 380f)) // both drift
+
+        // Every reported fraction tracks pointer id 0 only — the palm at 350/380 never leaks in.
+        assertThat(moves.none { it > 0.5f }).isTrue()
+    }
+
+    @Test
+    fun `our pointer lifting while the palm stays down starts the grace, palm events are ignored`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        view.onScrubCommit = { _, _ -> commits++ }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)                       // id 0
+        view.onTouchEvent(twoPointerEvent(
+            MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            100f, 350f,
+        ))
+        // Our pointer (index 0) lifts; the palm (id 1) is still on the glass.
+        view.onTouchEvent(twoPointerEvent(
+            MotionEvent.ACTION_POINTER_UP or (0 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            100f, 350f,
+        ))
+        assertThat(view.gestureStateForTest).isEqualTo("PENDING_COMMIT")
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+        assertThat(commits).isEqualTo(1)                                  // committed at OUR x, not the palm's
+    }
+
+    @Test
+    fun `cancel during tracking abandons and cancel during grace abandons too`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        var cancels = 0
+        view.onScrubCommit = { _, _ -> commits++ }
+        view.onScrubCancel = { cancels++ }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)
+        touch(view, MotionEvent.ACTION_CANCEL, 100f)
+        assertThat(cancels).isEqualTo(1)
+        assertThat(view.gestureStateForTest).isEqualTo("IDLE")
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)
+        touch(view, MotionEvent.ACTION_UP, 100f)      // grace opens
+        touch(view, MotionEvent.ACTION_CANCEL, 100f)  // system steals during grace
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(commits).isEqualTo(0)
+        assertThat(cancels).isEqualTo(2)
+    }
+
+    @Test
+    fun `flushPendingCommit commits immediately during grace and no-ops otherwise`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        view.onScrubCommit = { _, _ -> commits++ }
+
+        view.flushPendingCommit()                     // IDLE: nothing
+        assertThat(commits).isEqualTo(0)
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f)
+        touch(view, MotionEvent.ACTION_UP, 100f)
+        view.flushPendingCommit()                     // grace open: commit NOW
+        assertThat(commits).isEqualTo(1)
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+        assertThat(commits).isEqualTo(1)              // the timer was disarmed — no double commit
     }
 }
