@@ -85,6 +85,34 @@ class LibraryActivityInteractionTest {
         assertThat(shadowOf(activity).nextStartedActivity).isNotNull()
     }
 
+    // -- format dispatch: comic vs. EPUB target activity -----------------------------------
+
+    @Test
+    fun `tapping an epub launches ReaderActivity`() {
+        val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
+        controller.create().start().resume()
+        val activity = controller.get()
+
+        activity.tap(testBook(path = "/Document/Books/a.epub"))
+
+        val started = shadowOf(activity).nextStartedActivity
+        assertThat(started).isNotNull()
+        assertThat(started!!.component?.className).isEqualTo(ReaderActivity::class.java.name)
+    }
+
+    @Test
+    fun `tapping a comic launches ComicActivity`() {
+        val controller = Robolectric.buildActivity(TestableLibraryActivity::class.java)
+        controller.create().start().resume()
+        val activity = controller.get()
+
+        activity.tap(testBook(path = "/Document/Books/x.cbz"))
+
+        val started = shadowOf(activity).nextStartedActivity
+        assertThat(started).isNotNull()
+        assertThat(started!!.component?.className).isEqualTo(ComicActivity::class.java.name)
+    }
+
     // -- I5: tapping an unreadable book retries it once ---------------------------------------
 
     @Test

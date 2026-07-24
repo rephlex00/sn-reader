@@ -26,9 +26,11 @@ import dev.reader.data.IndexResult
 import dev.reader.data.LibraryDatabase
 import dev.reader.data.LibraryIndexer
 import dev.reader.data.SortOrder
+import dev.reader.library.BookFormat
 import dev.reader.library.ComicMetadataExtractor
 import dev.reader.library.DispatchingMetadataExtractor
 import dev.reader.library.EpubMetadataExtractor
+import dev.reader.library.bookFormatOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -703,9 +705,11 @@ open class LibraryActivity : AppCompatActivity() {
         // ReaderActivity hasn't covered the screen yet.
         if (launching) return
         launching = true
-        startActivity(
-            Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_BOOK_PATH, book.path)
-        )
+        val target = when (bookFormatOf(book.path)) {
+            BookFormat.COMIC -> ComicActivity::class.java
+            else -> ReaderActivity::class.java
+        }
+        startActivity(Intent(this, target).putExtra(ReaderActivity.EXTRA_BOOK_PATH, book.path))
     }
 
     private companion object {
