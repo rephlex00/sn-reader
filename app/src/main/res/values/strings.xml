@@ -135,4 +135,7 @@
     <string name="error_book_not_indexed">This book isn\'t in your library yet.</string>
     <string name="error_no_epub_found">No EPUB found in /Document.</string>
     <string name="highlight_cancelled_chapter_change">Highlight cancelled — you moved to another chapter.</string>
+
+    <!-- ComicActivity's minimal overlay readout: 1-based current page, of the archive's page count. -->
+    <string name="comic_page_readout">page %1$d of %2$d</string>
 </resources>
