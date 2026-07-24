@@ -29,6 +29,14 @@ interface ResourceSource : Closeable {
      * to `0L` (weightless), same as an absent entry.
      */
     fun size(path: String): Long = 0L
+
+    /**
+     * Every entry path in the container, in the container's own order. The default is empty —
+     * a source that offers only path-keyed access (or a test double) need not enumerate. A comic
+     * has no manifest, so [dev.reader.formats.comic.ComicDocument] discovers its pages through
+     * this; EPUB never calls it (it reads the OPF manifest instead).
+     */
+    fun entries(): List<String> = emptyList()
 }
 
 /**
@@ -78,6 +86,9 @@ class ZipResourceSource(file: File) : ResourceSource {
     override fun exists(path: String): Boolean = zip.getEntry(path) != null
 
     override fun size(path: String): Long = zip.getEntry(path)?.size?.coerceAtLeast(0L) ?: 0L
+
+    override fun entries(): List<String> =
+        zip.entries().asSequence().map { it.name }.toList()
 
     override fun close() = zip.close()
 }
