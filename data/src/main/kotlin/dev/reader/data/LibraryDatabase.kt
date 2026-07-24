@@ -5,7 +5,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [BookEntity::class, BookmarkEntity::class, HighlightEntity::class], version = 4, exportSchema = true)
+@Database(entities = [BookEntity::class, BookmarkEntity::class, HighlightEntity::class], version = 5, exportSchema = true)
 abstract class LibraryDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun bookmarkDao(): BookmarkDao
@@ -67,6 +67,18 @@ abstract class LibraryDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_highlights_bookPath` ON `highlights` (`bookPath`)",
                 )
+            }
+        }
+
+        /**
+         * v4 -> v5: adds [BookEntity.rightToLeftOverride] (per-book comic reading-direction
+         * override). Purely additive — no existing row is touched, and every existing row reads
+         * back null (trust `ComicInfo.xml`). Registered in [dev.reader.ReaderApplication]'s
+         * builder.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN rightToLeftOverride INTEGER")
             }
         }
     }

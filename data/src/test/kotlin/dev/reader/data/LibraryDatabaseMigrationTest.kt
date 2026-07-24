@@ -185,4 +185,66 @@ class LibraryDatabaseMigrationTest {
         }
         db.close()
     }
+
+    private val v4BooksCreateSql = v2CreateSql // books shape is unchanged v2->v4
+
+    private val v4HighlightsCreateSql =
+        "CREATE TABLE IF NOT EXISTS `highlights` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`bookPath` TEXT NOT NULL, `spineIndex` INTEGER NOT NULL, `startOffset` INTEGER NOT NULL, " +
+            "`endOffset` INTEGER NOT NULL, `text` TEXT NOT NULL, `progressFraction` REAL NOT NULL, " +
+            "`createdAtMs` INTEGER NOT NULL, " +
+            "FOREIGN KEY(`bookPath`) REFERENCES `books`(`path`) ON UPDATE NO ACTION ON DELETE CASCADE )"
+
+    private fun openV4(): SupportSQLiteDatabase {
+        val config = SupportSQLiteOpenHelper.Configuration.builder(RuntimeEnvironment.getApplication())
+            .name(null)
+            .callback(object : SupportSQLiteOpenHelper.Callback(4) {
+                override fun onCreate(db: SupportSQLiteDatabase) {
+                    db.execSQL(v4BooksCreateSql)
+                    db.execSQL(v3BookmarksCreateSql)
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_bookPath` ON `bookmarks` (`bookPath`)")
+                    db.execSQL(v4HighlightsCreateSql)
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_highlights_bookPath` ON `highlights` (`bookPath`)")
+                }
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            })
+            .build()
+        return FrameworkSQLiteOpenHelperFactory().create(config).writableDatabase
+    }
+
+    @Test
+    fun `migration 4 to 5 adds rightToLeftOverride as null and preserves existing rows`() {
+        val db = openV4()
+        db.execSQL(
+            "INSERT INTO books (path, sizeBytes, modifiedAtMs, title, spineIndex, charOffset, " +
+                "unreadable, addedAtMs, progressFraction) VALUES ('/a.cbz', 1, 2, 'T', 0, 0, 0, 3, 0.4)",
+        )
+
+        LibraryDatabase.MIGRATION_4_5.migrate(db)
+
+        db.query("SELECT rightToLeftOverride, progressFraction FROM books WHERE path = '/a.cbz'").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.isNull(0)).isTrue() // rightToLeftOverride: unset for a pre-v5 row
+            assertThat(c.getFloat(1)).isEqualTo(0.4f) // existing column preserved
+        }
+        db.close()
+    }
+
+    @Test
+    fun `after migration 4 to 5 the new column is writable`() {
+        val db = openV4()
+        db.execSQL(
+            "INSERT INTO books (path, sizeBytes, modifiedAtMs, title, spineIndex, charOffset, " +
+                "unreadable, addedAtMs) VALUES ('/b.cbz', 1, 2, 'B', 0, 0, 0, 3)",
+        )
+        LibraryDatabase.MIGRATION_4_5.migrate(db)
+
+        db.execSQL("UPDATE books SET rightToLeftOverride = 1 WHERE path = '/b.cbz'")
+
+        db.query("SELECT rightToLeftOverride FROM books WHERE path = '/b.cbz'").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getInt(0)).isEqualTo(1)
+        }
+        db.close()
+    }
 }

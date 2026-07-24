@@ -361,6 +361,19 @@ class BookDaoTest {
     }
 
     @Test
+    fun `rightToLeftOverride round-trips including null`(): Unit = runBlocking {
+        dao.upsertAll(listOf(book(path = "/c.cbz")))
+
+        assertThat(dao.getByPath("/c.cbz")!!.rightToLeftOverride).isNull()
+
+        dao.updateRtlOverride("/c.cbz", true)
+        assertThat(dao.getByPath("/c.cbz")!!.rightToLeftOverride).isTrue()
+
+        dao.updateRtlOverride("/c.cbz", null)
+        assertThat(dao.getByPath("/c.cbz")!!.rightToLeftOverride).isNull()
+    }
+
+    @Test
     fun `observeAllSorted RECENTLY_OPENED places never-opened books last`(): Unit = runBlocking {
         dao.upsertAll(
             listOf(
