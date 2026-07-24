@@ -27,6 +27,7 @@ open class ComicActivity : AppCompatActivity() {
     private lateinit var pageView: ComicPageView
     private lateinit var readout: TextView
     private lateinit var chrome: View
+    private lateinit var directionButton: Button
     private val decoder = ComicPageDecoder()
 
     private var document: ComicDocument? = null
@@ -44,7 +45,9 @@ open class ComicActivity : AppCompatActivity() {
     // ---- Test seams ----
     val pagesShownForTest = mutableListOf<Int>()
     val currentPageForTest: Int get() = currentPage
+    val rtlForTest: Boolean get() = rtl
     fun onTapForTest(zone: TapZone) = onTap(zone)
+    fun toggleDirectionForTest() = toggleDirection()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,9 +59,14 @@ open class ComicActivity : AppCompatActivity() {
             setBackgroundColor(Color.WHITE); setTextColor(Color.BLACK); setPadding(24, 16, 24, 16)
         }
         val back = Button(this).apply { text = getString(android.R.string.cancel); setOnClickListener { finish() } }
+        val direction = Button(this).apply {
+            setOnClickListener { toggleDirection() }
+        }
+        directionButton = direction
         chrome = FrameLayout(this).apply {
             visibility = View.GONE
             addView(back, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
+            addView(direction, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
             addView(readout, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         }
         val container = FrameLayout(this).apply {
@@ -88,6 +96,7 @@ open class ComicActivity : AppCompatActivity() {
             bookPath = file.path
             val stored = withContext(Dispatchers.IO) { dao.getByPath(file.path) }
             rtl = stored?.rightToLeftOverride ?: doc.readingDirectionRtl
+            updateDirectionLabel()
             val start = (stored?.spineIndex ?: 0).coerceIn(0, pageCount - 1)
             showPage(start)
             opening = false
@@ -146,6 +155,18 @@ open class ComicActivity : AppCompatActivity() {
         app.positionWriteScope.launch {
             dao.updatePosition(bookPath, index, 0, fraction, System.currentTimeMillis())
         }
+    }
+
+    private fun toggleDirection() {
+        rtl = !rtl
+        app.positionWriteScope.launch { dao.updateRtlOverride(bookPath, rtl) }
+        prefetch?.second?.recycle(); prefetch = null
+        prefetchNeighbor()
+        updateDirectionLabel()
+    }
+
+    private fun updateDirectionLabel() {
+        directionButton.text = getString(if (rtl) R.string.comic_dir_rtl else R.string.comic_dir_ltr)
     }
 
     private fun toggleChrome() {

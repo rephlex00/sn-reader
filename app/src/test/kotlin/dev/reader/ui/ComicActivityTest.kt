@@ -110,6 +110,31 @@ class ComicActivityTest {
         assertThat(a.currentPageForTest).isEqualTo(1)
     }
 
+    @Test fun `toggling direction flips tap zones and persists the override`() = runBlocking {
+        val file = cbz("dir.cbz", 5)
+        val dao = (RuntimeEnvironment.getApplication() as dev.reader.ReaderApplication).database.bookDao()
+        dao.upsertAll(listOf(BookEntity(
+            path = file.path, sizeBytes = file.length(), modifiedAtMs = 0, title = "d", author = null,
+            coverPath = null, spineIndex = 0, charOffset = 0, unreadable = false,
+            unreadableReason = null, addedAtMs = 0, lastOpenedAtMs = null,
+        )))
+        val a = launch(file.path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        assertThat(a.rtlForTest).isFalse()
+        a.toggleDirectionForTest()
+        // rtl itself flips synchronously; the DB write is launched onto the app-scoped
+        // positionWriteScope (a real Dispatchers.IO pool, not the Robolectric main looper), so
+        // polling the row directly — not drainMain — is what actually waits for it, matching
+        // ReaderActivityTest's rowFor/idleUntil pattern for the same kind of write.
+        assertThat(a.rtlForTest).isTrue()
+        a.onTapForTest(TapZone.PREVIOUS) // now left = forward
+        idleUntil { a.currentPageForTest == 1 }
+        assertThat(a.currentPageForTest).isEqualTo(1)
+        idleUntil { runBlocking { dao.getByPath(file.path) }?.rightToLeftOverride == true }
+        assertThat(dao.getByPath(file.path)!!.rightToLeftOverride).isTrue()
+    }
+
     @Test fun `resumes at the stored page`() = runBlocking {
         val file = cbz("r.cbz", 10)
         val dao = (RuntimeEnvironment.getApplication() as dev.reader.ReaderApplication).database.bookDao()
