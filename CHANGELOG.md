@@ -4,6 +4,14 @@ Notable changes, newest first. Versions are `YYYY.MM.build` — the year and mon
 plus a counter within that month. Each release's APK is on the
 [Releases page](https://github.com/rephlex00/sn-reader/releases).
 
+## Unreleased
+
+### Comics
+
+CBZ comic archives now open as books — one page per screen, fit to the display, turned with the
+same taps, with per-book reading direction for manga. CBR files that are really zips (most are)
+open too; a genuine RAR archive is not supported yet and says so.
+
 ## 2026.07.3
 
 ### Reading progress moves onto the cover

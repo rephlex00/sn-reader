@@ -35,7 +35,8 @@ app uses **no measurable CPU at all**.
 * **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for
   speed; menus repaint quickly too, without touching the page's own crisp refresh
 
-Reader opens **EPUB files only**. No PDF, no CBR, no CBZ.
+Reader opens **EPUB**, **CBZ**, and **CBR** files that are really zips (many are). A genuine RAR
+archive does not open yet. No PDF.
 
 ## Getting it on your Supernote
 
@@ -180,6 +181,15 @@ behind.
 If you would rather turn pages quickly, switch on **Faster page turns**. Pages then update with a
 light, fast refresh and Reader does a full clean-up flash every few pages instead, every 3, 6, or
 10 as you prefer. You trade a little ghosting between flashes for speed.
+
+### Comics
+
+Reader opens **CBZ** comic archives, and **CBR** files that are really zips (many are). Pages are
+shown one at a time, fit to the screen, turned with the same taps as a book. Reading direction
+follows the archive's `ComicInfo.xml`, and you can flip it per book for manga.
+
+A **genuine RAR** archive does not open yet — Reader says so plainly rather than failing silently.
+Support can be added later without changing anything else.
 
 ## Worth knowing
 
