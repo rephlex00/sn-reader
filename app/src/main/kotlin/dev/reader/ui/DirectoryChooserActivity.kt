@@ -14,6 +14,7 @@ import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import dev.reader.formats.NATURAL_ORDER
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -22,37 +23,10 @@ import java.io.File
 /**
  * Case-insensitive **natural** order for folder names, so `page2` sorts before `page10` rather
  * than after it. Digit runs compare by numeric value (leading zeros ignored, shorter number
- * first), everything else compares lexicographically lowercased. Pulled out as a pure top-level
- * value so it is unit-testable without a device.
+ * first), everything else compares lexicographically lowercased. Delegates to the canonical
+ * implementation in `:formats` so `ComicDocument` and `:app` share one tested comparator.
  */
-val NATURAL_NAME_ORDER: Comparator<String> = Comparator { a, b -> compareNatural(a, b) }
-
-private fun compareNatural(a: String, b: String): Int {
-    var i = 0
-    var j = 0
-    while (i < a.length && j < b.length) {
-        val ca = a[i]
-        val cb = b[j]
-        if (ca.isDigit() && cb.isDigit()) {
-            var i2 = i
-            while (i2 < a.length && a[i2].isDigit()) i2++
-            var j2 = j
-            while (j2 < b.length && b[j2].isDigit()) j2++
-            val na = a.substring(i, i2).trimStart('0').ifEmpty { "0" }
-            val nb = b.substring(j, j2).trimStart('0').ifEmpty { "0" }
-            val cmp = if (na.length != nb.length) na.length - nb.length else na.compareTo(nb)
-            if (cmp != 0) return cmp
-            i = i2
-            j = j2
-        } else {
-            val cmp = ca.lowercaseChar().compareTo(cb.lowercaseChar())
-            if (cmp != 0) return cmp
-            i++
-            j++
-        }
-    }
-    return (a.length - i) - (b.length - j)
-}
+val NATURAL_NAME_ORDER: Comparator<String> = NATURAL_ORDER
 
 /**
  * A deliberately minimal folder picker: it exists to set [LibraryPrefs.rootPath] the roughly once
