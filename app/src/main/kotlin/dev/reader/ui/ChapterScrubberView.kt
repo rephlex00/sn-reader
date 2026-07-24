@@ -289,20 +289,6 @@ class ChapterScrubberView @JvmOverloads constructor(
     private var pendingFraction = 0f
     private var pendingSnap: Int? = null
 
-    /** Where and when the SESSION began — the original DOWN, deliberately NOT reset by a
-     *  bounce-resume, so a firmware-split session still classifies by its true origin. */
-    private var sessionDownX = 0f
-    private var sessionDownTime = 0L
-
-    /** Sticky per session: true once the tracked pointer has ever strayed beyond touch slop from
-     *  the session origin. A session that never drags and isn't a crisp tap never commits. */
-    private var draggedBeyondSlop = false
-
-    /** The tracked pointer's last lift time — against [sessionDownTime], the tap-vs-hold clock. */
-    private var liftEventTime = 0L
-
-    private val touchSlopPx = android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
-
     internal var commitGraceMsForTest: Long = COMMIT_GRACE_MS
 
     internal val gestureStateForTest: String get() = gestureState.name
@@ -316,23 +302,7 @@ class ChapterScrubberView @JvmOverloads constructor(
             dragging = false
             currentSnapIndex = null
             invalidate()
-            // Intent grammar, not just mechanics. A kernel-level capture on the Nomad
-            // (2026-07-23) proved this panel's firmware DROPS a stationary contact after ~300ms
-            // — reporting a release indistinguishable from a real lift at every layer, with the
-            // same steady-pressure-then-vanish signature real lifts have. No grace window can
-            // absorb a drop whose re-contact comes seconds later, so the commit decision has to
-            // read intent instead: a CRISP TAP (short, never dragged) navigates, a DRAG (ever
-            // moved beyond slop) navigates on lift — but a stationary HOLD that "lifts" without
-            // ever dragging is either that firmware drop or a grab-and-release of the carriage,
-            // and neither is a request to turn the page. Those resolve as a quiet cancel: the
-            // Activity's abandon path restores readout and thumb without touching the page.
-            val isCommit = draggedBeyondSlop ||
-                (liftEventTime - sessionDownTime) <= TAP_MAX_MS
-            if (isCommit) {
-                onScrubCommit?.invoke(pendingFraction, pendingSnap)
-            } else {
-                onScrubCancel?.invoke()
-            }
+            onScrubCommit?.invoke(pendingFraction, pendingSnap)
         }
     }
 
@@ -351,9 +321,6 @@ class ChapterScrubberView @JvmOverloads constructor(
     }
 
     private fun applyPosition(x: Float, emitMove: Boolean) {
-        if (!draggedBeyondSlop && kotlin.math.abs(x - sessionDownX) > touchSlopPx) {
-            draggedBeyondSlop = true
-        }
         val raw = fractionAt(x)
         val snap = snappedChapterIndex(raw, chapterStarts)
         currentSnapIndex = snap
@@ -383,12 +350,6 @@ class ChapterScrubberView @JvmOverloads constructor(
                         gestureState = GestureState.TRACKING
                         onScrubStart?.invoke()
                         dragging = true
-                        // The session's origin, in space and time: the tap-vs-hold-vs-drag
-                        // classification at commit measures against THIS down, and a bounce-resume
-                        // (the arms above) deliberately leaves it untouched.
-                        sessionDownX = event.getX(0)
-                        sessionDownTime = event.eventTime
-                        draggedBeyondSlop = false
                         applyPosition(event.getX(0), emitMove = true)
                     }
                 }
@@ -425,7 +386,6 @@ class ChapterScrubberView @JvmOverloads constructor(
                 val liftedId = event.getPointerId(event.actionIndex)
                 if (liftedId != activePointerId) return true
                 trackedX(event)?.let { applyPosition(it, emitMove = false) }
-                liftEventTime = event.eventTime
                 gestureState = GestureState.PENDING_COMMIT
                 // Thumb stays drag-sized and the preview stays up: if this lift is a bounce, the
                 // resume is invisible; if it is real, the commit path restores rest visuals.
@@ -598,12 +558,5 @@ class ChapterScrubberView @JvmOverloads constructor(
         // above onTouchEvent. Long enough to absorb an e-ink contact-bounce phantom lift, short
         // enough that a genuine release still reads as instant to the reader.
         private const val COMMIT_GRACE_MS = 200L
-
-        // The tap-vs-hold boundary. A session that never dragged beyond slop commits only if its
-        // lift came within this of its down — a crisp, intentional tap. Slower than this without
-        // any drag is a stationary hold, and a hold's "lift" is untrustworthy on this panel: the
-        // kernel capture showed the firmware dropping a steady 320ms-old stationary contact with
-        // a release identical to a real lift. Real taps in that same capture ran well under 200ms.
-        private const val TAP_MAX_MS = 250L
     }
 }

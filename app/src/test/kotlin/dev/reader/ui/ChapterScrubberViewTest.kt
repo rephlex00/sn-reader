@@ -46,14 +46,6 @@ class ChapterScrubberViewTest {
         event.recycle()
     }
 
-    /** [touch] with an explicit event time, for the tap-vs-hold intent classification: the view
-     *  measures a session's duration from its original DOWN's eventTime to the lift's eventTime. */
-    private fun touchAt(view: ChapterScrubberView, action: Int, x: Float, timeMs: Long) {
-        val event = MotionEvent.obtain(0L, timeMs, action, x, 30f, 0)
-        view.onTouchEvent(event)
-        event.recycle()
-    }
-
     /** Inverts the view's fractionAt geometry (padding-based track ends), mirroring its math
      *  exactly. Programmatic test views carry no XML padding, so paddingLeft/Right are both 0 and
      *  this collapses to fraction * width — the simplest possible mapping. */
@@ -314,94 +306,6 @@ class ChapterScrubberViewTest {
             MotionEvent.PointerCoords().apply { x = x1; y = 30f; pressure = 1f; size = 1f },
         )
         return MotionEvent.obtain(0L, 0L, action, 2, props, coords, 0, 0, 1f, 1f, 0, 0, 0, 0)
-    }
-
-    @Test
-    fun `a stationary hold whose lift arrives late never commits`() {
-        // The kernel capture (2026-07-23) showed this panel's firmware dropping a steady,
-        // stationary ~320ms-old contact with a release identical to a real lift. Nobody navigates
-        // by pressing-and-holding-still, so a session that never dragged and wasn't a crisp tap
-        // resolves as a quiet cancel — the page must not turn under a resting finger.
-        val view = scrubber(width = 400)
-        var commits = 0
-        var cancels = 0
-        view.onScrubCommit = { _, _ -> commits++ }
-        view.onScrubCancel = { cancels++ }
-
-        touchAt(view, MotionEvent.ACTION_DOWN, 100f, timeMs = 0)
-        touchAt(view, MotionEvent.ACTION_UP, 102f, timeMs = 320) // 2px wander, well under slop
-
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
-        assertThat(commits).isEqualTo(0)
-        assertThat(cancels).isEqualTo(1)
-        assertThat(view.gestureStateForTest).isEqualTo("IDLE")
-    }
-
-    @Test
-    fun `a crisp tap still commits`() {
-        val view = scrubber(width = 400)
-        var commits = 0
-        view.onScrubCommit = { _, _ -> commits++ }
-
-        touchAt(view, MotionEvent.ACTION_DOWN, 100f, timeMs = 0)
-        touchAt(view, MotionEvent.ACTION_UP, 100f, timeMs = 120)
-
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
-        assertThat(commits).isEqualTo(1)
-    }
-
-    @Test
-    fun `a slow press that then drags commits on its lift`() {
-        // Duration alone is not disqualifying — dragging beyond slop is expressed intent, however
-        // long the finger dwelt first.
-        val view = scrubber(width = 400)
-        var commits = 0
-        var committed = -1f
-        view.onScrubCommit = { f, _ -> commits++; committed = f }
-
-        touchAt(view, MotionEvent.ACTION_DOWN, 100f, timeMs = 0)
-        touchAt(view, MotionEvent.ACTION_MOVE, 300f, timeMs = 700)
-        touchAt(view, MotionEvent.ACTION_UP, 300f, timeMs = 900)
-
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
-        assertThat(commits).isEqualTo(1)
-        assertThat(committed).isWithin(0.05f).of(0.75f)
-    }
-
-    @Test
-    fun `a bounced session classifies against its ORIGINAL down, not the resume`() {
-        // A firmware bounce splits one physical hold into two sessions; the resume must not reset
-        // the tap clock, or a long hold would masquerade as a crisp tap and commit.
-        val view = scrubber(width = 400)
-        var commits = 0
-        var cancels = 0
-        view.onScrubCommit = { _, _ -> commits++ }
-        view.onScrubCancel = { cancels++ }
-
-        touchAt(view, MotionEvent.ACTION_DOWN, 100f, timeMs = 0)
-        touchAt(view, MotionEvent.ACTION_UP, 100f, timeMs = 50)    // phantom bounce lift
-        touchAt(view, MotionEvent.ACTION_DOWN, 100f, timeMs = 100) // re-contact resumes session
-        touchAt(view, MotionEvent.ACTION_UP, 101f, timeMs = 400)   // real-ish lift, 400ms after ORIGIN
-
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
-        assertThat(commits).isEqualTo(0) // 400ms stationary hold, not a 300ms "tap since resume"
-        assertThat(cancels).isEqualTo(1)
-    }
-
-    @Test
-    fun `flushing a stationary hold cancels instead of committing`() {
-        val view = scrubber(width = 400)
-        var commits = 0
-        var cancels = 0
-        view.onScrubCommit = { _, _ -> commits++ }
-        view.onScrubCancel = { cancels++ }
-
-        touchAt(view, MotionEvent.ACTION_DOWN, 100f, timeMs = 0)
-        touchAt(view, MotionEvent.ACTION_UP, 100f, timeMs = 320)
-        view.flushPendingCommit() // overlay closing mid-grace: same intent rules apply
-
-        assertThat(commits).isEqualTo(0)
-        assertThat(cancels).isEqualTo(1)
     }
 
     @Test
