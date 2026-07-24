@@ -3,6 +3,7 @@ package dev.reader.ui
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -18,6 +19,7 @@ import dev.reader.data.BookmarkEntity
 import dev.reader.formats.comic.ComicDocument
 import dev.reader.formats.comic.ComicException
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -138,19 +140,47 @@ open class ComicActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Adds a bookmark for the current page, or removes the one already on it. Mirrors
+     * BookmarksPanel.toggleCurrentPage(): [BookmarkEntity.bookPath] is a CASCADE foreign key to
+     * `books.path` with enforcement ON, but LibraryActivity's background [LibraryIndexer] sync
+     * runs on a scope cancelled at ON_DESTROY, not ON_STOP, so it can keep running — and delete
+     * this book's `books` row via `deleteByPaths` — while this reader is foregrounded. The
+     * library-membership check comes first so a lost book degrades to a message instead of an
+     * FK violation; the try/catch is a backstop for the race where the sync deletes the row
+     * between that check and this write. On the guard path the in-memory [bookmarks] list — and
+     * so the toggle label — is refreshed too, so a book lost mid-session doesn't keep showing a
+     * bookmark that the cascade already deleted underneath it.
+     */
     private fun toggleBookmark() {
         val existing = bookmarks.firstOrNull { it.spineIndex == currentPage }
         val fraction = if (pageCount > 0) (currentPage + 1).toFloat() / pageCount else 0f
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                if (existing != null) bookmarkDao.deleteById(existing.id)
-                else bookmarkDao.insert(BookmarkEntity(
-                    bookPath = bookPath, spineIndex = currentPage, charOffset = 0,
-                    progressFraction = fraction, createdAtMs = System.currentTimeMillis(),
-                ))
+            val inLibrary = withContext(Dispatchers.IO) { dao.getByPath(bookPath) != null }
+            if (!inLibrary) {
+                bookmarks = withContext(Dispatchers.IO) { bookmarkDao.bookmarksFor(bookPath) }
+                updateBookmarkLabel()
+                showMessage(getString(R.string.error_book_not_indexed))
+                return@launch
             }
-            bookmarks = withContext(Dispatchers.IO) { bookmarkDao.bookmarksFor(bookPath) }
-            updateBookmarkLabel()
+            try {
+                withContext(Dispatchers.IO) {
+                    if (existing != null) bookmarkDao.deleteById(existing.id)
+                    else bookmarkDao.insert(BookmarkEntity(
+                        bookPath = bookPath, spineIndex = currentPage, charOffset = 0,
+                        progressFraction = fraction, createdAtMs = System.currentTimeMillis(),
+                    ))
+                }
+                bookmarks = withContext(Dispatchers.IO) { bookmarkDao.bookmarksFor(bookPath) }
+                updateBookmarkLabel()
+            } catch (e: CancellationException) {
+                // The Activity was destroyed mid-write: let structured-concurrency cancellation
+                // propagate rather than swallowing it into a toast on a dying screen.
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, getString(R.string.error_save_bookmark), e)
+                showMessage(getString(R.string.error_save_bookmark))
+            }
         }
     }
 
@@ -262,5 +292,9 @@ open class ComicActivity : AppCompatActivity() {
         currentBitmap?.recycle()
         prefetch?.second?.recycle()
         document?.close()
+    }
+
+    companion object {
+        private const val TAG = "ComicActivity"
     }
 }

@@ -157,6 +157,39 @@ class ComicActivityTest {
         assertThat(a.bookmarkedPagesForTest).isEmpty()
     }
 
+    @Test fun `a bookmark write no-ops instead of crashing when the library row is gone`() = runBlocking {
+        // Regression for the library-sync delete race: LibraryActivity's background
+        // LibraryIndexer.sync() runs on a scope cancelled at ON_DESTROY, not ON_STOP, so it can
+        // still be running while this reader is foregrounded. If it decides the open file is
+        // gone, it calls dao.deleteByPaths — which cascades away this book's bookmarks, since
+        // BookmarkEntity.bookPath is a CASCADE foreign key to books.path. A stale in-memory
+        // `existing` bookmark plus an unguarded insert would then throw an FK violation inside
+        // lifecycleScope.launch with nothing to catch it. toggleBookmark()'s inLibrary check (and
+        // its try/catch backstop) should turn that into a silent no-op instead.
+        val file = cbz("gone.cbz", 5)
+        val dao = (RuntimeEnvironment.getApplication() as dev.reader.ReaderApplication).database.bookDao()
+        dao.upsertAll(listOf(BookEntity(
+            path = file.path, sizeBytes = file.length(), modifiedAtMs = 0, title = "gone", author = null,
+            coverPath = null, spineIndex = 0, charOffset = 0, unreadable = false,
+            unreadableReason = null, addedAtMs = 0, lastOpenedAtMs = null,
+        )))
+        val a = launch(file.path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        a.toggleBookmarkForTest()
+        idleUntil { a.bookmarkedPagesForTest.contains(0) }
+        assertThat(a.bookmarkedPagesForTest).containsExactly(0)
+
+        // Simulate the sync deleting the books row (and cascading away the bookmark) while the
+        // comic is still open. This suspend call runs to completion here, in the same runBlocking
+        // coroutine, so the row is gone before the next line.
+        dao.deleteByPaths(listOf(file.path))
+
+        a.toggleBookmarkForTest()
+        idleUntil { a.bookmarkedPagesForTest.isEmpty() }
+        assertThat(a.bookmarkedPagesForTest).isEmpty()
+    }
+
     @Test fun `resumes at the stored page`() = runBlocking {
         val file = cbz("r.cbz", 10)
         val dao = (RuntimeEnvironment.getApplication() as dev.reader.ReaderApplication).database.bookDao()
