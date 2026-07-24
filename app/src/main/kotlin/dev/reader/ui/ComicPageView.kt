@@ -34,6 +34,13 @@ class ComicPageView(context: Context) : View(context) {
     var onTap: ((TapZone) -> Unit)? = null
     var epd: EpdRefresher = NoopRefresher
 
+    init {
+        // The Supernote EPD controller displays the software framebuffer; a hardware-accelerated
+        // canvas composites a large decoded page to a GPU surface the panel never shows (the page
+        // rendered blank on-device until this was forced). A still image needs no GPU anyway.
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
+    }
+
     fun show(bitmap: Bitmap?) {
         this.bitmap = bitmap
         if (bitmap != null) wholeImage.set(0, 0, bitmap.width, bitmap.height)
