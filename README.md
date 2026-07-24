@@ -45,7 +45,7 @@ Reader opens **EPUB files only**. No PDF, no CBR, no CBZ.
 **2. Install it over USB.**
 
 ```
-adb install -r sn-reader-2026.07.2.apk
+adb install -r sn-reader-2026.07.3.apk
 ```
 
 Debug mode needs to be on first. It lives in the Supernote's own Settings under security and
@@ -95,6 +95,10 @@ Forward is the largest of the three, so reading is one unhurried tap after anoth
 
 ### Turning it sideways
 
+<p align="center">
+  <img src="docs/screenshots/07-landscape.png" width="580" alt="Landscape: the same chapter as two side-by-side columns with a gutter, the running foot reading pages 1–2 of 18">
+</p>
+
 Rotate the tablet and the page becomes two columns with a gutter between them. One column across a
 landscape screen would run to about a hundred characters a line, far past what is comfortable, so
 Reader gives you a spread instead, the shape of an open book.
@@ -114,7 +118,7 @@ settings screens stay upright either way.
 ### The toolbar
 
 <p align="center">
-  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading toolbar: Back, book title, bookmark, Highlights, Contents, and Aa">
+  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: toolbar with Back, book title, bookmark, Highlights, Contents, and Aa; below the page, the return control, a page readout, and the chapter timeline">
 </p>
 
 **Back** returns to your shelf. The **bookmark** opens your saved pages, where you can also mark the
@@ -136,10 +140,23 @@ chapter and how far into the book it sits.
 ### Chapters
 
 <p align="center">
-  <img src="docs/screenshots/05-contents.png" width="440" alt="The contents panel listing chapters, with the current one in bold">
+  <img src="docs/screenshots/05-contents.png" width="440" alt="The contents page, set like a printed one: leader dots running from each chapter to its percentage, the current chapter in bold">
 </p>
 
 **Contents** shows the book's chapters with your current one in bold. Tap to go there.
+
+### Skimming the whole book
+
+<p align="center">
+  <img src="docs/screenshots/06-scrubbing.png" width="580" alt="Mid-scrub: a floating window previews the destination page while the timeline's thumb sits under the finger, the readout showing Chapter 10 · 38%">
+</p>
+
+The timeline along the bottom of the toolbar has a tick for every chapter. Drag it and a floating
+window shows the page you would land on — instantly, from thumbnails prepared once in the
+background the first time a book is opened — while a readout names the chapter and percentage.
+The page itself never repaints during a drag; it is drawn once, when you let go. The thumb snaps
+to chapter starts like a detent, bookmarks sit on the track as small glyphs, and after any jump
+**↩** returns you to exactly where you were.
 
 ### How the page looks
 
