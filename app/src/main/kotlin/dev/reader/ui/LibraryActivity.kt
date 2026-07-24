@@ -26,6 +26,8 @@ import dev.reader.data.IndexResult
 import dev.reader.data.LibraryDatabase
 import dev.reader.data.LibraryIndexer
 import dev.reader.data.SortOrder
+import dev.reader.library.ComicMetadataExtractor
+import dev.reader.library.DispatchingMetadataExtractor
 import dev.reader.library.EpubMetadataExtractor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -591,7 +593,7 @@ open class LibraryActivity : AppCompatActivity() {
         // safe: LibraryIndexer scopes its deletions to the current root (see its KDoc), so books
         // outside it are hidden, not deleted.
         val roots = listOf(File(prefs.rootPath))
-        LibraryIndexer(db.bookDao(), roots, EpubMetadataExtractor(applicationContext)).sync()
+        LibraryIndexer(db.bookDao(), roots, DispatchingMetadataExtractor(epub = EpubMetadataExtractor(applicationContext), comic = ComicMetadataExtractor(applicationContext))).sync()
     }
 
     private fun observeSorted(order: SortOrder) {
