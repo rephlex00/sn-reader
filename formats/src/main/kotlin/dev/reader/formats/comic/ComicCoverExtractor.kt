@@ -8,6 +8,24 @@ import dev.reader.engine.BookMetadata
 import dev.reader.formats.ResourceSource
 import java.io.File
 
+/**
+ * Produces a cached, on-disk thumbnail for one comic archive: a downsampled decode of the
+ * cover page image if [BookMetadata.coverHref] resolves and decodes, or a generated plain
+ * placeholder if it doesn't.
+ *
+ * **Never decodes a full-resolution source image into memory.** [decodeThumbnail] reads only
+ * the header first ([BitmapFactory.Options.inJustDecodeBounds]), then [sampleSize] picks a
+ * power-of-two downsample factor for the real decode. That factor is still just a floor —
+ * Android's documented algorithm can overshoot the target — so [scaleToFit] trims the sampled
+ * result down to exactly [maxWidthPx] x [maxHeightPx] afterward, same two-pass shape as
+ * `EpubCoverExtractor.decodeDownsampled`.
+ *
+ * **Decoding never throws.** [decodeThumbnail] wraps the whole two-pass decode in
+ * `catch (e: Exception)` and degrades to the generated placeholder on any decode failure — but
+ * `OutOfMemoryError` is an `Error`, not an `Exception`, and would escape that catch. Keeping
+ * the real allocation properly bounded (see [sampleSize]) is therefore load-bearing, not just
+ * an optimization.
+ */
 class ComicCoverExtractor(
     private val maxWidthPx: Int = 240,
     private val maxHeightPx: Int = 360,
@@ -36,15 +54,30 @@ class ComicCoverExtractor(
                 inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, maxWidthPx, maxHeightPx)
             }
             val sampled = source.open(path)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
-            scaleToFit(sampled, maxWidthPx, maxHeightPx)
+            val scaled = scaleToFit(sampled, maxWidthPx, maxHeightPx)
+            if (scaled !== sampled) sampled.recycle()
+            scaled
         } catch (e: Exception) {
             null
         }
     }
 
+    /**
+     * The standard power-of-two downsample factor: the largest `inSampleSize` for which the
+     * halved dimensions are still at least the requested size.
+     *
+     * The loop condition is `||`, not `&&`: with `&&`, an extreme aspect ratio (e.g. a
+     * 30000x200 stitched double-page spread against a 240x360 cell) never samples at all,
+     * because the already-small dimension (200) fails its half of the test on the very first
+     * check and the loop body never runs — leaving the enormous dimension (30000) fully
+     * unsampled and decoded at full resolution (~96 MB ARGB for that input, risking an
+     * `OutOfMemoryError` the surrounding `catch (e: Exception)` in [decodeThumbnail] cannot
+     * catch). `||` keeps doubling as long as *either* dimension is still oversized, so both
+     * axes get bounded; [scaleToFit] trims whatever overshoot is left in the other axis.
+     */
     private fun sampleSize(w: Int, h: Int, reqW: Int, reqH: Int): Int {
         var s = 1
-        while (w / (s * 2) >= reqW && h / (s * 2) >= reqH) s *= 2
+        while (w / (s * 2) >= reqW || h / (s * 2) >= reqH) s *= 2
         return s
     }
 
