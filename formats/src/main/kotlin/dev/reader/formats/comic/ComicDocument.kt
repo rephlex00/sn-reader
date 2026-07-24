@@ -63,18 +63,16 @@ class ComicDocument private constructor(
             }
             try {
                 val pages = imagePagesOf(source.entries())
-                if (pages.isEmpty()) {
-                    source.close()
-                    throw ComicException.NoImages("This archive contains no images.")
-                }
+                if (pages.isEmpty()) throw ComicException.NoImages("This archive contains no images.")
                 val info = source.takeIf { it.exists("ComicInfo.xml") }
                     ?.readText("ComicInfo.xml")?.let { parseComicInfo(it) }
                 return ComicDocument(source, pages, info, file.nameWithoutExtension)
-            } catch (e: ComicException) {
-                throw e
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Every throw path above lands here, so the source is closed regardless of
+                // exception type — no invisible "nothing after this throws" contract to maintain.
                 source.close()
-                throw ComicException.Malformed("The comic archive could not be read: ${e.message}")
+                throw if (e is ComicException) e else
+                    ComicException.Malformed("The comic archive could not be read: ${e.message}")
             }
         }
 
