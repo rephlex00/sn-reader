@@ -48,11 +48,23 @@ book.
   open a book, Reader renders a strip of sampled page thumbnails once in the background — a few
   seconds, invisible while you keep reading, a few megabytes on disk — and every drag after that
   shows the preview instantly, with no wait. The track itself is visible now, and while that strip
-  is being built each chapter's stretch draws dashed until its thumbnails are ready, then turns
-  solid — open the scrubber early in a fresh book and you can watch it fill in.
+  is being built each chapter's stretch draws as a run of fine dots until its thumbnails are ready,
+  then turns solid — open the scrubber early in a fresh book and you can watch it fill in.
+* The whole timeline has been redrawn for the panel it lives on: everything is weight rather than
+  color — four grays, a rounded track, chapter ticks that thin out while pending, crowded chapter
+  marks merging into a single cluster mark instead of smearing together, and a thumb that grows
+  under your finger and shows a firm detent line when it snaps to a chapter. The readout above it
+  is set in Literata with tabular figures, so the percentage doesn't shiver as it counts.
 * The page itself still never repaints while you drag — only the preview window and a readout
   update. The full page is drawn once, when you lift your finger, keeping a long scrub to a single
   clean refresh instead of a flurry of them.
+* The scrubber no longer turns the page while your finger is still resting on it. The Nomad's touch
+  panel sometimes reports a light, resting finger as lifted — so Reader now obeys a release only
+  when the gesture made its intent plain: a crisp tap, or a drag with normal finger pressure. Any
+  other release just holds: the thumb and preview stay where you left them, touching the track
+  carries on scrubbing, and a tap on the preview window (or the track) turns the page. The one
+  trade, stated plainly: a very light drag no longer jumps the moment you let go — the preview
+  waits for that confirming tap instead.
 * **↩** appears after a jump — a scrub, a Contents tap, a bookmark or highlight jump — to return to
   exactly where you were, and it's a bit bigger now, easier to catch with a thumb.
 * Page previews can be turned off from the Aa sheet, for anyone who'd rather skip the background
