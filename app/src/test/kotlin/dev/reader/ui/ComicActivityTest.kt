@@ -135,6 +135,28 @@ class ComicActivityTest {
         assertThat(dao.getByPath(file.path)!!.rightToLeftOverride).isTrue()
     }
 
+    @Test fun `bookmarking toggles the current page on and off`() = runBlocking {
+        val file = cbz("bm.cbz", 5)
+        // BookmarkEntity.bookPath is a CASCADE foreign key to books.path (enforcement ON — see
+        // LibraryDatabase_Impl's `PRAGMA foreign_keys = ON`), so a bookmark insert needs a books
+        // row first, same as `toggling direction...` and `resumes at the stored page` below.
+        val dao = (RuntimeEnvironment.getApplication() as dev.reader.ReaderApplication).database.bookDao()
+        dao.upsertAll(listOf(BookEntity(
+            path = file.path, sizeBytes = file.length(), modifiedAtMs = 0, title = "bm", author = null,
+            coverPath = null, spineIndex = 0, charOffset = 0, unreadable = false,
+            unreadableReason = null, addedAtMs = 0, lastOpenedAtMs = null,
+        )))
+        val a = launch(file.path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        a.toggleBookmarkForTest()
+        idleUntil { a.bookmarkedPagesForTest.contains(0) }
+        assertThat(a.bookmarkedPagesForTest).containsExactly(0)
+        a.toggleBookmarkForTest()
+        idleUntil { a.bookmarkedPagesForTest.isEmpty() }
+        assertThat(a.bookmarkedPagesForTest).isEmpty()
+    }
+
     @Test fun `resumes at the stored page`() = runBlocking {
         val file = cbz("r.cbz", 10)
         val dao = (RuntimeEnvironment.getApplication() as dev.reader.ReaderApplication).database.bookDao()

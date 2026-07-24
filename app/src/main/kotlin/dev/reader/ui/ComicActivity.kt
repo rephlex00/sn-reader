@@ -7,12 +7,14 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.doOnLayout
 import androidx.lifecycle.lifecycleScope
 import dev.reader.R
 import dev.reader.ReaderApplication
+import dev.reader.data.BookmarkEntity
 import dev.reader.formats.comic.ComicDocument
 import dev.reader.formats.comic.ComicException
 import java.io.File
@@ -28,6 +30,8 @@ open class ComicActivity : AppCompatActivity() {
     private lateinit var readout: TextView
     private lateinit var chrome: View
     private lateinit var directionButton: Button
+    private lateinit var bookmarkButton: Button
+    private lateinit var bookmarksPanel: ComicBookmarksPanel
     private val decoder = ComicPageDecoder()
 
     private var document: ComicDocument? = null
@@ -38,16 +42,20 @@ open class ComicActivity : AppCompatActivity() {
     private var currentBitmap: Bitmap? = null
     private var prefetch: Pair<Int, Bitmap>? = null
     private var opening = false
+    private var bookmarks: List<BookmarkEntity> = emptyList()
 
     private val app get() = application as ReaderApplication
     private val dao get() = app.database.bookDao()
+    private val bookmarkDao get() = app.database.bookmarkDao()
 
     // ---- Test seams ----
     val pagesShownForTest = mutableListOf<Int>()
     val currentPageForTest: Int get() = currentPage
     val rtlForTest: Boolean get() = rtl
+    val bookmarkedPagesForTest: List<Int> get() = bookmarks.map { it.spineIndex }
     fun onTapForTest(zone: TapZone) = onTap(zone)
     fun toggleDirectionForTest() = toggleDirection()
+    fun toggleBookmarkForTest() = toggleBookmark()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,15 +71,34 @@ open class ComicActivity : AppCompatActivity() {
             setOnClickListener { toggleDirection() }
         }
         directionButton = direction
+        val bookmark = Button(this).apply {
+            setOnClickListener { toggleBookmark() }
+        }
+        bookmarkButton = bookmark
+        val bookmarkList = Button(this).apply {
+            text = getString(R.string.reader_bookmarks)
+            setOnClickListener { bookmarksPanel.show(bookmarks); bookmarksPanel.visibility = View.VISIBLE }
+        }
+        val topEnd = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(direction, LinearLayout.LayoutParams(-2, -2))
+            addView(bookmark, LinearLayout.LayoutParams(-2, -2))
+            addView(bookmarkList, LinearLayout.LayoutParams(-2, -2))
+        }
         chrome = FrameLayout(this).apply {
             visibility = View.GONE
             addView(back, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
-            addView(direction, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
+            addView(topEnd, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
             addView(readout, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         }
+        bookmarksPanel = ComicBookmarksPanel(this) { page ->
+            bookmarksPanel.visibility = View.GONE
+            if (page in 0 until pageCount) showPage(page)
+        }.apply { visibility = View.GONE }
         val container = FrameLayout(this).apply {
             addView(pageView, FrameLayout.LayoutParams(-1, -1))
             addView(chrome, FrameLayout.LayoutParams(-1, -1))
+            addView(bookmarksPanel, FrameLayout.LayoutParams(-1, -1))
         }
         setContentView(container)
         pageView.doOnLayout { openComic() }
@@ -99,8 +126,37 @@ open class ComicActivity : AppCompatActivity() {
             updateDirectionLabel()
             val start = (stored?.spineIndex ?: 0).coerceIn(0, pageCount - 1)
             showPage(start)
+            loadBookmarks()
             opening = false
         }
+    }
+
+    private fun loadBookmarks() {
+        lifecycleScope.launch {
+            bookmarks = withContext(Dispatchers.IO) { bookmarkDao.bookmarksFor(bookPath) }
+            updateBookmarkLabel()
+        }
+    }
+
+    private fun toggleBookmark() {
+        val existing = bookmarks.firstOrNull { it.spineIndex == currentPage }
+        val fraction = if (pageCount > 0) (currentPage + 1).toFloat() / pageCount else 0f
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                if (existing != null) bookmarkDao.deleteById(existing.id)
+                else bookmarkDao.insert(BookmarkEntity(
+                    bookPath = bookPath, spineIndex = currentPage, charOffset = 0,
+                    progressFraction = fraction, createdAtMs = System.currentTimeMillis(),
+                ))
+            }
+            bookmarks = withContext(Dispatchers.IO) { bookmarkDao.bookmarksFor(bookPath) }
+            updateBookmarkLabel()
+        }
+    }
+
+    private fun updateBookmarkLabel() {
+        val bookmarked = bookmarks.any { it.spineIndex == currentPage }
+        bookmarkButton.text = getString(if (bookmarked) R.string.bookmark_remove else R.string.bookmark_add)
     }
 
     private fun onTap(zone: TapZone) {
@@ -134,6 +190,7 @@ open class ComicActivity : AppCompatActivity() {
             currentPage = index
             pagesShownForTest += index
             updateReadout()
+            updateBookmarkLabel()
             persist(index)
             prefetchNeighbor()
         }

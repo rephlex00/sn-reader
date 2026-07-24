@@ -141,4 +141,6 @@
     <!-- ComicActivity's per-book direction toggle button label, current direction. -->
     <string name="comic_dir_ltr">L → R</string>
     <string name="comic_dir_rtl">R → L</string>
+    <!-- ComicBookmarksPanel's row label: 1-based page number. -->
+    <string name="comic_bookmark_row">page %1$d</string>
 </resources>
