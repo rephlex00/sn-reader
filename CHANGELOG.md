@@ -4,7 +4,7 @@ Notable changes, newest first. Versions are `YYYY.MM.build` — the year and mon
 plus a counter within that month. Each release's APK is on the
 [Releases page](https://github.com/rephlex00/sn-reader/releases).
 
-## Unreleased
+## 2026.07.3
 
 ### Reading progress moves onto the cover
 
