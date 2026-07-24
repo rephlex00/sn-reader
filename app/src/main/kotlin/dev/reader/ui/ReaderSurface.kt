@@ -88,6 +88,11 @@ internal interface ReaderSurface {
     /** Navigates to [target] and records the new position, the same way a page turn does. */
     fun goTo(target: ReadingState)
 
+    /** Pushes the position being LEFT onto the jump back-stack, before a Contents/bookmark/highlight
+     *  jump moves away from it — the ↩ control's undo. Page turns never call this; only [jumpToAnchor]
+     *  and a scrub commit do. */
+    fun pushJump()
+
     /** Closes the reading chrome down to the bare page — what a panel does after a successful jump. */
     fun closeOverlay()
 
@@ -111,6 +116,11 @@ internal interface ReaderSurface {
  * The chrome is closed BEFORE the page is drawn so a jump costs one clean e-ink redraw rather than
  * a page draw followed by an overlay-dismiss redraw.
  *
+ * [pushJump] captures the position being LEFT onto the jump back-stack so the ↩ control can undo
+ * this jump — a Contents/bookmark/highlight jump, same as a scrub commit. It runs only once the
+ * target resolves, so a jump into an empty/missing chapter (which returns false without moving)
+ * leaves no spurious entry on the stack, and still runs before [goTo] changes the position.
+ *
  * Throws [dev.reader.formats.epub.EpubException] if the chapter cannot be read; every caller is a
  * panel that reports it against its own string.
  */
@@ -122,6 +132,8 @@ internal fun ReaderSurface.jumpToAnchor(spineIndex: Int, charOffset: Int): Boole
         offsetToPageIndex = ::pageIndexForOffset,
         firstNonEmptyFrom = ::firstNonEmptyFrom,
     ) ?: return false
+    // The jump will happen: record where we are leaving BEFORE goTo moves us.
+    pushJump()
     closeOverlay()
     goTo(target)
     return true

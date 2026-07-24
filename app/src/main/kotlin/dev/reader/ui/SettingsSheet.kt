@@ -50,6 +50,28 @@ internal interface SettingsHost {
 
     /** Sets how many page turns pass between full clean refreshes. Display only. */
     fun applyRefreshFrequency(pages: Int)
+
+    /** Flips whether the scrubber's thumbnail strip is generated and shown at all. Turning it on
+     *  schedules generation if no strip exists yet; turning it off never deletes an existing one —
+     *  only [deletePreviewsForCurrentBook] does that. */
+    fun togglePreviews()
+
+    /** Deletes the current book's preview strip (whatever state it is in — complete, partial, or
+     *  mid-generation) and clears the live generated-chapters set. Does NOT flip [togglePreviews];
+     *  a reader who deletes but leaves previews on gets a fresh strip on the next open. */
+    fun deletePreviewsForCurrentBook()
+
+    /** For the Aa readout: `(chapters generated so far, total chapters)` while a strip is actively
+     *  generating for the open book, or null when there is nothing to report (previews off, a strip
+     *  already loaded, or no generation in flight). */
+    fun previewGenerationProgress(): Pair<Int, Int>?
+
+    /** Whether the delete-previews control should be reachable: a strip is generating right now,
+     *  OR one already sits on disk for the current (book, config) — the common case, since a
+     *  finished strip is exactly what a reader wants to reclaim disk space from. Deliberately NOT
+     *  tied to [previewGenerationProgress] (which reports null once generation completes) — that
+     *  coupling is what made this control disappear the moment the strip it deletes was ready. */
+    fun hasPreviewsForCurrentBook(): Boolean
 }
 
 /**
@@ -109,6 +131,9 @@ internal class SettingsSheet(
         onClick(R.id.refresh_freq_3) { host.applyRefreshFrequency(3) }
         onClick(R.id.refresh_freq_6) { host.applyRefreshFrequency(6) }
         onClick(R.id.refresh_freq_10) { host.applyRefreshFrequency(10) }
+
+        onClick(R.id.toggle_previews) { host.togglePreviews() }
+        onClick(R.id.previews_delete) { host.deletePreviewsForCurrentBook(); refresh() }
     }
 
     /**
@@ -146,6 +171,20 @@ internal class SettingsSheet(
         setSelected(R.id.refresh_freq_3, p.fullRefreshEveryN == 3)
         setSelected(R.id.refresh_freq_6, p.fullRefreshEveryN == 6)
         setSelected(R.id.refresh_freq_10, p.fullRefreshEveryN == 10)
+
+        setToggle(R.id.toggle_previews_switch, p.previewsEnabled)
+        val progressRow = overlay.findViewById<View>(R.id.previews_status_row)
+        host.previewGenerationProgress()?.let { (generated, total) ->
+            text(R.id.previews_generating_text).text =
+                context.getString(R.string.previews_generating, generated, total)
+            progressRow.visibility = View.VISIBLE
+        } ?: run {
+            progressRow.visibility = View.GONE
+        }
+        // Independent of progressRow above: reachable whenever there is something to delete, not
+        // only while generation is in flight — see hasPreviewsForCurrentBook.
+        overlay.findViewById<View>(R.id.previews_delete).visibility =
+            if (host.hasPreviewsForCurrentBook()) View.VISIBLE else View.GONE
     }
 
     /**

@@ -253,6 +253,14 @@ class ReaderPrefsTest {
     }
 
     @Test
+    fun `previewsEnabled defaults true and round-trips`() {
+        val prefs = ReaderPrefs(RuntimeEnvironment.getApplication())
+        assertThat(prefs.previewsEnabled).isTrue()
+        prefs.previewsEnabled = false
+        assertThat(prefs.previewsEnabled).isFalse()
+    }
+
+    @Test
     fun `rotation lock is not part of the render config`() {
         // Like showProgressBar: it decides which viewport the reader is handed, never how one is
         // laid out. Wiring it into RenderConfig would make toggling it re-paginate for nothing.

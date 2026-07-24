@@ -3,8 +3,10 @@ package dev.reader.ui
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.google.common.truth.Truth.assertThat
@@ -28,6 +30,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
+import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -1277,9 +1280,9 @@ class ReaderActivityTest {
 
         val pagesBefore = activity.pagesShownForTest
 
-        scrubber.onScrubMove?.invoke(0.4f)
-        scrubber.onScrubMove?.invoke(0.6f)
-        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.4f, null)
+        scrubber.onScrubMove?.invoke(0.6f, null)
+        scrubber.onScrubMove?.invoke(0.9f, null)
 
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
     }
@@ -1299,8 +1302,8 @@ class ReaderActivityTest {
 
         val pagesBefore = activity.pagesShownForTest
 
-        scrubber.onScrubMove?.invoke(0.9f)
-        scrubber.onScrubCommit?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
         idleUntil { activity.scrubIdleForTest }
 
         assertThat(activity.pagesShownForTest).isGreaterThan(pagesBefore)
@@ -1329,7 +1332,7 @@ class ReaderActivityTest {
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
 
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.9f, null)
         activity.abandonScrubForTest()
         idleUntil { activity.scrubIdleForTest }
 
@@ -1337,6 +1340,77 @@ class ReaderActivityTest {
         val rowAfterAbandon = rowFor(app, book.path)!!
         assertThat(rowAfterAbandon.spineIndex).isEqualTo(rowBeforeScrub.spineIndex)
         assertThat(rowAfterAbandon.charOffset).isEqualTo(rowBeforeScrub.charOffset)
+    }
+
+    @Test
+    fun `an abandoned scrub restores readout and thumb WITHOUT repainting the page`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val pagesBefore = activity.pagesShownForTest
+        val restingText = scrubberTextOf(activity)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        activity.abandonScrubForTest()
+
+        // The origin page never left the screen: a cancel must not flash the panel with showPage.
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
+        assertThat(scrubberTextOf(activity)).isEqualTo(restingText)
+    }
+
+    @Test
+    fun `closing the overlay during the commit grace flushes the commit instead of dropping it`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        // showOverlayForTest only flips visibility (GONE -> VISIBLE); Robolectric does not run a
+        // real Choreographer pass on its own, so the scrubber — measured out at 0x0 while GONE —
+        // needs an explicit re-layout before its real pixel width can back xForFraction below.
+        layOutAt(controller, VIEWPORT_W, VIEWPORT_H)
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val origin = activity.currentStateForTest
+
+        touchScrubber(scrubber, MotionEvent.ACTION_DOWN, xForFraction(scrubber, 0.9f))
+        touchScrubber(scrubber, MotionEvent.ACTION_UP, xForFraction(scrubber, 0.9f))
+        // Grace is open; the reader closes the chrome before it expires.
+        activity.hideOverlayForTest()
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.currentStateForTest).isNotEqualTo(origin) // the lift was honored
+    }
+
+    @Test
+    fun `a commit killed before it resolves still leaves a durable coarse position`() {
+        // The commit coroutine rides lifecycleScope: a lift flushed by onPause and immediately
+        // followed by teardown (fast double-Back, swipe-away) cancels it before showPage/persist
+        // run. The synchronous down-payment in onScrubCommitted — (committed chapter, offset 0)
+        // through the app-scoped writer — is what keeps that death from silently reverting the
+        // navigation: reopening lands at the committed chapter's start, not back at the origin.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val originChapter = activity.currentStateForTest.spineIndex
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        // Lift-off at 0.9 of the book: a different chapter, so the down-payment fires. The commit
+        // coroutine is suspended at its off-main pagination when the invoke returns — cancel it
+        // there, exactly where a teardown's lifecycleScope cancellation would land.
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        activity.cancelScrubJobForTest()
+
+        idleUntil { rowFor(app, book.path)!!.spineIndex != originChapter }
+        assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(originChapter)
+        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(0)
+        // The page itself never moved — the coroutine died before showPage.
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(originChapter)
     }
 
     @Test
@@ -1359,8 +1433,8 @@ class ReaderActivityTest {
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
 
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.9f)
-        scrubber.onScrubCommit?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
         // Dismiss immediately — no idling in between — so this lands squarely inside the commit's
         // still-in-flight pagination window, exactly the race the finding describes.
         activity.hideOverlayForTest()
@@ -1397,13 +1471,13 @@ class ReaderActivityTest {
         // is left suspended on Dispatchers.IO with its resumption still sitting, unprocessed, on the
         // (paused) main looper's queue.
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.9f)
-        scrubber.onScrubCommit?.invoke(0.9f)
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
 
         // A second drag begins before that resumption is ever processed. Without the fix this is
         // exactly where the stale job survives to render later, mid-drag.
         scrubber.onScrubStart?.invoke()
-        scrubber.onScrubMove?.invoke(0.1f)
+        scrubber.onScrubMove?.invoke(0.5f, null)
 
         // Now let everything that's going to run, run. If the first commit had survived, its
         // showPage(chapter 3) would land here — a repaint during the still-open second drag.
@@ -1411,14 +1485,475 @@ class ReaderActivityTest {
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
 
-        // The second drag is still the one in control: committing IT (toward chapter 1) is the only
-        // render that should ever land, proving scrubOrigin/scrubJob were governed by the second
-        // drag throughout, not clobbered by the first commit.
-        scrubber.onScrubCommit?.invoke(0.1f)
+        // The second drag is still the one in control: committing IT (toward chapter 2, a genuine
+        // move off the spineIndex-0 starting position — onScrubCommitted now skips the render
+        // entirely for a same-page commit, so this has to land somewhere new to prove a render
+        // happened at all) is the only render that should ever land, proving scrubOrigin/scrubJob
+        // were governed by the second drag throughout, not clobbered by the first commit.
+        scrubber.onScrubCommit?.invoke(0.5f, null)
         idleUntil { activity.scrubIdleForTest }
 
         assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore + 1)
-        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(0)
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(1)
+    }
+
+    // -- Task 5: the jump back-stack -----------------------------------------------------------
+
+    @Test
+    fun `a scrub commit arms the back control and tapping it returns and disarms when empty`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        val origin = activity.currentStateForTest
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val back = activity.findViewById<TextView>(R.id.scrubber_back)
+
+        assertThat(back.visibility).isEqualTo(View.GONE)
+
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        idleUntil { activity.scrubIdleForTest }
+        assertThat(back.visibility).isEqualTo(View.VISIBLE)
+
+        back.performClick()
+        idleUntil { activity.currentStateForTest == origin }
+        assertThat(activity.currentStateForTest).isEqualTo(origin)
+        assertThat(back.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `a scrub commit that lands back on the current page does not arm the back control`() {
+        // Regression: onScrubCommitted used to push the jump back-stack unconditionally, BEFORE the
+        // target resolved — so a commit that resolves to the page already on screen (e.g. a chapter
+        // that paginates to zero pages, or simply releasing back where the drag started) still armed
+        // ↩, pointing it at a page the reader never left. The push is now guarded on `target != origin`,
+        // mirroring jumpToAnchor (6d822a3). Fraction 0f resolves to spineIndex 0 / pageIndex 0, which
+        // is exactly where openedWithToc() leaves the reader — a genuine no-op commit.
+        val controller = openedWithToc()
+        val activity = controller.get()
+        val origin = activity.currentStateForTest
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val back = activity.findViewById<TextView>(R.id.scrubber_back)
+
+        assertThat(back.visibility).isEqualTo(View.GONE)
+
+        scrubber.onScrubCommit?.invoke(0f, null)
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.currentStateForTest).isEqualTo(origin)
+        assertThat(back.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `page turns never arm the back control`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.NEXT)
+        activity.showOverlayForTest()
+
+        assertThat(activity.findViewById<TextView>(R.id.scrubber_back).visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `a contents jump pushes too`() {
+        val controller = openedWithToc()
+        val activity = controller.get()
+        val origin = activity.currentStateForTest
+        activity.showOverlayForTest()
+        activity.findViewById<View>(R.id.contents_button).performClick()
+
+        clickTocRow(activity, position = 1) // tocEpub's second nav entry -> a different chapter
+
+        assertThat(activity.currentStateForTest).isNotEqualTo(origin)
+
+        activity.showOverlayForTest()
+        val back = activity.findViewById<TextView>(R.id.scrubber_back)
+        assertThat(back.visibility).isEqualTo(View.VISIBLE)
+
+        back.performClick()
+        idleUntil { activity.currentStateForTest == origin }
+        assertThat(activity.currentStateForTest).isEqualTo(origin)
+        assertThat(back.visibility).isEqualTo(View.GONE)
+    }
+
+    // -- Task 4: the floating preview window --------------------------------------------------
+
+    @Test
+    fun `dragging shows the preview window and lifting hides it`() {
+        // Strip generation is Task 6, so this test generates one itself, against the Activity's OWN
+        // resolved RenderConfig (configForTest), then re-runs the load (loadPreviewStripForTest) —
+        // exactly the ordering a real generation-then-later-open would produce.
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f, null)
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+
+        scrubber.onScrubCommit?.invoke(0.5f, null)
+        idleUntil { activity.scrubIdleForTest }
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `the preview bridges the commit — visible until the chosen page renders, then hides`() {
+        // Lift-off starts a ~230-360ms background pagination before the chosen page can draw.
+        // Hiding the preview at lift-off left the OLD page on screen with no feedback for that
+        // window (and a second touch there cancels the commit), which on the device read as "the
+        // slider did nothing". The preview — already showing the chosen page — must stay up until
+        // the real page has rendered beneath it. Deterministic under Robolectric: the commit
+        // coroutine suspends at its IO hop until the looper is pumped, so the visibility right
+        // after invoke IS the mid-commit state.
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.9f, null)
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        // Mid-commit (pagination still pending on IO): the bridge holds — no dead window.
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+
+        idleUntil { activity.scrubIdleForTest }
+        // The chosen page has rendered; the bridge comes down.
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(activity.currentStateForTest.spineIndex).isGreaterThan(0)
+    }
+
+    @Test
+    fun `a cancelled drag also hides the preview`() {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f, null)
+        scrubber.onScrubCancel?.invoke()
+
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `without a strip the preview shows no image but the drag still works`() {
+        // A fresh book: no strip generated (this is the primary guarantee — it needs no strip and
+        // must never crash or paginate).
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f, null)
+
+        // Window stays hidden (text readout carries the position); nothing crashes, nothing paginates.
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(preview.drawable).isNull()
+    }
+
+    @Test
+    fun `the page still never renders during a drag with the preview active`() {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val pagesBefore = activity.pagesShownForTest
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.3f, null)
+        scrubber.onScrubMove?.invoke(0.6f, null)
+        scrubber.onScrubMove?.invoke(0.9f, null)
+
+        assertThat(activity.pagesShownForTest).isEqualTo(pagesBefore)
+    }
+
+    @Test
+    fun `a settings change drops the now-stale preview strip`() {
+        // Regression: previewStrip is keyed to the typography config it was generated against, but
+        // was only ever assigned in openFirstBook. applySettingsChange (the Aa path, also reached by
+        // rotation) reassigned config without touching previewStrip, so a font/margin change left the
+        // OLD strip's entries pointing at thumbnails for pagination that no longer exists.
+        clearReaderPrefs()
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        // Confirm the strip is live before the settings change: a drag shows the window.
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f, null)
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+        scrubber.onScrubCommit?.invoke(0.5f, null)
+        idleUntil { activity.scrubIdleForTest }
+
+        // Drive a real typography change through the Aa sheet — same seam Task 3's tests use.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.size_plus).performClick()
+
+        // The stale strip is dropped rather than served against the new pagination.
+        assertThat(activity.previewStripLoadedForTest).isFalse()
+
+        // A fresh drag degrades to the readout (window stays hidden) instead of showing a wrong page.
+        activity.findViewById<View>(R.id.settings_close).performClick()
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f, null)
+        assertThat(preview.visibility).isEqualTo(View.GONE)
+    }
+
+    @Test
+    fun `a failed thumbnail decode hides the preview instead of leaving a stale one visible`() {
+        // Regression: onScrubMoved's blit only handled the bmp != null branch, so a missing/corrupt
+        // thumbnail left whatever was previously blitted on screen (now mismatched with the finger)
+        // and, because shownPreviewEntry was never set on failure, retried the same failing decode on
+        // every subsequent move at that entry.
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        val store = PreviewStripStore(RuntimeEnvironment.getApplication())
+        runBlocking { store.generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        // Corrupt the on-disk thumbnail nearest the fraction this test will drag to, so its decode
+        // fails without needing to reach into StripIndex internals.
+        val target = nearestEntry(
+            checkNotNull(store.stripFor(book, cfg)).entries,
+            0.5f,
+        )!!
+        val thumbnailFile = store.thumbnailFile(book, cfg, target)
+        assertThat(thumbnailFile.delete()).isTrue()
+
+        // Robolectric's ShadowBitmapFactory defaults allowInvalidImageData to true, which makes
+        // decodeFile hand back a synthetic placeholder bitmap for a missing/corrupt file instead of
+        // the real null a device returns — so a missing-file decode has to be forced here to actually
+        // exercise the null branch this test targets. Restored afterwards: it is a JVM-wide static
+        // that would otherwise leak into every later test in this fork.
+        org.robolectric.shadows.ShadowBitmapFactory.setAllowInvalidImageData(false)
+        try {
+            activity.showOverlayForTest()
+            val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+            val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+            scrubber.onScrubStart?.invoke()
+            scrubber.onScrubMove?.invoke(0.5f, null)
+
+            // The window stays hidden rather than showing a stale/mismatched bitmap, and nothing crashes.
+            assertThat(preview.visibility).isEqualTo(View.GONE)
+            assertThat(preview.drawable).isNull()
+
+            // Moving again at the same fraction re-hits the same (still-missing) file without crashing —
+            // the entry was marked attempted, so this is not an infinite decode retry, just idempotent.
+            scrubber.onScrubMove?.invoke(0.5f, null)
+            assertThat(preview.visibility).isEqualTo(View.GONE)
+        } finally {
+            org.robolectric.shadows.ShadowBitmapFactory.setAllowInvalidImageData(true)
+        }
+    }
+
+    // -- Task 4 (scrubber v2.1): snap fix, previews toggle, per-book delete ---------------------
+
+    @Test
+    fun `a snapped commit opens the chapter's first page, not the previous chapter's last`() {
+        // The reported bug: a scrub snapped to a chapter tick used to resolve through the boundary
+        // fraction (locateByFraction), which landed on the PREVIOUS chapter's last page instead of
+        // the snapped chapter's own first page.
+        val controller = openedWithToc()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+
+        scrubber.onScrubCommit?.invoke(0f, 2) // snapped to chapter 2 (0-indexed; tocEpub's 3rd chapter)
+        idleUntil { activity.scrubIdleForTest }
+
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(2)
+        assertThat(activity.currentStateForTest.pageIndex).isEqualTo(0) // first page, not previous chapter's last
+    }
+
+    @Test
+    fun `turning previews off suppresses the preview window and marks the track all-solid`() {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        // Generate + load a strip so the preview window would otherwise show.
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.setPreviewsEnabledForTest(false)
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+
+        scrubber.onScrubStart?.invoke()
+        scrubber.onScrubMove?.invoke(0.5f, null)
+
+        assertThat(preview.visibility).isEqualTo(View.GONE) // no window when previews off
+    }
+
+    @Test
+    fun `deleting previews for the book clears the strip`() {
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.deletePreviewsForCurrentBookForTest()
+
+        assertThat(
+            PreviewStripStore(RuntimeEnvironment.getApplication())
+                .stripFor(File(activity.bookPathForTest!!), cfg),
+        ).isNull()
+    }
+
+    @Test
+    fun `the delete control stays reachable once generation completes, and hides once deleted`() {
+        // Regression: previews_delete used to live inside previews_status_row, whose visibility was
+        // driven by previewGenerationProgress() — non-null only WHILE generation is in flight. Once a
+        // book's strip finished generating, the progress row (and the delete control nested inside
+        // it) went GONE, making per-book delete unreachable for exactly the case it exists for: a
+        // completed book whose disk space a reader wants back.
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val cfg = activity.configForTest!!
+        runBlocking { PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, cfg) }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        // Generation is done (not in flight) for this book: the decision seam...
+        assertThat(activity.hasPreviewsForCurrentBookForTest()).isTrue()
+
+        // ...and the real Aa-sheet open (settings_button -> toggleSettings -> settings.refresh())
+        // shows the delete control despite the progress row having nothing to report.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        assertThat(activity.findViewById<View>(R.id.previews_status_row).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.previews_delete).visibility).isEqualTo(View.VISIBLE)
+
+        // Deleting removes the strip and, on the next refresh, hides the control again.
+        activity.findViewById<View>(R.id.previews_delete).performClick()
+        assertThat(activity.hasPreviewsForCurrentBookForTest()).isFalse()
+        assertThat(activity.findViewById<View>(R.id.previews_delete).visibility).isEqualTo(View.GONE)
+    }
+
+    // -- Task 6: strip-generation triggers -------------------------------------------------------
+
+    // Pins the display to exactly VIEWPORT_W x VIEWPORT_H: without it, Robolectric's
+    // ActivityController.setup() delivers one implicit layout pass at its own default size BEFORE
+    // this test's explicit launchAndLayOut measure, so openFirstBook's synchronous config capture
+    // would see that wrong size and reconcileViewport would (correctly) fire a SECOND schedule to
+    // correct it — real behavior, but not what this test is isolating.
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `opening a book with no strip schedules one generation, and a second open schedules none`() {
+        // Seam: TestableReaderActivity's scheduleStripGeneration override counts calls instead of
+        // running real bitmap generation, so this asserts the DECISION, not the (multi-second) work.
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { activity.stripGenerationsScheduledForTest == 1 }
+
+        // Generate for real, against the Activity's own resolved config, so the second open finds a
+        // valid strip already on disk and has nothing to schedule.
+        runBlocking {
+            PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, activity.configForTest!!)
+        }
+
+        val second = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(second)
+        idleUntil { scrubberTextOf(second.get()).isNotEmpty() }
+        assertThat(second.get().stripGenerationsScheduledForTest).isEqualTo(0)
+    }
+
+    // See the previous test for why the display is pinned: without it, the open itself already
+    // schedules twice (a spurious Robolectric-default-size open corrected by reconcileViewport),
+    // which would swamp the count this test means to isolate.
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a typography change reschedules generation`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        idleUntil { activity.stripGenerationsScheduledForTest == 1 }
+
+        // Drive a real typography change through the Aa sheet — same seam the settings tests use
+        // (see "bumping the text size..." and "a settings change drops the now-stale preview strip").
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.size_plus).performClick()
+
+        idleUntil { activity.stripGenerationsScheduledForTest == 2 }
     }
 
     // -- Harness --------------------------------------------------------------------------------
@@ -1454,7 +1989,15 @@ class ReaderActivityTest {
         /** Every document the real open produced, so tests can observe closure. */
         val openedDocuments = mutableListOf<EpubDocument>()
 
+        /** How many times [scheduleStripGeneration] was called — the trigger DECISION, counted
+         *  without paying for a real (multi-second) bitmap generation on every Activity test. */
+        var stripGenerationsScheduledForTest = 0
+
         override fun isAllFilesAccessGranted(): Boolean = accessGranted
+
+        override fun scheduleStripGeneration() {
+            stripGenerationsScheduledForTest++
+        }
 
         override fun findFirstEpub(): File? {
             findFirstCalls++
@@ -1768,6 +2311,24 @@ class ReaderActivityTest {
 
     private fun scrubberTextOf(activity: ReaderActivity): String =
         activity.findViewById<TextView>(R.id.scrubber).text.toString()
+
+    /** Dispatches a real single-pointer touch to a laid-out [ChapterScrubberView] — the grace-flush
+     *  test needs the view's own gesture state machine (DOWN/UP), not the callback seams the other
+     *  scrub tests invoke directly. y is an arbitrary point inside the 88dp-tall strip. */
+    private fun touchScrubber(scrubber: ChapterScrubberView, action: Int, x: Float) {
+        val event = MotionEvent.obtain(0L, 0L, action, x, 30f, 0)
+        scrubber.onTouchEvent(event)
+        event.recycle()
+    }
+
+    /** Inverts the view's fractionAt geometry (padding-based track ends) for a real, laid-out
+     *  scrubber — this one carries the 16dp horizontal padding from overlay_reader.xml, at
+     *  Robolectric's default density 1.0 (16dp == 16px). */
+    private fun xForFraction(scrubber: ChapterScrubberView, fraction: Float): Float {
+        val left = scrubber.paddingLeft.toFloat()
+        val right = scrubber.width - scrubber.paddingRight.toFloat()
+        return left + fraction * (right - left)
+    }
 
     /** Reads back the row for [path] on a background thread (Room forbids main-thread queries). */
     private fun rowFor(app: ReaderApplication, path: String): BookEntity? =

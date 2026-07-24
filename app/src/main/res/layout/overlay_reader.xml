@@ -142,7 +142,27 @@
 
     </LinearLayout>
 
-    <!-- Bottom scrubber: read-only "page X of Y" readout, anchored to the bottom edge. -->
+    <!-- The scrubbing preview: the sampled page nearest the finger, blitted from the on-disk
+         thumbnail strip. Visible only during a drag. A separate small view, so its repaints are
+         its own region — the book page underneath NEVER repaints during a drag (the v1 contract).
+         Half screen: 374x499dp at the Nomad's 1.875 density = ~702x936px. -->
+    <ImageView
+        android:id="@+id/scrub_preview"
+        android:layout_width="374dp"
+        android:layout_height="499dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="140dp"
+        android:background="@drawable/preview_window_border"
+        android:contentDescription="@null"
+        android:padding="2dp"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
+    <!-- Bottom scrubber: read-only "page X of Y" readout above a full-width timeline, anchored to
+         the bottom edge. The ↩ jump back-stack control gets its own fixed seat at the head of the
+         readout row (v2 design: "a home", not a loose glyph crowding a weighted column) — it sits
+         in a FrameLayout alongside the readout rather than beside it in a horizontal row, so the
+         readout stays independently centered and ↩ appearing/disappearing never reflows anything. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -155,20 +175,48 @@
             android:layout_height="2dp"
             android:background="@android:color/black" />
 
-        <TextView
-            android:id="@+id/scrubber"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:paddingHorizontal="16dp"
-            android:paddingTop="16dp"
-            android:textColor="@android:color/black"
-            android:textSize="16sp" />
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/scrubber"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="16dp"
+                android:textColor="@android:color/black"
+                android:textSize="16sp" />
+
+            <!-- Pops the jump back-stack (JumpStack): returns to the position left by the last
+                 scrub commit or Contents/bookmark/highlight jump. GONE whenever the stack is empty
+                 — see ReaderActivity.updateBackControl. A glyph rather than a word: the reader-back
+                 control at the top already reads "Back" for leaving the book, so this needed its
+                 own mark. Anchored to the track's own left cap (return_seat.xml's 12dp inset centers
+                 the drawn 40dp ring at x≈36dp of this 64dp target) rather than left adrift at the
+                 screen edge. -->
+            <TextView
+                android:id="@+id/scrubber_back"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="start|center_vertical"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/return_seat"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:text="@string/scrubber_back"
+                android:textColor="#1A1A1A"
+                android:textSize="22sp"
+                android:visibility="gone" />
+
+        </FrameLayout>
 
         <dev.reader.ui.ChapterScrubberView
             android:id="@+id/chapter_scrubber"
             android:layout_width="match_parent"
-            android:layout_height="44dp"
+            android:layout_height="88dp"
             android:paddingHorizontal="16dp" />
 
     </LinearLayout>
@@ -440,6 +488,51 @@
                 <TextView android:id="@+id/refresh_freq_6" style="@style/AaOption" android:text="@string/refresh_every_6" />
                 <TextView android:id="@+id/refresh_freq_10" style="@style/AaOption" android:text="@string/refresh_every_10" />
             </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/toggle_previews"
+                style="@style/AaToggleRow">
+                <TextView style="@style/AaToggleLabel" android:text="@string/setting_previews" />
+                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_previews_switch"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <!-- Shown only while a strip is actively generating for the open book: a live
+                 "N / M chapters" readout. Gone otherwise, the same conditional-row pattern as
+                 refresh_frequency_row above. Visibility is driven independently of previews_delete
+                 below — that control's reachability must not depend on generation still being in
+                 flight (see previews_delete). -->
+            <LinearLayout
+                android:id="@+id/previews_status_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/previews_generating_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingVertical="4dp"
+                    android:textColor="@android:color/black"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <!-- Its own independently-visibility-controlled control (not nested inside
+                 previews_status_row above): shown whenever there is a strip to reclaim disk space
+                 from — one already on disk for this (book, config), OR one generating right now —
+                 regardless of whether previews_status_row is showing. This is what keeps delete
+                 reachable once generation finishes and that row goes GONE: deleting an
+                 already-completed strip is the primary case this control exists for. -->
+            <TextView
+                android:id="@+id/previews_delete"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingVertical="6dp"
+                android:text="@string/previews_delete"
+                android:textColor="@android:color/black"
+                android:textSize="14sp"
+                android:visibility="gone" />
 
         </LinearLayout>
 

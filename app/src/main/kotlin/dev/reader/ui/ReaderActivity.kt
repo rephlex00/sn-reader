@@ -7,11 +7,13 @@ import android.os.Bundle
 import android.os.Environment
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.lifecycle.lifecycleScope
@@ -46,6 +48,7 @@ import dev.reader.formats.render.SpannedChapterBuilder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -168,12 +171,56 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var titleView: TextView
     private lateinit var scrubberView: TextView
 
+    /** The last text [setRestingReadout] wrote to [scrubberView] — the "page X of Y · N left in
+     *  chapter" line, or the no-text-fallback. Restored onto [scrubberView] once strip generation's
+     *  transient "preparing previews · N%" readout (scheduleStripGeneration's onChapterDone) is
+     *  done overwriting it. Drag readouts ([onScrubMoved]) deliberately bypass this — they own the
+     *  readout only for the gesture's duration and never touch what it should read at rest. */
+    private var restingReadout: CharSequence = ""
+
     /**
      * The chapter scrubber beneath [scrubberView] in the bottom bar. Reports whole-book fractions;
      * see [onScrubMoved]/[onScrubCommitted]/[abandonScrub] for the no-live-preview contract this
      * Activity enforces on top of it.
      */
     private lateinit var chapterScrubber: ChapterScrubberView
+
+    /** The ↩ control beside [chapterScrubber]: pops [jumpStack]. GONE whenever the stack is empty —
+     *  see [updateBackControl]. */
+    private lateinit var scrubberBackView: TextView
+
+    /**
+     * The floating page-preview window over [chapterScrubber]: the sampled thumbnail nearest the
+     * finger, blitted from [previewStrip] during a drag. GONE at rest and whenever no strip is
+     * loaded — see [onScrubMoved]. Never the book page itself; that view never repaints mid-drag.
+     */
+    private lateinit var scrubPreview: ImageView
+
+    /** The open book's thumbnail strip, or null when none is generated yet (first open, generation
+     *  still running, or generation failed). Loaded once per open, off the main thread. */
+    private var previewStrip: StripIndex? = null
+
+    /** The strip store; also the generation trigger's collaborator (Task 6). */
+    private val stripStore by lazy { PreviewStripStore(this) }
+
+    /**
+     * The one in-flight strip generation, if any — held so a config change mid-generate can cancel
+     * and relaunch rather than race a second generator over the same directory. See
+     * [scheduleStripGeneration].
+     */
+    private var stripGenerationJob: Job? = null
+
+    /** The entry currently blitted, to skip redundant decodes as the finger dithers in place. */
+    private var shownPreviewEntry: StripEntry? = null
+
+    /**
+     * Spine chapters whose thumbnail(s) already exist — pushed to [chapterScrubber] so the track
+     * lights up chapter-by-chapter as generation runs, rather than only once the whole strip lands.
+     * Seeded from [previewStrip] when one is already on disk at open ([openFirstBook]); rebuilt from
+     * empty at the start of each [scheduleStripGeneration] run (a fresh generation starts all-dashed)
+     * and grown live by its `onChapterDone` callback.
+     */
+    private val generatedChapters = mutableSetOf<Int>()
 
     /**
      * The Aa typography sheet — a visibility-toggled panel inside [overlay], opened by the Aa button.
@@ -263,6 +310,14 @@ open class ReaderActivity : AppCompatActivity() {
     /** Page turns since the last full-panel refresh; drives the [shouldFullRefresh] ghost-clear. */
     private var turnsSinceRefresh = 0
 
+    /**
+     * The jump back-stack: every JUMP (a scrub commit, a Contents/bookmark/highlight jump via
+     * [ReaderSurface.pushJump]) pushes the position being left; [onBackJump] pops. Page turns never
+     * push. In-memory, per book-open — cleared in [openFirstBook] alongside [previewStrip]/bookmarks,
+     * since a new book is a new session. Costs nothing at rest: no timer, no observer.
+     */
+    private val jumpStack = JumpStack()
+
     /** Whether the Aa font options have been given their preview typefaces yet (loaded once, on
      * the first sheet-open — see [loadFontPreviewsOnce]). */
 
@@ -315,7 +370,19 @@ open class ReaderActivity : AppCompatActivity() {
         // after the overlay, so it draws above both the page and the chrome.
         titleView = overlay.findViewById(R.id.book_title)
         scrubberView = overlay.findViewById(R.id.scrubber)
+        // Literata + tabular numerals: the readout's digits (page counts, percentages) must not
+        // shift width as they change, and the XML's default sans doesn't carry tabular figures.
+        // 16sp/black stay as set in overlay_reader.xml — only the face and figure style change here.
+        scrubberView.typeface = ResourcesCompat.getFont(this, R.font.literata)
+        scrubberView.fontFeatureSettings = "tnum"
         chapterScrubber = overlay.findViewById(R.id.chapter_scrubber)
+        scrubberBackView = overlay.findViewById(R.id.scrubber_back)
+        scrubberBackView.setOnClickListener { onBackJump() }
+        scrubPreview = overlay.findViewById(R.id.scrub_preview)
+        // The trusted-lift grammar can leave a scrub ARMED (a light drag's lift is never obeyed —
+        // the panel fabricates lifts for light contacts). Tapping the floating preview is the
+        // explicit "go there": a no-op in every other state.
+        scrubPreview.setOnClickListener { chapterScrubber.commitArmed() }
         chapterScrubber.onScrubStart = {
             // Cancel any still-running prior commit before starting a new drag. Without this, an
             // old commit's showPage() can land mid-drag (a repaint during a drag, forbidden) and then
@@ -323,8 +390,8 @@ open class ReaderActivity : AppCompatActivity() {
             scrubJob?.cancel()
             scrubOrigin = state
         }
-        chapterScrubber.onScrubMove = { fraction -> onScrubMoved(fraction) }
-        chapterScrubber.onScrubCommit = { fraction -> onScrubCommitted(fraction) }
+        chapterScrubber.onScrubMove = { fraction, snap -> onScrubMoved(fraction, snap) }
+        chapterScrubber.onScrubCommit = { fraction, snap -> onScrubCommitted(fraction, snap) }
         chapterScrubber.onScrubCancel = { abandonScrub() }
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
         settings = SettingsSheet(overlay, settingsHost) { ReaderPrefs(this) }
@@ -334,6 +401,7 @@ open class ReaderActivity : AppCompatActivity() {
         bookmarks = BookmarksPanel(
             overlay, readerSurface, lifecycleScope,
             database.bookmarkDao(), database.bookDao(),
+            onBookmarksChanged = ::refreshScrubberBookmarks,
         )
         highlightsPanel = overlay.findViewById(R.id.highlights_panel)
         highlights = HighlightsController(
@@ -424,6 +492,14 @@ open class ReaderActivity : AppCompatActivity() {
         }
 
         override fun firstNonEmptyFrom(spineIndex: Int): ReadingState? {
+            // [spineIndex] itself has pages: it IS the first readable position — the interface's
+            // documented contract ("the first readable position AT [spineIndex]..."). advance()
+            // instead resolves a forward PAGE TURN from (spineIndex, 0), which for a chapter that
+            // already has pages returns its SECOND page, not its first — every caller before the
+            // scrub-commit snap path only ever invoked this once pageCountFor(spineIndex) was
+            // already known to be 0 (see tocTarget/resolveStart), so that off-by-one landmine was
+            // never tripped until a snapped commit called this directly on a non-empty chapter.
+            if (pageCountFor(spineIndex) > 0) return ReadingState(spineIndex, 0)
             val nav = navigator ?: return null
             return advance(nav, ReadingState(spineIndex, 0), ::pageCountFor)
         }
@@ -457,6 +533,11 @@ open class ReaderActivity : AppCompatActivity() {
         // LEFT) — goTo above supplies the one clean refresh of the DESTINATION page instead.
         override fun closeOverlay() = hideOverlay(cleanRefresh = false)
 
+        override fun pushJump() {
+            jumpStack.push(state)
+            updateBackControl()
+        }
+
         override fun message(messageId: Int) = showMessage(messageId)
 
         override fun error(messageId: Int, cause: Throwable) = showError(messageId, cause)
@@ -489,6 +570,67 @@ open class ReaderActivity : AppCompatActivity() {
         override fun toggleFasterTurns() = this@ReaderActivity.toggleFasterTurns()
 
         override fun applyRefreshFrequency(pages: Int) = this@ReaderActivity.applyRefreshFrequency(pages)
+
+        /**
+         * Flips [ReaderPrefs.previewsEnabled]. Turning previews ON schedules generation if this book
+         * has no strip yet (mirrors [openFirstBook]'s own gate); it never deletes a strip that
+         * already exists, so a reader toggling off-then-on again gets the strip back instantly rather
+         * than paying to regenerate it. Turning previews OFF hides the floating preview window
+         * immediately — the dashing/solid track and the window are what "off" means to visit again,
+         * and holding a stale blitted bitmap or entry across the toggle would be wrong the next time
+         * a drag turns previews back on before a new one is chosen.
+         */
+        override fun togglePreviews() {
+            val prefs = ReaderPrefs(this@ReaderActivity)
+            val enabled = !prefs.previewsEnabled
+            prefs.previewsEnabled = enabled
+            chapterScrubber.setPreviewsEnabled(enabled)
+            if (enabled) {
+                if (previewStrip == null) scheduleStripGeneration()
+            } else {
+                scrubPreview.visibility = View.GONE
+                scrubPreview.setImageDrawable(null)
+                shownPreviewEntry = null
+            }
+        }
+
+        /**
+         * Deletes every strip this book owns (see [PreviewStripStore.deleteStripsFor]) and clears the
+         * in-memory mirror of it, pushing the empty set to the scrubber so the track goes back to
+         * all-dashed. Does NOT flip [ReaderPrefs.previewsEnabled] or re-schedule generation — deleting
+         * is a standalone "reclaim the disk space" action; a reader who wants it back opens the book
+         * again (or the next config change re-triggers it).
+         */
+        override fun deletePreviewsForCurrentBook() {
+            bookPath?.let { stripStore.deleteStripsFor(File(it)) }
+            previewStrip = null
+            shownPreviewEntry = null
+            generatedChapters.clear()
+            chapterScrubber.setGeneratedChapters(emptySet())
+        }
+
+        /** See [SettingsHost.previewGenerationProgress]: only meaningful mid-generation — previews
+         *  off, or a strip already loaded (complete OR simply absent with nothing running), report
+         *  null rather than a stale or zero count. */
+        override fun previewGenerationProgress(): Pair<Int, Int>? {
+            val doc = document ?: return null
+            val prefs = ReaderPrefs(this@ReaderActivity)
+            return if (prefs.previewsEnabled && previewStrip == null && stripGenerationJob?.isActive == true) {
+                generatedChapters.size to doc.spineSize
+            } else {
+                null
+            }
+        }
+
+        /** See [SettingsHost.hasPreviewsForCurrentBook]. [stripStore.stripFor] is a cheap on-disk
+         *  index read; refresh() only runs on Aa-sheet open/control-change, never on the hot path,
+         *  so paying for it here is fine. Covers the case where previews were toggled off mid-session
+         *  ([previewStrip] nulled) but a strip still sits on disk to reclaim. */
+        override fun hasPreviewsForCurrentBook(): Boolean {
+            val file = bookPath?.let(::File) ?: return false
+            val cfg = config ?: return false
+            return previewStrip != null || stripGenerationJob?.isActive == true || stripStore.stripFor(file, cfg) != null
+        }
     }
 
     /** The app's single Room database — the panels take the DAOs they need from it. */
@@ -504,6 +646,10 @@ open class ReaderActivity : AppCompatActivity() {
         // runtime state — see onPause, which is what guarantees it is given back.
         pageView.epd.enterFastMode()
         overlay.visibility = View.VISIBLE
+        // Reflects the jump stack as it stands now — a jump made with the chrome hidden (there is
+        // none today, but this keeps the control honest regardless) or a stack a prior showOverlay
+        // already reflected both resolve to the same visibility here.
+        updateBackControl()
     }
 
     /**
@@ -521,6 +667,12 @@ open class ReaderActivity : AppCompatActivity() {
      * device-wide runtime state (see [onPause]) and must happen on every close, jump or not.
      */
     private fun hideOverlay(cleanRefresh: Boolean = true) {
+        // A lift still sitting in its commit grace window when the overlay closes is resolved
+        // synchronously first: a TRUSTED lift (crisp tap / firm drag) is a navigation the reader
+        // already made and lands via onScrubCommit (which clears scrubOrigin); an untrusted one
+        // arms, and the abandonScrub below then discards it quietly along with any session that
+        // was already ARMED. No-op when no grace is open.
+        chapterScrubber.flushPendingCommit()
         // A scrub still in flight when the overlay closes (Back, the toggle tap, a jump) is
         // abandoned first: the page never moved during the drag, so this just clears scrubOrigin
         // and re-syncs the readout/thumb. A no-op when no scrub is in flight.
@@ -692,6 +844,13 @@ open class ReaderActivity : AppCompatActivity() {
             // leaves the field agreeing with the page still on screen — the invariant the KDoc states.
             val newPages = doc.chapter(state.spineIndex, newConfig).pages
             config = newConfig
+            // The strip is keyed to the typography; a visual change makes it stale. Drop it so the
+            // preview degrades to the readout until a strip for the new config is loaded.
+            // shownPreviewEntry is cleared so a later drag re-blits fresh. The old strip directory
+            // is deleted by the generator on completion; until then stripFor simply misses.
+            previewStrip = null
+            shownPreviewEntry = null
+            scheduleStripGeneration()
             val newPageIndex = reflowedPageIndex(oldPages, state.pageIndex, newPages)
             state = ReadingState(state.spineIndex, newPageIndex)
             showPage(state)
@@ -913,6 +1072,11 @@ open class ReaderActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         pageView.epd.exitFastMode()
+        // A lift still inside its commit grace window when the app is backgrounded (Home, app
+        // switcher, an incoming call) is a committed navigation — flush it now rather than let the
+        // process pause with it unresolved. chapterScrubber may not exist yet if onPause somehow
+        // races initialization; guard defensively.
+        if (::chapterScrubber.isInitialized) chapterScrubber.flushPendingCommit()
     }
 
     /**
@@ -1090,7 +1254,7 @@ open class ReaderActivity : AppCompatActivity() {
                     showMessage(R.string.error_book_no_text)
                     // showPage never ran, so the scrubber was never set; give the overlay (if the
                     // reader opens it on this broken book) a coherent readout instead of a blank.
-                    scrubberView.text = getString(R.string.error_no_text_short)
+                    setRestingReadout(getString(R.string.error_no_text_short))
                 } else {
                     showPage(start)
                     // Write the resolved start back immediately: stamps lastOpenedAtMs (so the
@@ -1102,6 +1266,31 @@ open class ReaderActivity : AppCompatActivity() {
                     // by the system itself, on a book tapped from the portrait-pinned library while
                     // the reader held the device sideways. See reconcileViewport.
                     reconcileViewport()
+                    // A new book is a new session: the jump back-stack from whatever was open
+                    // before (if anything) means nothing here, and hanging onto it would let ↩
+                    // "return" to a position in a book that is no longer open.
+                    jumpStack.clear()
+                    updateBackControl()
+                    // Bookmark glyphs for the scrubber: loaded once per open (and again on
+                    // add/remove via BookmarksPanel's onBookmarksChanged callback above).
+                    refreshScrubberBookmarks()
+                    // The scrubbing preview's thumbnail strip, if one has been generated for this
+                    // exact (book, config) already.
+                    previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, renderConfig) }
+                    // Push the previews-on/off state and the generated-chapters set (derived from the
+                    // strip just loaded, if any) to the scrubber, so a book reopened with a complete
+                    // strip already on disk shows its track solid from the first frame rather than
+                    // dashed until some later event repaints it.
+                    chapterScrubber.setPreviewsEnabled(ReaderPrefs(this@ReaderActivity).previewsEnabled)
+                    previewStrip?.let {
+                        generatedChapters.clear()
+                        generatedChapters.addAll(generatedChaptersOf(it))
+                        chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
+                    }
+                    // No valid strip for this (book, config): schedule the one-shot background
+                    // generation (itself gated on previewsEnabled). Absent until it completes, the
+                    // preview window simply never shows — the correct, non-crashing fallback.
+                    if (previewStrip == null) scheduleStripGeneration()
                 }
             } catch (e: CancellationException) {
                 // The activity was destroyed while open() was in flight. lifecycleScope cancelled
@@ -1137,6 +1326,90 @@ open class ReaderActivity : AppCompatActivity() {
         file,
         AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(this)),
     )
+
+    /**
+     * Schedules THE one-shot strip generation: cancel-and-relaunch (a typography change mid-generate
+     * must not leave two generators racing over the same directory), on lifecycleScope so leaving the
+     * book cancels it — generation resumes on the next open instead. The relaunch JOINS the previous
+     * job before touching the (possibly same) strip directory — a bare cancel() doesn't wait for the
+     * prior coroutine to actually stop, so without the join a mid-open rotation (which schedules once
+     * for the corrected config and again from the open path, same config, same dir) could still run
+     * two generators over one directory concurrently. The project's single authorized exception to
+     * 0%-idle: bounded (5–15 s measured), one-shot, only on first open or config change. `protected
+     * open` purely as the test seam.
+     */
+    protected open fun scheduleStripGeneration() {
+        if (!ReaderPrefs(this).previewsEnabled) return // off: no generation to schedule
+        val file = bookPath?.let(::File) ?: return
+        val cfg = config ?: return
+        val previous = stripGenerationJob
+        // A fresh generation starts from empty — every chapter draws dashed until onChapterDone
+        // says otherwise, even if a stale set survived from a superseded run.
+        generatedChapters.clear()
+        chapterScrubber.setGeneratedChapters(emptySet())
+        stripGenerationJob = lifecycleScope.launch {
+            // Wait for any prior generator to fully stop before regenerating — see KDoc above.
+            previous?.cancelAndJoin()
+            try {
+                stripStore.generate(file, cfg) { spineIndex ->
+                    // Fires on Dispatchers.Default (see generate's KDoc); marshal to the main thread
+                    // before touching the Activity's fields or any View.
+                    runOnUiThread {
+                        generatedChapters.add(spineIndex)
+                        chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
+                        settings.refresh() // live "N / M chapters" readout, a no-op while the sheet is closed
+                        // Mirror the same progress into the resting readout — but only at rest: mid-drag
+                        // the readout belongs to the finger (chapter + percent, onScrubMoved), and this
+                        // per-chapter callback must not steal it out from under an in-flight gesture.
+                        if (scrubOrigin == null) {
+                            val spineSize = (document?.spineSize ?: 1).coerceAtLeast(1)
+                            scrubberView.text = getString(
+                                R.string.previews_preparing,
+                                generatedChapters.size * 100 / spineSize,
+                            )
+                        }
+                    }
+                }
+                stripStore.evictOverBudget(keep = file)
+                previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, cfg) }
+                // Generation is done and previewStrip just reloaded above (back on the launch's
+                // main-thread context after that withContext returns): give the resting readout
+                // back its own line rather than leaving the transient "preparing previews · 100%"
+                // stuck on screen. Gated on not-mid-drag, same as the per-chapter ticks above — a
+                // finger holding still after DOWN would otherwise see its live "Chapter N · P%"
+                // stomped by the resting text until the next MOVE.
+                if (scrubOrigin == null) scrubberView.text = restingReadout
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A failed generation degrades to no preview window — never to a crashed reader.
+                Log.w("Reader", "preview strip generation failed", e)
+            }
+        }
+    }
+
+    /**
+     * Bookmark glyphs for the scrubber: loaded once per open, and again whenever
+     * [BookmarksPanel] re-reads its list (open/add/remove), via the callback wired at
+     * construction — no standing observer, so a reader sitting on a page costs nothing.
+     *
+     * Rows come off [Dispatchers.IO]; [ReaderSurface.progressFor] runs after that `withContext`
+     * returns, on the main thread, because it can paginate an uncached chapter and the reader's
+     * document cache is main-thread-only. This is a handful of bookmarks through already-cached
+     * chapters at most — not the whole-TOC pagination trap [ReaderSurface.chapterStartProgress]
+     * exists for — and a bookmark's glyph should sit at its true page. If a book with bookmarks
+     * scattered across many unvisited chapters makes this open-path pagination cost show up,
+     * chapterStartProgress is the coarser, free fallback.
+     */
+    private fun refreshScrubberBookmarks() {
+        val path = bookPath ?: return
+        lifecycleScope.launch {
+            val dao = (application as ReaderApplication).database.bookmarkDao()
+            val marks = withContext(Dispatchers.IO) { dao.bookmarksFor(path) }
+            val fractions = marks.map { readerSurface.progressFor(it.spineIndex, it.charOffset) }
+            chapterScrubber.setBookmarks(fractions)
+        }
+    }
 
     /**
      * The standalone-launch fallback (no [EXTRA_BOOK_PATH] on the intent): the first EPUB under
@@ -1241,6 +1514,19 @@ open class ReaderActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Sets [scrubberView]'s text AND remembers it as [restingReadout] — the resting page readout
+     * ("page X of Y · N left in chapter", or the no-text fallback), as opposed to a transient
+     * readout (strip-generation progress, a drag position) that must eventually give the line back.
+     * Every call site that sets the RESTING readout goes through this instead of writing
+     * `scrubberView.text` directly, so scheduleStripGeneration knows what to restore once its own
+     * "preparing previews · N%" readout is done overwriting it.
+     */
+    private fun setRestingReadout(text: CharSequence) {
+        restingReadout = text
+        scrubberView.text = text
+    }
+
     private fun showPage(next: ReadingState) {
         pagesShownForTest++
         val doc = document ?: return
@@ -1265,7 +1551,7 @@ open class ReaderActivity : AppCompatActivity() {
         // Keep the overlay's read-only readout current with the page just shown, so it is right the
         // next time the overlay opens. Reuses the chapter already fetched above — no extra work, and
         // page turns only happen while the overlay is hidden anyway.
-        scrubberView.text = scrubberText(pageIndex, chapter.pages.size)
+        setRestingReadout(scrubberText(pageIndex, chapter.pages.size))
 
         // Unchecked downcast through the TextMeasurer seam: MeasuredChapter itself stays
         // Android-free, but PageView needs the real StaticLayout to draw. Safe today because
@@ -1332,41 +1618,191 @@ open class ReaderActivity : AppCompatActivity() {
 
     /**
      * A drag position: update the readout text only. Deliberately NO pagination and NO page render —
-     * the book page does not repaint until the finger lifts. The chapter title comes from the same
-     * pure TOC lookup the running foot uses; mapping the fraction to a chapter touches only
-     * chapterWeights, never the document.
+     * the book page does not repaint until the finger lifts.
+     *
+     * [snappedChapter] (from [ChapterScrubberView]'s detent) takes priority when present, for both
+     * halves of this function: the readout names the chapter it snapped to (via [chapterTitleFor]),
+     * rather than whatever chapter the raw fraction resolves to, and the preview blits that chapter's
+     * OPENING thumbnail ([entryForChapterOpening]) rather than the nearest sampled page — showing the
+     * finger the chapter it is about to land on, not a boundary page one drag-pixel either side of it.
+     * Unsnapped, both fall back to the prior fraction-based lookups ([locateByFraction]/[nearestEntry]).
      */
-    private fun onScrubMoved(fraction: Float) {
+    private fun onScrubMoved(fraction: Float, snappedChapter: Int?) {
         val doc = document ?: return
-        val located = locateByFraction(chapterWeights, fraction)
+        val title = if (snappedChapter != null) {
+            chapterTitleFor(doc.toc, snappedChapter)
+        } else {
+            chapterTitleFor(doc.toc, locateByFraction(chapterWeights, fraction).spineIndex)
+        }
         scrubberView.text = getString(
             R.string.scrubber_position,
-            chapterTitleFor(doc.toc, located.spineIndex).orEmpty(),
+            title.orEmpty(),
             (fraction.coerceIn(0f, 1f) * 100).roundToInt(),
         )
+
+        // Previews off: the readout above is the whole story; the window stays GONE (wherever it
+        // already was — togglePreviews hides it the moment previews go off) and no disk is touched.
+        if (!ReaderPrefs(this).previewsEnabled) return
+
+        // The preview blit: the snapped chapter's opening thumbnail, or (unsnapped) the nearest
+        // sampled page, decoded off disk. No strip -> no window; the readout above already carries
+        // chapter + percent. Never paginates, never touches the page.
+        val strip = previewStrip
+        val bookFile = bookPath?.let(::File)
+        val cfg = config
+        if (strip != null && bookFile != null && cfg != null) {
+            val entry = if (snappedChapter != null) {
+                entryForChapterOpening(strip.entries, snappedChapter)
+            } else {
+                nearestEntry(strip.entries, fraction)
+            }
+            if (entry == null) {
+                // A snapped chapter with no sampled opening (e.g. a zero-page image chapter never
+                // entered the plan): hide rather than leave a mismatched thumbnail from a moment ago.
+                scrubPreview.setImageDrawable(null)
+                scrubPreview.visibility = View.GONE
+                shownPreviewEntry = null
+            } else if (entry != shownPreviewEntry) {
+                val bmp = android.graphics.BitmapFactory.decodeFile(
+                    stripStore.thumbnailFile(bookFile, cfg, entry).path,
+                )
+                shownPreviewEntry = entry            // mark attempted either way — no re-decode churn
+                if (bmp != null) {
+                    scrubPreview.setImageBitmap(bmp)
+                    scrubPreview.visibility = View.VISIBLE
+                } else {
+                    // A missing/corrupt thumbnail: hide rather than leave a wrong page showing.
+                    scrubPreview.setImageDrawable(null)
+                    scrubPreview.visibility = View.GONE
+                }
+            }
+        }
     }
 
     /**
      * Lift-off: this is the only path that renders a page from a scrub. Paginate the selected chapter
      * off the main thread, show the page, persist it, and clear the scrub. One clean refresh, because
      * the page has not been drawn since the drag began.
+     *
+     * [snappedChapter], when present, resolves through [ReaderSurface.firstNonEmptyFrom] straight to
+     * that chapter's FIRST page — the fix for the reported bug: resolving even a snapped commit
+     * through the boundary fraction ([resolveScrubTarget]) could land one page into the PREVIOUS
+     * chapter, since the fraction the thumb snapped to is the chapter's start, and a `roundToInt`
+     * against the previous chapter's page count can round up to its last page. Unsnapped commits are
+     * unaffected: they still resolve through the raw fraction, same as before.
      */
-    private fun onScrubCommitted(fraction: Float) {
+    private fun onScrubCommitted(fraction: Float, snappedChapter: Int?) {
         scrubJob?.cancel()
+        // Capture the position being LEFT now — `state` still holds it here, since showPage (inside
+        // the coroutine below) hasn't moved it yet. The jump back-stack push itself is deferred until
+        // the target resolves below (see the comment there); this is unrelated to scrubOrigin below:
+        // that field is the ABANDON path's memory, this is the ↩ control's.
+        val origin = state
         // Lift-off is a commitment, not a draft: clear scrubOrigin synchronously, before launching
         // the commit coroutine, so this navigation is no longer abandonable. Without this, dismissing
         // the overlay during the ~230-360ms off-main-thread pagination below sees scrubOrigin still
         // set and reverts the jump the user just committed (abandonScrub is now a no-op instead, since
         // it early-returns on a null origin).
         scrubOrigin = null
+        // Durable down-payment on the commit. The exact landing page is only known after the
+        // coroutine's pagination below — but that coroutine rides lifecycleScope, so a lift
+        // followed within the grace by a fast teardown (double-Back, swipe-away; onPause flushes
+        // the grace straight into this call) cancels it before showPage/persist ever run, silently
+        // discarding a navigation the reader committed. When the commit changes CHAPTER — knowable
+        // synchronously from byte weights alone, no pagination — write (chapter, offset 0) through
+        // the app-scoped writer now, and let the coroutine refine it to the exact page. Death
+        // mid-commit then reopens at the committed chapter's start instead of quietly reverting to
+        // the origin. Same-chapter commits skip the down-payment: the stored position is already
+        // inside the right chapter, and a coarse offset-0 write would WORSEN a rare death there
+        // (chapter start vs the exact page already stored).
+        val coarseChapter = snappedChapter ?: locateByFraction(chapterWeights, fraction).spineIndex
+        if (coarseChapter != origin.spineIndex) {
+            persistPosition(Locator(coarseChapter, 0))
+        }
+        // The preview window deliberately STAYS UP through the commit. Lift-off starts a
+        // ~230-360ms off-main-thread pagination before the chosen page can draw; hiding the
+        // preview at lift-off left the OLD page on screen with zero feedback for that window,
+        // which read as "the slider did nothing" — and a natural second touch in that window
+        // cancels the in-flight commit (the race guard in onScrubStart), making the choice
+        // silently vanish. The preview is already showing the chosen page, so it bridges the
+        // gap honestly; it comes down inside the coroutine, after the real page has rendered
+        // beneath it (every terminal path below hides it).
         scrubJob = lifecycleScope.launch {
-            val located = locateByFraction(chapterWeights, fraction)
-            val target = withContext(Dispatchers.IO) { resolveScrubTarget(located) }
-            if (target != null) {
+            // Resolve the landing page WITHOUT touching the chapter cache off the main thread. The
+            // cache is a LinkedHashMap(accessOrder = true) — "even a read mutates link order" — and
+            // is main-thread-only by contract; the prefetch honours that by computing with the PURE
+            // paginate() off-main and installing via publish() back on main. This block used to call
+            // doc.chapter()/firstNonEmptyFrom inside Dispatchers.IO instead, racing the cache
+            // against exactly the main-thread traffic a just-committed page guarantees (its
+            // showPage's own chapter() and its prefetch's publish). That data race was the
+            // intermittent "scrubbing after a page selection misbehaves" seen on the device. Same
+            // choreography as the prefetch now: pure paginate off-main, publish + resolve on main.
+            val doc = document
+            val cfg = config
+            var target: ReadingState? = null
+            if (doc != null && cfg != null) {
+                val located = locateByFraction(chapterWeights, fraction)
+                val spine = snappedChapter ?: located.spineIndex
+                try {
+                    if (!doc.isPaginated(spine, cfg)) {
+                        val paginated = withContext(Dispatchers.Default) { doc.paginate(spine, cfg) }
+                        doc.publish(spine, cfg, paginated) // main thread — the sanctioned install
+                    }
+                    // Main thread from here: every cache touch is single-threaded again.
+                    target = if (snappedChapter != null) {
+                        readerSurface.firstNonEmptyFrom(snappedChapter)
+                    } else {
+                        resolveScrubTarget(located)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A corrupt chapter surfaces on its first (lazy) read — right here, on the first
+                    // scrub into it. Every other jump path reports and stays put; a scrub commit now
+                    // does the same, falling through with no target into the no-op branch below.
+                    // (The old code had NO guard: a corrupt chapter mid-scrub crashed the reader.)
+                    showError(R.string.error_open_section, e)
+                }
+            }
+            // Only a commit that actually moves the reader is a jump: a null target (a chapter that
+            // paginates to zero pages, e.g. image-only/cover content) or a target equal to where we
+            // already are pushes nothing onto the back-stack and arms no ↩ — mirroring jumpToAnchor
+            // (6d822a3), which pushes only after its target resolves, for the same reason.
+            if (target != null && target != origin) {
+                jumpStack.push(origin)
+                updateBackControl()
                 showPage(target)
                 session.drainPending()?.let { persistPosition(it) }
+            } else {
+                // A no-op commit: the drag ended on the page already being read (target == origin, or
+                // a target that paginates to nothing). showPage never runs, so the thumb — moved all
+                // over during the drag — would otherwise be left stranded, the slider lying about
+                // where the reader is. currentBookProgress still holds this page's fraction (no
+                // showPage ran during the drag), so snap the thumb back to the truth.
+                chapterScrubber.setProgress(currentBookProgress)
             }
+            // The page under the window is now correct (freshly rendered, or unchanged for a no-op):
+            // the bridge has done its job, take the preview down. A commit cancelled before reaching
+            // here (a new drag's race guard) leaves the window up on purpose — the new drag is
+            // already re-blitting it, and its own commit will take it down.
+            scrubPreview.visibility = View.GONE
+            scrubPreview.setImageDrawable(null)
+            shownPreviewEntry = null
         }
+    }
+
+    /** Pops one jump and navigates there, UNDER the still-open chrome — like a scrub commit, not a
+     *  Contents jump. No fullRefresh (the overlay is open; the clean refresh lands when it closes)
+     *  and no closeOverlay (so repeated taps walk back). Does NOT push — back is one-way. */
+    private fun onBackJump() {
+        val target = jumpStack.pop() ?: return
+        showPage(target)
+        session.drainPending()?.let { persistPosition(it) }
+        updateBackControl()
+    }
+
+    private fun updateBackControl() {
+        scrubberBackView.visibility = if (jumpStack.isEmpty) View.GONE else View.VISIBLE
     }
 
     /**
@@ -1377,14 +1813,28 @@ open class ReaderActivity : AppCompatActivity() {
         val origin = scrubOrigin ?: return
         scrubJob?.cancel()
         scrubOrigin = null
-        // Restore the readout to the page actually on screen; the page itself never moved.
-        showPage(origin)
+        scrubPreview.visibility = View.GONE
+        scrubPreview.setImageDrawable(null)
+        shownPreviewEntry = null
+        // The origin page never left the screen during the drag, so there is NOTHING to repaint —
+        // and repainting anyway (the old showPage(origin) here) flashed the panel mid-gesture,
+        // which read as "the scrubber did something on its own" every time the system cancelled a
+        // touch (the EMR pen hovering fires palm-rejection CANCELs on this hardware). Restore the
+        // two things the drag actually moved: the readout text and the thumb.
+        scrubberView.text = restingReadout
+        // The view may still be holding an ARMED session (or an open grace window) — reset it
+        // BEFORE moving the thumb, or the next touch would "resume" a session whose origin this
+        // method just cleared.
+        chapterScrubber.resetSession()
+        chapterScrubber.setProgress(currentBookProgress)
     }
 
     /**
-     * Turns a [BookLocation] into a real [ReadingState], paginating the chapter (off the main thread)
-     * only now, on commit — never during the drag. `EpubDocument.chapter()` memoises per
-     * `(config, spineIndex)`, so a chapter already visited resolves from cache.
+     * Turns a [BookLocation] into a real [ReadingState]. MAIN THREAD ONLY: `chapter()`'s cache is a
+     * `LinkedHashMap(accessOrder = true)` where even a read mutates link order, so this must never
+     * run on a background dispatcher. The commit path pre-warms the target chapter off-main via the
+     * pure `paginate()` + main-thread `publish()` (the prefetch's own choreography), so the
+     * `chapter()` call here is a cheap, safe cache hit.
      */
     private fun resolveScrubTarget(located: BookLocation): ReadingState? {
         val doc = document ?: return null
@@ -1409,6 +1859,54 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Drives the overlay-hide/Back abandon path directly, without a real touch dispatch. */
     internal fun abandonScrubForTest() = abandonScrub()
+
+    /** Kills an in-flight commit resolution where a teardown's lifecycleScope cancellation would —
+     *  the seam behind the durable-down-payment test. */
+    internal fun cancelScrubJobForTest() {
+        scrubJob?.cancel()
+    }
+
+    // -- Preview-strip test seams -------------------------------------------------------------------
+    // Strip GENERATION is Task 6; until then a test that needs the preview window to actually show
+    // must generate a strip itself, against the Activity's own RenderConfig, then re-run the load
+    // that normally only happens once, at open. These three seams are exactly that path.
+
+    /** The Activity's own resolved RenderConfig for this open — what a test must generate a strip
+     *  against for [previewStrip] to recognize it as a match. */
+    internal val configForTest: RenderConfig? get() = config
+
+    /** Re-runs the strip load [openFirstBook] does once, e.g. after a test has generated a strip for
+     *  this exact (book, config) on disk after the fact. Not called in production. */
+    internal fun loadPreviewStripForTest() {
+        val file = bookPath?.let(::File) ?: return
+        val cfg = config ?: return
+        lifecycleScope.launch {
+            previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, cfg) }
+        }
+    }
+
+    /** True once [loadPreviewStripForTest] (or the real open-time load) has found a strip. */
+    internal val previewStripLoadedForTest: Boolean get() = previewStrip != null
+
+    /** The open book's absolute path — a test's seam for building files/strips against the same book
+     *  without reaching into [Intent] extras itself. Not called in production. */
+    internal val bookPathForTest: String? get() = bookPath
+
+    /** Sets [ReaderPrefs.previewsEnabled] directly and pushes it to the scrubber, without going
+     *  through a real Aa-sheet tap — a test's way to drive the previews-off path. Not called in
+     *  production; production always goes through [SettingsHost.togglePreviews]. */
+    internal fun setPreviewsEnabledForTest(enabled: Boolean) {
+        ReaderPrefs(this).previewsEnabled = enabled
+        chapterScrubber.setPreviewsEnabled(enabled)
+    }
+
+    /** Drives the Aa sheet's per-book delete without a real tap. Not called in production. */
+    internal fun deletePreviewsForCurrentBookForTest() = settingsHost.deletePreviewsForCurrentBook()
+
+    /** See [SettingsHost.hasPreviewsForCurrentBook] — a test's way to assert the decision directly,
+     *  without needing to drive [SettingsSheet.refresh] through a real Aa-sheet open. Not called in
+     *  production. */
+    internal fun hasPreviewsForCurrentBookForTest(): Boolean = settingsHost.hasPreviewsForCurrentBook()
 
     /**
      * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s

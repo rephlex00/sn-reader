@@ -93,6 +93,12 @@ class ReaderPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_ROTATION_LOCKED, DEFAULT_ROTATION_LOCKED)
         set(value) = prefs.edit().putBoolean(KEY_ROTATION_LOCKED, value).apply()
 
+    /** Whether the chapter scrubber's thumbnail strip is generated and shown at all. On by default;
+     *  a pure display/generation toggle, NOT part of [renderConfig]. */
+    var previewsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_PREVIEWS_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_PREVIEWS_ENABLED, value).apply()
+
     /**
      * Builds the [RenderConfig] for one open: the stored typography plus the viewport the view
      * just measured. The pure prefs+viewport→config mapping, factored out so its no-op equivalence
@@ -170,6 +176,7 @@ class ReaderPrefs(context: Context) {
         const val KEY_FASTER_PAGE_TURNS = "faster_page_turns"
         const val KEY_FULL_REFRESH_EVERY_N = "full_refresh_every_n"
         const val KEY_ROTATION_LOCKED = "rotation_locked"
+        const val KEY_PREVIEWS_ENABLED = "previews_enabled"
 
         // The reader's standing typography baseline. All but the font matched openFirstBook's old
         // hardcoded literals; the font default became "literata" when bundled fonts shipped.
