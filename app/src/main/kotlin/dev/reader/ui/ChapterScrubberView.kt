@@ -269,16 +269,20 @@ class ChapterScrubberView @JvmOverloads constructor(
     }
 
     // ---- Gesture state machine ----------------------------------------------------------------
-    // IDLE -> (down) TRACKING -> (our pointer lifts) PENDING_COMMIT -> (grace expires) commit -> IDLE
-    //                                 |                    |(down within grace) -> TRACKING (bounce absorbed)
-    //                                 |(cancel) abandon    |(cancel) abandon
+    // IDLE -> (down) TRACKING -> (our pointer lifts) PENDING_COMMIT
+    //   PENDING_COMMIT -> (down within grace) TRACKING            bounce absorbed, same session
+    //   PENDING_COMMIT -> (grace expires, trusted lift) commit -> IDLE
+    //   PENDING_COMMIT -> (grace expires, untrusted lift) ARMED   held, nothing navigates
+    //   ARMED -> (down) TRACKING                                  dropped finger re-acquired
+    //   ARMED -> commitArmed() commit -> IDLE                     tap on the preview window
+    //   ARMED / any -> resetSession() -> IDLE                     overlay closed, quiet abandon
     //
-    // Raw ACTION_UP is NOT a commit: e-ink capacitive firmware delivers phantom lifts (contact
-    // bounce, edge dropout), and committing on one navigated the book while the reader's finger
-    // was still on the glass — the bug this machine exists to kill. A lift only commits if it
-    // STAYS lifted for [commitGraceMsForTest]; a re-touch inside the window resumes the same
-    // session invisibly. The timer is a one-shot postDelayed armed only by a lift — nothing runs
-    // at rest.
+    // Raw ACTION_UP is NOT a commit: this panel's firmware closes light contacts while the finger
+    // is still on the glass (see the trusted-lift doc above [graceExpiry]), and committing on one
+    // navigated the book mid-touch — the bug this machine exists to kill. A lift must first STAY
+    // lifted for [commitGraceMsForTest] (bounce absorption), and must then classify as a crisp
+    // tap or a firm drag (trust). The timer is a one-shot postDelayed armed only by a lift —
+    // nothing runs at rest, including in ARMED.
     //
     // Pointer discipline: the pointer id captured on DOWN owns the gesture. All coordinates come
     // from that pointer via findPointerIndex; other pointers (a palm heel, a second fingertip)
@@ -289,30 +293,109 @@ class ChapterScrubberView @JvmOverloads constructor(
     private var pendingFraction = 0f
     private var pendingSnap: Int? = null
 
+    // One LEG = one kernel contact (DOWN..UP). The pt_mt panel silently drops LIGHT contacts and
+    // re-acquires them seconds later, so one physical touch can span several legs; the session
+    // (scrub start -> commit/abandon) survives across them. Classification is per-leg at grace
+    // expiry — see [graceExpiry].
+    private var legDownTime = 0L
+    private var legDownX = 0f
+    private var legLiftTime = 0L
+    private var legDraggedBeyondSlop = false
+    private var legPeakPressure = 0f
+    private val touchSlopPx =
+        android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+
+    private fun beginLeg(x: Float, time: Long, pressure: Float) {
+        legDownX = x
+        legDownTime = time
+        legDraggedBeyondSlop = false
+        legPeakPressure = pressure
+    }
+
+    private fun sampleLeg(x: Float, pressure: Float) {
+        if (pressure > legPeakPressure) legPeakPressure = pressure
+        if (!legDraggedBeyondSlop && kotlin.math.abs(x - legDownX) > touchSlopPx) {
+            legDraggedBeyondSlop = true
+        }
+    }
+
     internal var commitGraceMsForTest: Long = COMMIT_GRACE_MS
 
     internal val gestureStateForTest: String get() = gestureState.name
 
-    private enum class GestureState { IDLE, TRACKING, PENDING_COMMIT }
+    private enum class GestureState { IDLE, TRACKING, PENDING_COMMIT, ARMED }
 
+    // Trusted-lift classification. The panel fabricates UP events for light contacts (kernel
+    // captures 2026-07-23/24: every phantom-drop fragment peaked at pressure <= 0.235 and lasted
+    // >= 257ms; real drags peaked >= 0.267, real taps finished by 212ms), so a lift is only
+    // OBEYED when the leg expressed unambiguous intent:
+    //   - a crisp tap: stationary and short — too brief to be a drop fragment
+    //   - a firm drag: heavy enough that the panel never drops it, so its lift is real
+    // Anything else — a light drag's lift, a long stationary press — may be the panel dropping a
+    // finger that is still on the glass. The session holds ARMED instead of navigating: the thumb
+    // and preview stay at the target, a re-touch resumes tracking, a tap (track or preview)
+    // completes the jump, and closing the overlay abandons it. A phantom lift can therefore never
+    // repaint the page.
     private val graceExpiry = Runnable {
-        if (gestureState == GestureState.PENDING_COMMIT) {
+        if (gestureState != GestureState.PENDING_COMMIT) return@Runnable
+        val legDurationMs = legLiftTime - legDownTime
+        val isTap = !legDraggedBeyondSlop && legDurationMs <= TAP_MAX_MS
+        val isFirmDrag = legDraggedBeyondSlop && legPeakPressure >= FIRM_DRAG_MIN_PRESSURE
+        if (android.util.Log.isLoggable(TRACE_TAG, android.util.Log.DEBUG)) {
+            android.util.Log.d(
+                TRACE_TAG,
+                "leg dur=${legDurationMs}ms dragged=$legDraggedBeyondSlop " +
+                    "peakP=$legPeakPressure -> ${if (isTap || isFirmDrag) "commit" else "arm"}",
+            )
+        }
+        if (isTap || isFirmDrag) {
             gestureState = GestureState.IDLE
             activePointerId = MotionEvent.INVALID_POINTER_ID
             dragging = false
             currentSnapIndex = null
             invalidate()
             onScrubCommit?.invoke(pendingFraction, pendingSnap)
+        } else {
+            gestureState = GestureState.ARMED
+            activePointerId = MotionEvent.INVALID_POINTER_ID
+            dragging = false // thumb returns to rest size but STAYS at the pending position
+            invalidate()
         }
     }
 
-    /** Commits a lift that is still inside its grace window RIGHT NOW — the overlay is closing or
-     *  the Activity is pausing, and dropping a lift the reader meant would lose their navigation.
+    /** Resolves a lift that is still inside its grace window RIGHT NOW — the overlay is closing or
+     *  the Activity is pausing. Runs the same trusted-lift classification the grace timer would:
+     *  a trusted lift commits (dropping it would lose a navigation the reader meant), an untrusted
+     *  one arms, and the caller's abandon path then discards the armed session quietly.
      *  No-op in any other state. */
     fun flushPendingCommit() {
         if (gestureState != GestureState.PENDING_COMMIT) return
         removeCallbacks(graceExpiry)
         graceExpiry.run()
+    }
+
+    /** Completes an ARMED session at its held position — the tap-on-the-preview path. No-op when
+     *  no armed session is waiting. */
+    fun commitArmed() {
+        if (gestureState != GestureState.ARMED) return
+        gestureState = GestureState.IDLE
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        dragging = false
+        currentSnapIndex = null
+        invalidate()
+        onScrubCommit?.invoke(pendingFraction, pendingSnap)
+    }
+
+    /** Silently discards any open session — grace window or ARMED — without invoking any
+     *  callback. The Activity's abandon path calls this so the view never stays half-open after
+     *  the overlay closes around it. */
+    fun resetSession() {
+        removeCallbacks(graceExpiry)
+        gestureState = GestureState.IDLE
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        dragging = false
+        currentSnapIndex = null
+        invalidate()
     }
 
     private fun trackedX(event: MotionEvent): Float? {
@@ -338,12 +421,15 @@ class ChapterScrubberView @JvmOverloads constructor(
                 // PageView below, which reads a tap as a page turn.
                 parent?.requestDisallowInterceptTouchEvent(true)
                 activePointerId = event.getPointerId(0)
+                beginLeg(event.getX(0), event.eventTime, event.getPressure(0))
                 when (gestureState) {
-                    GestureState.PENDING_COMMIT -> {
-                        // Contact bounce: the "lift" was firmware noise. Resume the SAME session —
-                        // no start, no commit, visually seamless (thumb stayed drag-sized).
+                    GestureState.PENDING_COMMIT, GestureState.ARMED -> {
+                        // A re-contact: either a bounce inside the grace window or the panel
+                        // re-acquiring a dropped light touch seconds later (ARMED). Resume the
+                        // SAME session — no start, no commit, visually seamless.
                         removeCallbacks(graceExpiry)
                         gestureState = GestureState.TRACKING
+                        dragging = true
                         applyPosition(event.getX(0), emitMove = true)
                     }
                     else -> {
@@ -364,10 +450,16 @@ class ChapterScrubberView @JvmOverloads constructor(
                 // this arm the grace would expire and commit under a finger that is back on the
                 // strip — the exact invariant this machine exists to protect, in the compound
                 // palm+bounce case. Adopt the new contact as the owner and resume the session.
-                if (gestureState == GestureState.PENDING_COMMIT) {
+                if (gestureState == GestureState.PENDING_COMMIT || gestureState == GestureState.ARMED) {
                     removeCallbacks(graceExpiry)
                     activePointerId = event.getPointerId(event.actionIndex)
+                    beginLeg(
+                        event.getX(event.actionIndex),
+                        event.eventTime,
+                        event.getPressure(event.actionIndex),
+                    )
                     gestureState = GestureState.TRACKING
+                    dragging = true
                     applyPosition(event.getX(event.actionIndex), emitMove = true)
                 }
                 return true
@@ -376,6 +468,7 @@ class ChapterScrubberView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 if (gestureState != GestureState.TRACKING) return true
                 val x = trackedX(event) ?: return true // only OUR pointer moves the thumb
+                sampleLeg(x, event.getPressure(event.findPointerIndex(activePointerId)))
                 applyPosition(x, emitMove = true)
                 return true
             }
@@ -385,7 +478,13 @@ class ChapterScrubberView @JvmOverloads constructor(
                 // Only OUR pointer's lift matters; a palm lifting is not a gesture event.
                 val liftedId = event.getPointerId(event.actionIndex)
                 if (liftedId != activePointerId) return true
-                trackedX(event)?.let { applyPosition(it, emitMove = false) }
+                trackedX(event)?.let { x ->
+                    // A fast flick can cover most of its distance on the UP event itself — the
+                    // lift coordinate counts toward the drag classification too.
+                    sampleLeg(x, event.getPressure(event.actionIndex))
+                    applyPosition(x, emitMove = false)
+                }
+                legLiftTime = event.eventTime
                 gestureState = GestureState.PENDING_COMMIT
                 // Thumb stays drag-sized and the preview stays up: if this lift is a bounce, the
                 // resume is invisible; if it is real, the commit path restores rest visuals.
@@ -558,5 +657,17 @@ class ChapterScrubberView @JvmOverloads constructor(
         // above onTouchEvent. Long enough to absorb an e-ink contact-bounce phantom lift, short
         // enough that a genuine release still reads as instant to the reader.
         private const val COMMIT_GRACE_MS = 200L
+
+        // Trusted-lift thresholds, calibrated from this device's kernel captures (2026-07-23 and
+        // the 2026-07-24 scrub session). Real taps: 115-212ms. Real drags: peak pressure
+        // 0.267-0.325. Phantom-drop fragments — contacts the panel closed while the finger stayed
+        // on the glass: 257-393ms, peak pressure <= 0.235. The tap ceiling and the pressure floor
+        // each sit in the middle of their observed gap.
+        private const val TAP_MAX_MS = 250L
+        private const val FIRM_DRAG_MIN_PRESSURE = 0.25f
+
+        // Classification telemetry, off unless enabled on-device:
+        //   adb shell setprop log.tag.SCRUBTRACE DEBUG
+        private const val TRACE_TAG = "SCRUBTRACE"
     }
 }

@@ -379,6 +379,10 @@ open class ReaderActivity : AppCompatActivity() {
         scrubberBackView = overlay.findViewById(R.id.scrubber_back)
         scrubberBackView.setOnClickListener { onBackJump() }
         scrubPreview = overlay.findViewById(R.id.scrub_preview)
+        // The trusted-lift grammar can leave a scrub ARMED (a light drag's lift is never obeyed —
+        // the panel fabricates lifts for light contacts). Tapping the floating preview is the
+        // explicit "go there": a no-op in every other state.
+        scrubPreview.setOnClickListener { chapterScrubber.commitArmed() }
         chapterScrubber.onScrubStart = {
             // Cancel any still-running prior commit before starting a new drag. Without this, an
             // old commit's showPage() can land mid-drag (a repaint during a drag, forbidden) and then
@@ -663,10 +667,11 @@ open class ReaderActivity : AppCompatActivity() {
      * device-wide runtime state (see [onPause]) and must happen on every close, jump or not.
      */
     private fun hideOverlay(cleanRefresh: Boolean = true) {
-        // A lift still sitting in its commit grace window when the overlay closes is a COMMITTED
-        // navigation the reader already made — flush it synchronously first so it lands via
-        // onScrubCommit (which clears scrubOrigin) rather than being caught by the abandonScrub
-        // below and discarded as if the finger were still down. No-op when no grace is open.
+        // A lift still sitting in its commit grace window when the overlay closes is resolved
+        // synchronously first: a TRUSTED lift (crisp tap / firm drag) is a navigation the reader
+        // already made and lands via onScrubCommit (which clears scrubOrigin); an untrusted one
+        // arms, and the abandonScrub below then discards it quietly along with any session that
+        // was already ARMED. No-op when no grace is open.
         chapterScrubber.flushPendingCommit()
         // A scrub still in flight when the overlay closes (Back, the toggle tap, a jump) is
         // abandoned first: the page never moved during the drag, so this just clears scrubOrigin
@@ -1817,6 +1822,10 @@ open class ReaderActivity : AppCompatActivity() {
         // touch (the EMR pen hovering fires palm-rejection CANCELs on this hardware). Restore the
         // two things the drag actually moved: the readout text and the thumb.
         scrubberView.text = restingReadout
+        // The view may still be holding an ARMED session (or an open grace window) — reset it
+        // BEFORE moving the thumb, or the next touch would "resume" a session whose origin this
+        // method just cleared.
+        chapterScrubber.resetSession()
         chapterScrubber.setProgress(currentBookProgress)
     }
 

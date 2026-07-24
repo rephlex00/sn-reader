@@ -295,6 +295,179 @@ class ChapterScrubberViewTest {
         assertThat(glyphs.map { it.x }).containsExactly(10.5f, 200f).inOrder()
     }
 
+    /** A touch with explicit event time and pressure — the axes the trusted-lift grammar reads.
+     *  The plain [touch] helper's events carry pressure 1.0 (firm) and time 0 (crisp). */
+    private fun touchPT(view: ChapterScrubberView, action: Int, x: Float, timeMs: Long, pressure: Float) {
+        val event = MotionEvent.obtain(0L, timeMs, action, x, 30f, pressure, 1f, 0, 1f, 1f, 0, 0)
+        view.onTouchEvent(event)
+        event.recycle()
+    }
+
+    // ---- Trusted-lift grammar -------------------------------------------------------------------
+    // The pt_mt panel fabricates lifts for LIGHT contacts (device captures 2026-07-23/24): every
+    // phantom-drop fragment ran at peak pressure <= 0.235 and duration >= 257ms, while real drags
+    // peaked >= 0.267 and real taps finished by 212ms. These tests replay those exact profiles.
+
+    @Test
+    fun `a light moving fragment arms instead of committing — the phantom-drop drag case`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        var cancels = 0
+        view.onScrubCommit = { _, _ -> commits++ }
+        view.onScrubCancel = { cancels++ }
+
+        // Contact 7 from the 2026-07-23 capture: 257ms, ~106px of drift, never above 0.235.
+        touchPT(view, MotionEvent.ACTION_DOWN, 100f, 0L, 0.21f)
+        touchPT(view, MotionEvent.ACTION_MOVE, 206f, 200L, 0.235f)
+        touchPT(view, MotionEvent.ACTION_UP, 206f, 257L, 0.22f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(commits).isEqualTo(0) // the finger is still on the glass — never navigate
+        assertThat(cancels).isEqualTo(0) // and never snap the thumb away from it either
+        assertThat(view.gestureStateForTest).isEqualTo("ARMED")
+    }
+
+    @Test
+    fun `a light stationary fragment arms and holds its position`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        var cancels = 0
+        val moves = mutableListOf<Float>()
+        view.onScrubCommit = { _, _ -> commits++ }
+        view.onScrubCancel = { cancels++ }
+        view.onScrubMove = { f, _ -> moves += f }
+
+        // Contact 5 from the capture: 319ms, ~3px, pressure 0.22-0.23.
+        touchPT(view, MotionEvent.ACTION_DOWN, 200f, 0L, 0.225f)
+        touchPT(view, MotionEvent.ACTION_MOVE, 203f, 296L, 0.227f)
+        touchPT(view, MotionEvent.ACTION_UP, 203f, 319L, 0.227f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(commits).isEqualTo(0)
+        assertThat(cancels).isEqualTo(0)
+        assertThat(view.gestureStateForTest).isEqualTo("ARMED")
+        assertThat(moves.last()).isWithin(0.05f).of(0.5f) // thumb stays under the resting finger
+    }
+
+    @Test
+    fun `a firm drag still commits on its settled lift`() {
+        val view = scrubber(width = 400)
+        var committed = -1f
+        view.onScrubCommit = { f, _ -> committed = f }
+
+        // The 8.4s drag from the 2026-07-24 calibration: starts light, peaks 0.325.
+        touchPT(view, MotionEvent.ACTION_DOWN, 100f, 0L, 0.21f)
+        touchPT(view, MotionEvent.ACTION_MOVE, 300f, 4000L, 0.31f)
+        touchPT(view, MotionEvent.ACTION_UP, 300f, 8384L, 0.31f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(committed).isWithin(0.05f).of(0.75f)
+        assertThat(view.gestureStateForTest).isEqualTo("IDLE")
+    }
+
+    @Test
+    fun `a crisp tap commits even at light pressure`() {
+        val view = scrubber(width = 400)
+        var committed = -1f
+        view.onScrubCommit = { f, _ -> committed = f }
+
+        // His real taps: 115-212ms, pressure 0.196-0.24 — light but SHORT, unlike any fragment.
+        touchPT(view, MotionEvent.ACTION_DOWN, 300f, 0L, 0.2f)
+        touchPT(view, MotionEvent.ACTION_UP, 300f, 120L, 0.2f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(committed).isWithin(0.05f).of(0.75f)
+    }
+
+    @Test
+    fun `a re-touch while armed resumes the same session without a new start`() {
+        val view = scrubber(width = 400)
+        var starts = 0
+        var committed = -1f
+        view.onScrubStart = { starts++ }
+        view.onScrubCommit = { f, _ -> committed = f }
+
+        touchPT(view, MotionEvent.ACTION_DOWN, 100f, 0L, 0.22f)
+        touchPT(view, MotionEvent.ACTION_MOVE, 206f, 200L, 0.23f)
+        touchPT(view, MotionEvent.ACTION_UP, 206f, 393L, 0.22f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+        assertThat(view.gestureStateForTest).isEqualTo("ARMED")
+
+        // The dropped finger moves again 2.4s later — a fresh kernel contact, same physical touch.
+        touchPT(view, MotionEvent.ACTION_DOWN, 210f, 2800L, 0.22f)
+        touchPT(view, MotionEvent.ACTION_MOVE, 300f, 3000L, 0.30f)
+        touchPT(view, MotionEvent.ACTION_UP, 300f, 3200L, 0.30f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        assertThat(starts).isEqualTo(1) // one continuous session across the phantom split
+        assertThat(committed).isWithin(0.05f).of(0.75f) // firm leg -> its lift is trusted
+    }
+
+    @Test
+    fun `commitArmed completes an armed session at its held position`() {
+        val view = scrubber(width = 400)
+        var committed = -1f
+        view.onScrubCommit = { f, _ -> committed = f }
+
+        touchPT(view, MotionEvent.ACTION_DOWN, 100f, 0L, 0.22f)
+        touchPT(view, MotionEvent.ACTION_MOVE, 300f, 200L, 0.23f)
+        touchPT(view, MotionEvent.ACTION_UP, 300f, 393L, 0.22f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+        assertThat(view.gestureStateForTest).isEqualTo("ARMED")
+
+        view.commitArmed()
+
+        assertThat(committed).isWithin(0.05f).of(0.75f)
+        assertThat(view.gestureStateForTest).isEqualTo("IDLE")
+    }
+
+    @Test
+    fun `commitArmed outside an armed session is a no-op`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        view.onScrubCommit = { _, _ -> commits++ }
+
+        view.commitArmed()
+
+        assertThat(commits).isEqualTo(0)
+        assertThat(view.gestureStateForTest).isEqualTo("IDLE")
+    }
+
+    @Test
+    fun `resetSession silently discards an armed session`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        var cancels = 0
+        view.onScrubCommit = { _, _ -> commits++ }
+        view.onScrubCancel = { cancels++ }
+
+        touchPT(view, MotionEvent.ACTION_DOWN, 100f, 0L, 0.22f)
+        touchPT(view, MotionEvent.ACTION_MOVE, 206f, 200L, 0.23f)
+        touchPT(view, MotionEvent.ACTION_UP, 206f, 393L, 0.22f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+
+        view.resetSession()
+
+        assertThat(commits).isEqualTo(0)
+        assertThat(cancels).isEqualTo(0)
+        assertThat(view.gestureStateForTest).isEqualTo("IDLE")
+    }
+
+    @Test
+    fun `flushing a light lift arms rather than commits`() {
+        val view = scrubber(width = 400)
+        var commits = 0
+        view.onScrubCommit = { _, _ -> commits++ }
+
+        touchPT(view, MotionEvent.ACTION_DOWN, 100f, 0L, 0.22f)
+        touchPT(view, MotionEvent.ACTION_MOVE, 206f, 200L, 0.23f)
+        touchPT(view, MotionEvent.ACTION_UP, 206f, 393L, 0.22f)
+        view.flushPendingCommit() // overlay closing mid-grace: classify NOW
+
+        assertThat(commits).isEqualTo(0)
+        assertThat(view.gestureStateForTest).isEqualTo("ARMED")
+    }
+
     /** Two-pointer MotionEvent: [action] with pointer ids 0 and 1 at (x0, x1), y mid-strip. */
     private fun twoPointerEvent(action: Int, x0: Float, x1: Float): MotionEvent {
         val props = arrayOf(
