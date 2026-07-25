@@ -38,7 +38,13 @@ class ComicPageDecoder {
         grayscale: Boolean = false,
     ): Bitmap? = withContext(Dispatchers.Default) {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        streamProvider()?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return@withContext null
+        // NO elvis on this call: with inJustDecodeBounds a successful bounds pass returns NULL by
+        // design (it only fills outWidth/outHeight), so `?: return null` here would abort every
+        // decode — which is exactly what it did, blanking every comic page on-device while
+        // Robolectric passed (its ShadowBitmapFactory returns a bitmap even in bounds-only mode).
+        // The real "could we read it" signal is outWidth/outHeight below. Same shape as
+        // ComicCoverExtractor.decodeThumbnail.
+        streamProvider()?.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
         val opts = BitmapFactory.Options().apply {
             inSampleSize = computeSampleSize(bounds.outWidth, bounds.outHeight, reqW, reqH)
