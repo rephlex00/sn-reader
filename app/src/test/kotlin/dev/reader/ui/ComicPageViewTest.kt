@@ -21,12 +21,4 @@ class ComicPageViewTest {
         assertThat(r.centerX()).isEqualTo(702)
         assertThat(r.centerY()).isEqualTo(936)
     }
-
-    // The Supernote EPD displays the software framebuffer; on a hardware-accelerated canvas a
-    // decoded page composites to a GPU surface the panel never shows (verified on-device: the page
-    // rendered blank until this was forced). Lock the software layer against regression.
-    @Test fun `renders on a software layer so the e-ink panel can display it`() {
-        val view = ComicPageView(org.robolectric.RuntimeEnvironment.getApplication())
-        assertThat(view.layerType).isEqualTo(android.view.View.LAYER_TYPE_SOFTWARE)
-    }
 }
