@@ -116,11 +116,9 @@ class SpannedChapterBuilderTest {
             config,
         )
 
-        // "One." + "\n\n" (image's separator; the image is not a paragraph) + "" (the
-        // image's null bytes append no text) + "\n" (both "One." and "Two." are flowing
-        // body paragraphs, so they still join with a single newline across the text-free
-        // image) = offset 7.
-        assertThat(chapter.breakOffsets).containsExactly(7)
+        // "One." + "\n" (flowing-paragraph join, the text-free image contributing nothing
+        // at all, separator included) = offset 5.
+        assertThat(chapter.breakOffsets).containsExactly(5)
         val offset = chapter.breakOffsets.single()
         assertThat(chapter.text.subSequence(offset, chapter.text.length).toString()).isEqualTo("Two.")
     }
@@ -548,6 +546,31 @@ class SpannedChapterBuilderTest {
         )
         assertThat(chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)).isEmpty()
         assertThat(chapter.text.toString()).isEmpty()
+    }
+
+    @Test
+    fun `an image that emits nothing leaves no separator between the paragraphs around it`() {
+        val chapter = builder.build(
+            listOf(para("One."), Block.Image("img/missing.png", bytes = null), para("Two.")),
+            config,
+        )
+        // The broken image is not there at all: the two body paragraphs join as neighbours.
+        assertThat(chapter.text.toString()).isEqualTo("One.\nTwo.")
+    }
+
+    @Test
+    fun `a run of broken images does not stack blank lines`() {
+        val chapter = builder.build(
+            listOf(
+                para("One."),
+                Block.Image("img/missing1.png", bytes = null),
+                Block.Image("img/missing2.png", bytes = null),
+                Block.Image("img/missing3.png", bytes = null),
+                para("Two."),
+            ),
+            config,
+        )
+        assertThat(chapter.text.toString()).isEqualTo("One.\nTwo.")
     }
 
     @Test

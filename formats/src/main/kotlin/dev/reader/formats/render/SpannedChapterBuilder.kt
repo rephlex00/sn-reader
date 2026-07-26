@@ -99,6 +99,10 @@ class SpannedChapterBuilder {
                 pendingBreak = true
                 continue
             }
+            // Where this block's contribution begins, separator included — the rollback point
+            // if it turns out to contribute nothing at all (see the check just below
+            // appendBlock).
+            val blockStart = sb.length
             if (sb.isNotEmpty()) sb.append(separatorBetween(prev, block))
             val start = sb.length
             // A body paragraph gets the reader's own first-line indent UNLESS it opens a
@@ -113,6 +117,21 @@ class SpannedChapterBuilder {
             if (isOpeningHeading) sb.append(BLOCK_SEPARATOR)
             val headingStart = sb.length
             appendBlock(sb, block, config, indentParagraph)
+            // The block contributed no text of its own: an image whose bytes are null or
+            // don't decode, or an empty heading. Roll the builder all the way back to
+            // blockStart — past the separator just committed for it, and, for an empty
+            // OPENING heading, past its prepended headroom too — so a broken block leaves no
+            // trace: no blank gap opens where a flowing single-newline join was intended, and
+            // a run of broken blocks doesn't stack one blank line per block. `prev`,
+            // `hasEmitted` and `pendingBreak` are all left untouched, so the next real block
+            // sees exactly the state it would have seen had this block never appeared.
+            // Compared against `headingStart`, not `start`: an empty opening heading still has
+            // sb.length > start (the prepended BLOCK_SEPARATOR occupies that gap), so comparing
+            // against `start` would miss it and treat the empty heading as having emitted.
+            if (sb.length == headingStart) {
+                sb.delete(blockStart, sb.length)
+                continue
+            }
             // Record the heading's own char range (past any opening-title headroom, from the
             // first heading character to sb.length) so AndroidMeasuredChapter can map it to the
             // heading's lines for the paginator's keep-heading rule. Only when the heading
