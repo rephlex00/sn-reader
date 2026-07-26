@@ -17,6 +17,8 @@ import android.text.style.ImageSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StrikethroughSpan
+import android.text.style.SubscriptSpan
+import android.text.style.SuperscriptSpan
 import android.text.style.TypefaceSpan
 import android.text.style.UnderlineSpan
 import dev.reader.engine.Block
@@ -65,6 +67,13 @@ private const val PARAGRAPH_INDENT_EM = 1.5f
 private const val SCENE_BREAK_MARK = "* * *"
 
 private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 5 to 1.1f, 6 to 1.05f)
+
+/**
+ * The conventional marker-to-body size ratio for a footnote/citation marker. SuperscriptSpan/
+ * SubscriptSpan only shift the baseline — they don't shrink the glyph — so every sup/sub run
+ * pairs one of those with a RelativeSizeSpan at this ratio.
+ */
+private const val SUP_SUB_SIZE_RATIO = 0.75f
 
 /**
  * The single character an [ImageSpan] is drawn over — the standard idiom is one placeholder
@@ -410,6 +419,22 @@ class SpannedChapterBuilder {
             if (style.bold == true) set(AndroidStyleSpan(Typeface.BOLD))
             if (style.italic == true) set(AndroidStyleSpan(Typeface.ITALIC))
             if (style.monospace == true) set(TypefaceSpan("monospace"))
+
+            // A footnote/citation marker sitting inline at full size reads as part of the
+            // sentence (see "people.2 A year later") — that's a correctness problem, not
+            // publisher decoration a reader might disable, so sup/sub join the baseline
+            // emphasis above rather than the publisher-styling-gated block below.
+            // SuperscriptSpan/SubscriptSpan only shift the baseline; they do not shrink the
+            // text, so each is paired with a RelativeSizeSpan (0.75f, the conventional
+            // marker-to-body ratio) or the raised marker still reads full-size.
+            if (style.superscript == true) {
+                set(SuperscriptSpan())
+                set(RelativeSizeSpan(SUP_SUB_SIZE_RATIO))
+            }
+            if (style.subscript == true) {
+                set(SubscriptSpan())
+                set(RelativeSizeSpan(SUP_SUB_SIZE_RATIO))
+            }
 
             // The remaining publisher decoration only applies when styling is on; when off
             // these fields are ignored entirely, leaving today's emphasis-only rendering.

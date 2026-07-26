@@ -48,6 +48,15 @@ class XhtmlBlockParserTest {
     }
 
     @Test
+    fun `records a footnote marker's sup tag as a superscript span over just the marker`() {
+        val blocks = parse("<p>text<sup>2</sup></p>")
+        val text = (blocks.single() as Block.Paragraph).text
+
+        assertThat(text.text).isEqualTo("text2")
+        assertThat(text.spans).containsExactly(StyleSpan(4, 5, InlineStyle(superscript = true)))
+    }
+
+    @Test
     fun `nested emphasis produces overlapping spans`() {
         val blocks = parse("<p><b>bold <i>both</i></b></p>")
         val text = (blocks.single() as Block.Paragraph).text

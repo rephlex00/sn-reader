@@ -515,6 +515,8 @@ class XhtmlBlockParser {
         "b", "strong" -> InlineStyle(bold = true)
         "i", "em", "cite", "dfn" -> InlineStyle(italic = true)
         "code", "kbd", "samp", "tt" -> InlineStyle(monospace = true)
+        "sup" -> InlineStyle(superscript = true)
+        "sub" -> InlineStyle(subscript = true)
         else -> null
     }
 
