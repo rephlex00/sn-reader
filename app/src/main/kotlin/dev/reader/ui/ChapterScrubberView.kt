@@ -164,11 +164,17 @@ class ChapterScrubberView @JvmOverloads constructor(
 
     // Pixel-space geometry, rebuilt only when the book, bookmarks, generation state, or size
     // change — never on a thumb move. onDraw runs on every ACTION_MOVE, and rebuilding all of
-    // this per frame was the whole steady-state allocation cost of a drag.
+    // this per frame was the whole steady-state allocation cost of a drag. Cache key: the
+    // geometry below is in pixels, so it is only valid for the width and padding it was computed
+    // at — onSizeChanged covers a resize, but View.setPadding can shift left/right with no size
+    // change and therefore no callback.
     private var cachedChapterXs: List<Float>? = null
     private var cachedClusterRuns: List<List<Int>>? = null
     private var cachedTrackSegments: List<TrackSegment>? = null
     private var cachedBookmarkGlyphs: List<BookmarkGlyph>? = null
+    private var cachedWidth: Int = -1
+    private var cachedPaddingLeft: Int = -1
+    private var cachedPaddingRight: Int = -1
 
     /** The cached pixel-space chapter positions — a test asserts they survive a thumb move. */
     internal val chapterXsForTest: List<Float>? get() = cachedChapterXs
@@ -554,6 +560,18 @@ class ChapterScrubberView @JvmOverloads constructor(
         val left = paddingLeft.toFloat()
         val right = width - paddingRight.toFloat()
         if (right <= left) return
+
+        // Cache key: the geometry below is in pixels, so it is only valid for the width and
+        // padding it was computed at. onSizeChanged covers a resize, but View.setPadding can
+        // shift left/right with no size change and therefore no callback — three int compares
+        // per frame close that hole for good, and subsume onSizeChanged entirely.
+        if (cachedWidth != width || cachedPaddingLeft != paddingLeft || cachedPaddingRight != paddingRight) {
+            invalidateGeometry()
+            cachedWidth = width
+            cachedPaddingLeft = paddingLeft
+            cachedPaddingRight = paddingRight
+        }
+
         // Raised off height / 2f: the lower portion of the (taller, 88dp) view is inert
         // finger-buffer, so a thumb drifting down while dragging stays on glass, off the bezel.
         val centreY = height * 0.35f

@@ -684,4 +684,40 @@ class ChapterScrubberViewTest {
         view.draw(canvas)
         assertThat(view.chapterXsForTest).isNotSameInstanceAs(first)
     }
+
+    @Test
+    fun `geometry cache invalidates and recomputes on resize`() {
+        val view = ChapterScrubberView(RuntimeEnvironment.getApplication())
+        view.setBook(listOf(0f, 0.25f, 0.5f), progress = 0f)
+
+        // Lay out and draw at width 1404
+        view.layout(0, 0, 1404, 165)
+        val canvas1 = Canvas(Bitmap.createBitmap(1404, 165, Bitmap.Config.ARGB_8888))
+        view.draw(canvas1)
+        val firstXs = view.chapterXsForTest
+
+        assertThat(firstXs).isNotNull()
+        val firstValues = firstXs!!.toList()
+
+        // Re-lay out at narrower width 800
+        view.layout(0, 0, 800, 165)
+        val canvas2 = Canvas(Bitmap.createBitmap(800, 165, Bitmap.Config.ARGB_8888))
+        view.draw(canvas2)
+        val secondXs = view.chapterXsForTest
+
+        assertThat(secondXs).isNotNull()
+        val secondValues = secondXs!!.toList()
+
+        // Cache must be invalidated (different instance)
+        assertThat(secondXs).isNotSameInstanceAs(firstXs)
+
+        // X positions must actually differ due to width change
+        assertThat(secondValues).isNotEqualTo(firstValues)
+        // Narrower width should produce proportionally smaller x positions for mid-fractions
+        assertThat(secondValues[1]).isLessThan(firstValues[1])
+        assertThat(secondValues[2]).isLessThan(firstValues[2])
+        // Verify the scaling: 800/1404 ≈ 0.57
+        assertThat(secondValues[1]).isWithin(5f).of(firstValues[1] * (800f / 1404f))
+        assertThat(secondValues[2]).isWithin(5f).of(firstValues[2] * (800f / 1404f))
+    }
 }
