@@ -1774,10 +1774,16 @@ class ReaderActivityTest {
         // The book is replaced with bytes that cannot be paginated while the reader holds it open;
         // the jump back re-reads a chapter that is no longer there.
         book.writeText("not a zip any more")
+        ShadowToast.reset() // assert THIS error, not a leftover from the setup above
         activity.backJumpForTest()
         shadowOf(Looper.getMainLooper()).idle()
 
         assertThat(activity.isFinishing).isFalse()
+        // Load-bearing: without this the test passes whenever the setup stops evicting chapter 0
+        // (a change to the cache capacity, the prefetch rule, or per-chapter page counts), never
+        // entering the guarded catch at all — exactly how this test's first draft was useless.
+        // Asserting the surfaced error proves the guard actually fired.
+        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("That section couldn't be opened.")
     }
 
     // -- Task 4: the floating preview window --------------------------------------------------

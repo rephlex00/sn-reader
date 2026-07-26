@@ -1852,11 +1852,12 @@ open class ReaderActivity : AppCompatActivity() {
         // showPage paginates on the first read of a chapter no longer in the LRU, so this can throw
         // exactly as onTap and jumpToAnchor can — and this path had no guard at all. Report and
         // stay put; `state` is only reassigned inside showPage after its own chapter() succeeded.
+        // The pop above is deliberately NOT undone on failure: the target is consumed either way,
+        // because a retry would re-read the same unreadable chapter and fail identically. ↩ simply
+        // moves on to the next entry (or hides, via updateBackControl below).
         try {
             showPage(target)
             session.drainPending()?.let { persistPosition(it) }
-        } catch (e: EpubException) {
-            showError(R.string.error_open_section, e)
         } catch (e: Exception) {
             showError(R.string.error_open_section, e)
         }
