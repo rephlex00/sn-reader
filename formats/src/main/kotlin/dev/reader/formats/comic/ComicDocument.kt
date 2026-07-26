@@ -77,8 +77,15 @@ class ComicDocument private constructor(
                 // Every throw path above lands here, so the source is closed regardless of
                 // exception type — no invisible "nothing after this throws" contract to maintain.
                 source.close()
-                throw if (e is ComicException) e else
-                    ComicException.Malformed("The comic archive could not be read: ${e.message}")
+                throw when (e) {
+                    is ComicException -> e
+                    // Latent only — there is no suspension point in the try block above today —
+                    // but rethrowing identity-preserved rather than rewrapping as
+                    // ComicException.Malformed is the correct shape the moment one is added, and
+                    // keeps this in lockstep with EpubDocument.open's catch.
+                    is java.util.concurrent.CancellationException -> e
+                    else -> ComicException.Malformed("The comic archive could not be read: ${e.message}")
+                }
             }
         }
 
