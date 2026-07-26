@@ -277,8 +277,30 @@ class EpubDocument private constructor(
             } catch (e: SecurityException) {
                 throw EpubException.NotAnEpub("Not a readable EPUB archive: ${e.message}")
             }
+            return open(source, measurer) { s -> EpubPackageParser().parse(s) }
+        }
+
+        /**
+         * The post-construction half of [open]: parses an already-open [source] into a package
+         * and TOC and wraps it in an [EpubDocument], guaranteeing [source] is closed on every
+         * failure path. Split out — with [source] and [parsePackage] both injectable — purely as
+         * a test seam: there is no reliable real-world EPUB that trips the generic
+         * `catch (e: Throwable)` below via a genuine parse failure (this codebase already
+         * hardens `readTextChecked`/`readBytesChecked` against `IOException`, hand-rolls
+         * `percentDecode` to avoid `URLDecoder`'s `IllegalArgumentException`, and has no
+         * unguarded `toInt`/`substring`/`first()`/`!!` in the package or TOC parsers). A test
+         * can make [parsePackage] throw an arbitrary [Throwable] and assert the catch's two
+         * guarantees structurally: [source] closes exactly once, and the exception is normalized
+         * to an [EpubException] — or, for one already typed, rethrown identity-preserved rather
+         * than rewrapped as [EpubException.Malformed].
+         */
+        internal fun open(
+            source: ResourceSource,
+            measurer: TextMeasurer,
+            parsePackage: (ResourceSource) -> EpubPackage,
+        ): EpubDocument {
             try {
-                val pkg = EpubPackageParser().parse(source)
+                val pkg = parsePackage(source)
                 val toc = EpubTocParser().parse(source, pkg)
                 return EpubDocument(source, pkg, measurer, toc)
             } catch (e: Throwable) {

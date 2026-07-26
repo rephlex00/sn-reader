@@ -146,4 +146,24 @@ class ZipResourceSourceTest {
         assertThat(decodeText("<?xml version=\"1.0\"?>".toByteArray(Charsets.UTF_8)))
             .isEqualTo("<?xml version=\"1.0\"?>")
     }
+
+    @Test
+    fun `readText decodes a UTF-16BE container_xml by its BOM through the real zip wiring`() {
+        // The decodeText tests above exercise the helper directly; this pins the wiring through
+        // ZipResourceSource.readText itself — the path a real BOM-marked container.xml or OPF
+        // actually takes — so a regression that stopped readText from calling decodeText at all
+        // would still be caught.
+        val content = "<?xml version=\"1.0\"?><container>héllo</container>"
+        val bytes = byteArrayOf(0xFE.toByte(), 0xFF.toByte()) + content.toByteArray(Charsets.UTF_16BE)
+        val file = temp.newFile("utf16.zip")
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            zip.putNextEntry(ZipEntry("META-INF/container.xml"))
+            zip.write(bytes)
+            zip.closeEntry()
+        }
+
+        val text = ZipResourceSource(file).use { it.readText("META-INF/container.xml") }
+
+        assertThat(text).isEqualTo(content)
+    }
 }

@@ -65,7 +65,9 @@ class ComicDocument private constructor(
             try {
                 val pages = imagePagesOf(source.entries())
                 if (pages.isEmpty()) throw ComicException.NoImages("This archive contains no images.")
-                // Case-insensitive, and anywhere in the archive: `comicinfo.xml` and
+                // Case-insensitive, root-level only (matches the full entry path, so
+                // `subdir/comicinfo.xml` is NOT found — root-level is what the ComicRack
+                // layout this format follows actually specifies): `comicinfo.xml` and
                 // `ComicInfo.XML` are both common in the wild, and an exact-case lookup silently
                 // dropped series, writer and reading direction for every one of them.
                 val infoEntry = source.entries().firstOrNull { it.equals(COMIC_INFO_ENTRY, ignoreCase = true) }

@@ -53,5 +53,10 @@ class PublisherSpansTest {
 
         val spans = chapter.text.getSpans(0, chapter.text.length, LeadingMarginSpan.Standard::class.java)
         assertThat(spans.map { it.getLeadingMargin(true) }.filter { it < 0 }).isEmpty()
+        // The absence check above would stay green even if applyBlockStyle stopped emitting a
+        // margin span at all — pin that it still emits one, clamped to exactly 0, not just "not
+        // negative".
+        assertThat(spans).isNotEmpty()
+        assertThat(spans.map { it.getLeadingMargin(true) }).containsExactly(0)
     }
 }

@@ -5,6 +5,7 @@ import android.text.Spanned
 import android.text.style.StyleSpan
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.RenderConfig
+import dev.reader.formats.ResourceSource
 import dev.reader.formats.render.AndroidMeasuredChapter
 import dev.reader.formats.render.AndroidTextMeasurer
 import dev.reader.formats.render.SpannedChapterBuilder
@@ -676,5 +677,52 @@ $itemrefs
 
             if (errors.isNotEmpty()) throw AssertionError("${errors.size} concurrent failure(s); first:", errors.first())
         }
+    }
+
+    // --- Task 16: the `catch (e: Throwable)` in EpubDocument.open's internal seam overload has
+    // no reliable real-world trigger (this codebase already hardens readTextChecked/
+    // readBytesChecked against IOException, hand-rolls percentDecode to dodge URLDecoder's
+    // IllegalArgumentException, and has no unguarded toInt/substring/first()/!! in the package or
+    // TOC parsers) — so it is asserted structurally here via the internal `parsePackage` seam
+    // rather than through a constructed malformed archive. ---
+
+    /** Counts [close] calls so a test can assert the source was closed exactly once. */
+    private class CountingResourceSource : ResourceSource {
+        var closeCount = 0
+            private set
+        override fun open(path: String): java.io.InputStream? = null
+        override fun readText(path: String): String? = null
+        override fun exists(path: String): Boolean = false
+        override fun close() {
+            closeCount++
+        }
+    }
+
+    @Test
+    fun `open wraps a raw throwable escaping the parser as Malformed and still closes the source`() {
+        val source = CountingResourceSource()
+
+        val e = runCatching {
+            EpubDocument.open(source, measurer) { throw IllegalStateException("boom") }
+        }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.Malformed::class.java)
+        assertThat(e).isNotInstanceOf(IllegalStateException::class.java)
+        assertThat(source.closeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `open rethrows an EpubException from the parser identity-preserved, not rewrapped as Malformed`() {
+        val source = CountingResourceSource()
+        val drmException = EpubException.DrmProtected("this book is protected")
+
+        val e = runCatching {
+            EpubDocument.open(source, measurer) { throw drmException }
+        }.exceptionOrNull()
+
+        // Identity, not just type: a rewrap into a fresh Malformed would also satisfy
+        // isInstanceOf(EpubException) but lose the DrmProtected-specific message the UI shows.
+        assertThat(e).isSameInstanceAs(drmException)
+        assertThat(source.closeCount).isEqualTo(1)
     }
 }
