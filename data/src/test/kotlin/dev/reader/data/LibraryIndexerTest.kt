@@ -646,4 +646,36 @@ class LibraryIndexerTest {
 
         assertThat(extractor.calls.map { File(it).name }).containsExactly("a.epub", "b.cbz", "c.cbr")
     }
+
+    @Test
+    fun `a root that has gone missing deletes nothing`(): Unit = runBlocking {
+        writeEpub("a.epub")
+        writeEpub("b.epub")
+        val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
+        indexer.sync()
+        assertThat(dao.getAllStats()).hasSize(2)
+
+        // The books folder is renamed away (or storage unmounted) between syncs. walkTopDown
+        // yields nothing for it and throws nothing — the rows must survive regardless.
+        root.renameTo(File(root.parentFile, "Books-moved"))
+
+        val result = LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+        assertThat(result.removed).isEqualTo(0)
+        assertThat(dao.getAllStats()).hasSize(2)
+    }
+
+    @Test
+    fun `a book genuinely deleted from a live root is still removed`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        writeEpub("b.epub")
+        val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
+        indexer.sync()
+
+        a.delete()
+        val result = LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+        assertThat(result.removed).isEqualTo(1)
+        assertThat(dao.getAllStats().map { it.path }).containsExactly(File(root, "b.epub").path)
+    }
 }

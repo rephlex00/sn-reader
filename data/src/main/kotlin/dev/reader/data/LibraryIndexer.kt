@@ -92,13 +92,15 @@ class LibraryIndexer(
     }
 
     suspend fun sync(): IndexResult = withContext(Dispatchers.IO) {
-        val onDisk = walk()
+        val walked = walk()
+        val onDisk = walked.files
         val known = dao.getAllStats().associateBy { it.path }
 
-        // Only paths UNDER a walked root are deletion candidates. A path the walk didn't find but
-        // that lies outside every current root isn't a vanished file — the walk was never asked to
-        // look there — so it must survive with its position intact (the re-pointed-root guard).
-        val vanished = (known.keys - onDisk.keys).filter(::isUnderAnyRoot)
+        // Only paths under a FULLY WALKED root are deletion candidates. A path the walk didn't find
+        // but that lies outside every walked root isn't a vanished file — either the walk was never
+        // asked to look there (the re-pointed-root guard) or it couldn't look (a missing or
+        // unreadable root) — so it must survive with its position and annotations intact.
+        val vanished = (known.keys - onDisk.keys).filter { isUnderAnyRoot(it, walked.walkedRoots) }
         if (vanished.isNotEmpty()) {
             // Capture cover paths before the row disappears — dao.deleteByPaths only removes the
             // row; the thumbnail file it pointed at is not Room's to know about, so it would
@@ -303,18 +305,34 @@ class LibraryIndexer(
     }
 
     /**
-     * Whether [path] lies within one of the walked [roots] — the deletion-scope test (see [sync]'s
-     * KDoc). Segment-correct on purpose: matching is against `root.path + separator`, never a bare
+     * Whether [path] lies within one of the [scopes] — the deletion-scope test (see [sync]'s KDoc).
+     * [scopes] is the set of roots the walk COMPLETELY enumerated, never the configured roots:
+     * a root that could not be read is not evidence that anything under it vanished.
+     * Segment-correct on purpose: matching is against `root.path + separator`, never a bare
      * `startsWith(root.path)`, so a `/Document` root does not claim `/Documents/x.epub` and delete a
      * position on a folder-name near-miss. [roots] are absolute, so no canonicalization is needed.
      */
-    private fun isUnderAnyRoot(path: String): Boolean =
-        roots.any { root -> path == root.path || path.startsWith(root.path + File.separator) }
+    private fun isUnderAnyRoot(path: String, scopes: List<File>): Boolean =
+        scopes.any { root -> path == root.path || path.startsWith(root.path + File.separator) }
 
-    /** `(path, size, mtime)` for every book file under [roots]. Opens nothing. */
-    private fun walk(): Map<String, FileStat> {
+    /**
+     * `(path, size, mtime)` for every book file under [roots], plus the roots that were fully
+     * enumerated. Opens nothing.
+     *
+     * The second half is the load-bearing part: a root that is missing, unmounted, or unreadable
+     * yields no files, and treating that as "the books under it vanished" deletes their rows — and
+     * the CASCADE takes every bookmark and highlight with them. Such a root is left OUT of
+     * [WalkResult.walkedRoots], so [sync] never considers anything under it a deletion candidate.
+     */
+    private fun walk(): WalkResult {
         val result = LinkedHashMap<String, FileStat>()
+        val walkedRoots = mutableListOf<File>()
         for (root in roots) {
+            // Not a readable directory right now: unmounted storage, a folder renamed in the
+            // device file manager, or a grant revoked since the last sync. walkTopDown would
+            // yield nothing here and throw nothing — indistinguishable from an emptied folder
+            // unless we check first.
+            if (!root.isDirectory) continue
             try {
                 root.walkTopDown()
                     .maxDepth(10) // Closes an unbounded symlink-loop walk; unreachable in practice
@@ -323,14 +341,17 @@ class LibraryIndexer(
                     .forEach { file ->
                         result[file.path] = FileStat(file.length(), file.lastModified())
                     }
+                walkedRoots += root
             } catch (e: SecurityException) {
-                // A denied or half-revoked all-files-access grant can surface here as
-                // walkTopDown touches directories; skip this root rather than aborting the
-                // whole sync.
+                // A denied or half-revoked all-files-access grant can surface here as walkTopDown
+                // touches directories. The walk stopped partway, so this root was NOT fully seen:
+                // skip it AND leave it out of the deletion scope.
             }
         }
-        return result
+        return WalkResult(result, walkedRoots)
     }
+
+    private data class WalkResult(val files: Map<String, FileStat>, val walkedRoots: List<File>)
 
     private data class FileStat(val sizeBytes: Long, val modifiedAtMs: Long)
 
