@@ -1103,6 +1103,11 @@ open class ReaderActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // onPause gives the panel's screen mode back unconditionally (it is device-wide state that
+        // must never leak), so a resume with the chrome still open would otherwise run every
+        // subsequent chrome interaction on the slow, full-quality waveform until the overlay was
+        // closed and reopened. Idempotent: enterFastMode no-ops when already held.
+        if (isOverlayVisible()) pageView.epd.enterFastMode()
         if (document != null || opening) return
         if (!isAllFilesAccessGranted()) {
             // Without the permission there is nothing this screen can ever show, and silently

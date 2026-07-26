@@ -444,6 +444,33 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `onResume re-enters fast mode when the overlay is still open`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val epd = object : EpdRefresher {
+            override val available = true
+            var fastModeHeld = false
+            override fun cleanRefresh(): Boolean = true
+            override fun enterFastMode(): Boolean { fastModeHeld = true; return true }
+            override fun exitFastMode(): Boolean { fastModeHeld = false; return true }
+        }
+        pageViewOf(activity).epd = epd
+
+        activity.showOverlayForTest()
+        assertThat(epd.fastModeHeld).isTrue()
+
+        controller.pause()
+        // onPause unconditionally gives the mode back — confirmed by the test above.
+        assertThat(epd.fastModeHeld).isFalse()
+
+        controller.resume()
+
+        // A resume with the chrome still open must re-enter fast mode, or every chrome interaction
+        // until the overlay is closed and reopened would run on the slow, full-quality waveform.
+        assertThat(epd.fastModeHeld).isTrue()
+    }
+
+    @Test
     fun `a Contents jump clean-refreshes only the destination page, not the page being left`() {
         // The bug this guards: hideOverlay's own clean-on-close refresh used to fire unconditionally
         // on every close, including the Contents/Bookmarks/Highlights jump path — flashing the OLD
