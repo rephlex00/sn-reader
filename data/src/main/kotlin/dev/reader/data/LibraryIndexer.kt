@@ -61,14 +61,17 @@ data class IndexResult(
  * opened — diffs that against [BookDao.getAllStats], and opens (via [extractor]) only the files
  * that are new or whose `(size, mtime)` changed.
  *
- * Deletion is **scoped to the current [roots]**: a DB row is deleted only if its path is under a
- * root the walk actually covered but its file is gone from disk. A row for a book outside every
- * current root is left completely untouched — not refreshed, not deleted, not counted in
- * [IndexResult]. That scoping is the data-loss guard behind a configurable root: re-pointing the
- * root *hides* the books it no longer covers, but must never destroy their reading positions, and
- * switching the root back reinstates them unchanged. (When [roots] is fixed, as it was before the
- * root became configurable, the scope is the whole indexed library and this reduces to the old
- * "every vanished path is deleted" behavior.)
+ * Deletion is **scoped to the roots the walk actually and completely enumerated**, never the
+ * configured [roots]: a DB row is deleted only if its path is under a root that was walked start
+ * to finish, every directory beneath it successfully listed, but the file itself is gone from
+ * disk. A row for a book outside that walked scope — whether its root was never configured, or the
+ * root (or some directory beneath it) could not be fully read this sync — is left completely
+ * untouched: not refreshed, not deleted, not counted in [IndexResult]. That scoping is the
+ * data-loss guard behind a configurable root: re-pointing the root *hides* the books it no longer
+ * covers, but must never destroy their reading positions, and switching the root back reinstates
+ * them unchanged. It equally guards a fixed root: a root or subdirectory that only *looks* empty —
+ * unmounted storage, a renamed folder, or a partially revoked permission grant — is never mistaken
+ * for one that genuinely lost every book beneath it.
  *
  * A file already indexed as `unreadable` whose `(size, mtime)` is unchanged is never reopened:
  * that falls straight out of the diff (its stat still matches, so it lands in the untouched
@@ -328,20 +331,31 @@ class LibraryIndexer(
         val result = LinkedHashMap<String, FileStat>()
         val walkedRoots = mutableListOf<File>()
         for (root in roots) {
-            // Not a readable directory right now: unmounted storage, a folder renamed in the
-            // device file manager, or a grant revoked since the last sync. walkTopDown would
-            // yield nothing here and throw nothing — indistinguishable from an emptied folder
-            // unless we check first.
-            if (!root.isDirectory) continue
+            var complete = true
             try {
+                // Not a readable directory right now: unmounted storage, a folder renamed in the
+                // device file manager, or a grant revoked since the last sync. walkTopDown would
+                // yield nothing here and throw nothing — indistinguishable from an emptied folder
+                // unless we check first. Kept INSIDE the try: under a SecurityManager these are
+                // documented throw sites, and a throw here must skip only this root, not abort the
+                // whole sync().
+                if (!root.isDirectory || !root.canRead()) continue
                 root.walkTopDown()
+                    // A directory that exists, passes isDirectory, but can't be listed —
+                    // File.listFiles() returns null rather than throwing — routes here instead of
+                    // yielding a SecurityException. This is the dominant real-world shape on
+                    // Android: a revoked or half-revoked all-files grant surfaces as EACCES, not a
+                    // SecurityException, and it can hit a subdirectory nested arbitrarily deep
+                    // under an otherwise-readable root. Without this, that subtree silently reads
+                    // as empty and every book beneath it looks vanished.
+                    .onFail { _, _ -> complete = false }
                     .maxDepth(10) // Closes an unbounded symlink-loop walk; unreachable in practice
                     // on the Nomad's flat /Document layout, but free insurance.
                     .filter { it.isFile && it.extension.lowercase() in BOOK_EXTENSIONS }
                     .forEach { file ->
                         result[file.path] = FileStat(file.length(), file.lastModified())
                     }
-                walkedRoots += root
+                if (complete) walkedRoots += root
             } catch (e: SecurityException) {
                 // A denied or half-revoked all-files-access grant can surface here as walkTopDown
                 // touches directories. The walk stopped partway, so this root was NOT fully seen:
