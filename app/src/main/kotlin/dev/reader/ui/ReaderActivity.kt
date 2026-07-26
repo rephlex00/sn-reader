@@ -1733,13 +1733,15 @@ open class ReaderActivity : AppCompatActivity() {
         // mid-commit then reopens at the committed chapter's start instead of quietly reverting to
         // the origin. Same-chapter commits skip the down-payment: the stored position is already
         // inside the right chapter, and a coarse offset-0 write would WORSEN a rare death there
-        // (chapter start vs the exact page already stored).
+        // (chapter start vs the exact page already stored). The `finally` below honours this same
+        // contract for an Activity teardown, not just a process death: it never repairs a
+        // teardown-driven cancellation back to the origin, because lift-off is a commitment.
         val coarseChapter = snappedChapter ?: locateByFraction(chapterWeights, fraction).spineIndex
+        val downPaymentWritten = coarseChapter != origin.spineIndex
         // Captured BEFORE the down-payment overwrites the stored row, so a commit that never
         // resolves can put back exactly what was there. currentLocator() reads the already-cached
         // current chapter, so this costs nothing.
-        val originLocator = if (coarseChapter != origin.spineIndex) currentLocator() else null
-        val downPaymentWritten = coarseChapter != origin.spineIndex
+        val originLocator = if (downPaymentWritten) currentLocator() else null
         if (downPaymentWritten) {
             persistPosition(Locator(coarseChapter, 0))
         }
@@ -1820,13 +1822,22 @@ open class ReaderActivity : AppCompatActivity() {
                 scrubPreview.setImageDrawable(null)
                 shownPreviewEntry = null
             } finally {
-                // The down-payment exists so a process death mid-commit reopens at the committed
-                // chapter rather than reverting. But a commit that is CANCELLED (a second touch on
-                // the track, the overlay closing) or that resolves back to where it started never
-                // refines it, and the reader would then reopen in a chapter they never visited.
-                // persistPosition launches into the app-scoped writer, so it still commits even
-                // though this coroutine is being cancelled.
-                if (downPaymentWritten && !resolved) {
+                // The down-payment exists so a process death OR an Activity teardown mid-commit
+                // reopens at the committed chapter rather than reverting — lift-off is a commitment,
+                // not a draft (see the down-payment comment above), and onPause flushes the grace
+                // straight into this call, so double-Back and swipe-away arrive here having
+                // committed. A teardown-driven cancellation must therefore leave the down-payment
+                // standing: repairing it would silently discard the navigation the down-payment
+                // exists to preserve. (The overlay closing is NOT a cancellation trigger — commit
+                // clears scrubOrigin synchronously above, so abandonScrub early-returns before it
+                // ever reaches scrubJob?.cancel().)
+                //
+                // Only a commit that is cancelled while the reader STAYS in the book — a second
+                // touch on the track, the race guard in onScrubStart — or one that resolves back to
+                // where it started (the no-op branch above) ever repairs the down-payment.
+                // persistPosition launches into the app-scoped writer, so the repair still commits
+                // even though this coroutine is being cancelled.
+                if (downPaymentWritten && !resolved && !isFinishing && !isDestroyed) {
                     originLocator?.let { persistPosition(it) }
                 }
             }
@@ -1893,8 +1904,12 @@ open class ReaderActivity : AppCompatActivity() {
     // so these read-only hooks let ReaderActivityTest wait for it and assert its no-preview contract
     // without widening the production API. None is called in production.
 
-    /** True when no commit render is in flight — a test waits on this after a commit or an abandon. */
-    internal val scrubIdleForTest: Boolean get() = scrubJob?.isActive != true
+    /** True when no commit render is in flight — a test waits on this after a commit or an abandon.
+     *  `isCompleted`, not `isActive`: `cancel()` flips `isActive` false the instant it is CALLED,
+     *  before the coroutine has unwound to its `finally` — a test polling `isActive` can observe
+     *  "idle" while the repair write below is still in flight. `isCompleted` only goes true once the
+     *  coroutine (finally included) has actually finished. */
+    internal val scrubIdleForTest: Boolean get() = scrubJob?.isCompleted ?: true
 
     /** The reader's current position — a test's "did the page actually move" probe. */
     internal val currentStateForTest: ReadingState get() = state

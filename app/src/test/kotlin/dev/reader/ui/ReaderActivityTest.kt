@@ -1434,11 +1434,25 @@ class ReaderActivityTest {
         // BEFORE cancelling anything — this is the synchronous write, unaffected by the repair.
         scrubber.onScrubCommit?.invoke(0.9f, null)
 
-        idleUntil { rowFor(app, book.path)!!.spineIndex != originChapter }
-        assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(originChapter)
-        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(0)
-        // The page itself never moved — the coroutine hasn't reached showPage yet.
+        // Snapshot the row INSIDE the wait predicate: nothing has cancelled the commit coroutine
+        // yet, so it free-runs concurrently with this wait, and a second, separate DB read taken
+        // after idleUntil returns would race it resolving (and overwriting this row) during any
+        // further looper idling. The down-payment write beating full resolution is only guaranteed
+        // at this exact instant, not afterward.
+        var downPayment: BookEntity? = null
+        idleUntil {
+            downPayment = rowFor(app, book.path)
+            downPayment != null && downPayment!!.spineIndex != originChapter
+        }
+        assertThat(downPayment!!.spineIndex).isGreaterThan(originChapter)
+        assertThat(downPayment!!.charOffset).isEqualTo(0)
+        // The page itself never moved — the coroutine hadn't reached showPage when this was taken.
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(originChapter)
+
+        // Cancel now, after the assertions above, purely so the coroutine does not free-run past
+        // the end of this test and bleed into the next one.
+        activity.cancelScrubJobForTest()
+        idleUntil { activity.scrubIdleForTest }
     }
 
     @Test
@@ -1473,6 +1487,39 @@ class ReaderActivityTest {
         assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(origin.charOffset)
         // The page itself never moved — the coroutine died before showPage.
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(origin.spineIndex)
+    }
+
+    @Test
+    fun `a commit followed by an activity teardown leaves the committed chapter stored, not the origin`() {
+        // The down-payment's own comment states the reason it exists: a lift followed within the
+        // grace by a fast teardown (double-Back, swipe-away; onPause flushes the grace straight into
+        // this call) cancels the commit coroutine via lifecycleScope before showPage/persist ever
+        // run. Unlike the coroutine-cancel tests above (a second touch on the track — the reader
+        // stays in the book), this IS the teardown case: "lift-off is a commitment, not a draft," so
+        // the down-payment must stand, not repair back to the origin the reader is leaving behind.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val originChapter = activity.currentStateForTest.spineIndex
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        idleUntil { rowFor(app, book.path)!!.spineIndex != originChapter } // down-payment landed
+
+        // Teardown while the pagination is still in flight — onDestroy cancels lifecycleScope,
+        // landing the coroutine's `finally` exactly where a real double-Back/swipe-away would.
+        controller.pause().stop().destroy()
+        idleUntil { activity.scrubIdleForTest }
+
+        val stored = rowFor(app, book.path)!!
+        assertThat(stored.spineIndex).isGreaterThan(originChapter)
+        assertThat(stored.charOffset).isEqualTo(0)
     }
 
     @Test
