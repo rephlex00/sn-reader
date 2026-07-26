@@ -2871,6 +2871,7 @@ class ReaderActivityTest {
             shadowOf(Looper.getMainLooper()).idle()
             Thread.sleep(20)
         }
+        check(condition()) { "condition never became true within ${timeoutMs}ms" }
     }
 
     /** Like [idleUntil], but deliberately never pumps the main looper — for waiting on a real
