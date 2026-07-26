@@ -1,6 +1,8 @@
 package dev.reader.ui
 
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
@@ -12,9 +14,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ChapterScrubberViewTest {
 
     // Attached to a real Activity window, not just laid out in isolation: the grace-window timer
@@ -655,5 +660,28 @@ class ChapterScrubberViewTest {
 
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
         assertThat(commits).isEqualTo(1)              // the timer was disarmed — no double commit
+    }
+
+    @Test
+    fun `drag geometry is computed once and reused across draws`() {
+        val view = ChapterScrubberView(RuntimeEnvironment.getApplication())
+        view.setBook(listOf(0f, 0.25f, 0.5f, 0.75f), progress = 0.1f)
+        view.setBookmarks(listOf(0.3f, 0.6f))
+        view.layout(0, 0, 1404, 165)
+
+        val canvas = Canvas(Bitmap.createBitmap(1404, 165, Bitmap.Config.ARGB_8888))
+        view.draw(canvas)
+        val first = view.chapterXsForTest
+
+        // A thumb move is the only thing a drag changes; the geometry must not be rebuilt.
+        view.setProgress(0.9f)
+        view.draw(canvas)
+
+        assertThat(view.chapterXsForTest).isSameInstanceAs(first)
+
+        // A real content change must rebuild it.
+        view.setBookmarks(listOf(0.4f))
+        view.draw(canvas)
+        assertThat(view.chapterXsForTest).isNotSameInstanceAs(first)
     }
 }
