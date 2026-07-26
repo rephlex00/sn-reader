@@ -122,4 +122,28 @@ class ZipResourceSourceTest {
             assertThat(src.entries()).containsExactly("b/2.txt", "a/1.txt", "ComicInfo.xml")
         }
     }
+
+    @Test
+    fun `a UTF-16 big-endian entry decodes by its BOM`() {
+        val bytes = "héllo".toByteArray(Charsets.UTF_16BE).let { byteArrayOf(0xFE.toByte(), 0xFF.toByte()) + it }
+        assertThat(decodeText(bytes)).isEqualTo("héllo")
+    }
+
+    @Test
+    fun `a UTF-16 little-endian entry decodes by its BOM`() {
+        val bytes = "héllo".toByteArray(Charsets.UTF_16LE).let { byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + it }
+        assertThat(decodeText(bytes)).isEqualTo("héllo")
+    }
+
+    @Test
+    fun `a UTF-8 BOM is stripped rather than becoming a leading zero-width character`() {
+        val bytes = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + "<?xml".toByteArray(Charsets.UTF_8)
+        assertThat(decodeText(bytes)).isEqualTo("<?xml")
+    }
+
+    @Test
+    fun `plain UTF-8 with no BOM is unchanged`() {
+        assertThat(decodeText("<?xml version=\"1.0\"?>".toByteArray(Charsets.UTF_8)))
+            .isEqualTo("<?xml version=\"1.0\"?>")
+    }
 }
