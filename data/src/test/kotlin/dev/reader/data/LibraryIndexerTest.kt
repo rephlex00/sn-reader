@@ -682,6 +682,40 @@ class LibraryIndexerTest {
     }
 
     @Test
+    fun `replacing a book's bytes drops its annotations but keeps them across an mtime-only touch`(): Unit = runBlocking {
+        val file = writeEpub("a.epub", contents = "original")
+        LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+        db.bookmarkDao().insert(
+            BookmarkEntity(
+                bookPath = file.path, spineIndex = 3, charOffset = 120,
+                progressFraction = 0.3f, createdAtMs = 0L,
+            ),
+        )
+        db.highlightDao().insert(
+            HighlightEntity(
+                bookPath = file.path, spineIndex = 3, startOffset = 100, endOffset = 140,
+                text = "a phrase", progressFraction = 0.3f, createdAtMs = 0L,
+            ),
+        )
+
+        // An mtime-only touch is the SAME content: annotations must survive it.
+        file.setLastModified(file.lastModified() + 10_000)
+        LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+        assertThat(db.bookmarkDao().bookmarksFor(file.path)).hasSize(1)
+        assertThat(db.highlightDao().highlightsForBook(file.path)).hasSize(1)
+
+        // Different bytes: the offsets now point into content that no longer exists.
+        file.writeText("a genuinely different and longer edition of the book")
+        LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+        assertThat(db.bookmarkDao().bookmarksFor(file.path)).isEmpty()
+        assertThat(db.highlightDao().highlightsForBook(file.path)).isEmpty()
+        // The row itself survives, with its position reset — unchanged behavior.
+        assertThat(dao.getByPath(file.path)!!.spineIndex).isEqualTo(0)
+    }
+
+    @Test
     fun `an unreadable subdirectory deletes nothing beneath it`(): Unit = runBlocking {
         val sub = File(root, "sub").apply { mkdirs() }
         File(sub, "a.epub").writeText("stub")

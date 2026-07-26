@@ -125,6 +125,9 @@ class LibraryIndexer(
         // book that gets a new cover (or loses one entirely, on a fresh crack failure) must not
         // leave its old thumbnail orphaned on disk.
         val staleCoverPaths = mutableListOf<String>()
+        // Paths whose BYTES changed under an existing row: their annotations are coordinates into
+        // content that is gone. Collected here and cleared after the row writes land below.
+        val replacedPaths = mutableListOf<String>()
         var added = 0
         var updated = 0
         var newlyUnreadable = 0
@@ -254,6 +257,7 @@ class LibraryIndexer(
                     )
                 }
                 toUpsert += entity
+                if (existing != null) replacedPaths += path
                 newCoverPath = entity.coverPath
                 if (existing == null) added++ else updated++
                 if (entity.unreadable) newlyUnreadable++
@@ -281,6 +285,11 @@ class LibraryIndexer(
                 unreadable = update.unreadable,
                 unreadableReason = update.unreadableReason,
             )
+        }
+        // After the row writes: the row must exist (the upsert above refreshed it) before its
+        // children are cleared, and a failed write must not have already destroyed annotations.
+        for (path in replacedPaths) {
+            dao.clearAnnotationsFor(path)
         }
         // Deleted only after the writes above have committed: deleting first and then failing
         // the write would leave a row still pointing at a file that no longer exists.
