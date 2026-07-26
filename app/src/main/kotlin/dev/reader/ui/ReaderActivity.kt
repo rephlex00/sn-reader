@@ -1447,7 +1447,9 @@ open class ReaderActivity : AppCompatActivity() {
                         }
                     }
                 }
-                stripStore.evictOverBudget(keep = file)
+                // IO, not Main: this stats every file under the previews root and can delete whole
+                // strip directories. The stripFor call below already knew that; this line didn't.
+                withContext(Dispatchers.IO) { stripStore.evictOverBudget(keep = file) }
                 previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, cfg) }
                 // Generation is done and previewStrip just reloaded above (back on the launch's
                 // main-thread context after that withContext returns): give the resting readout
