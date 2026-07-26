@@ -87,24 +87,43 @@ class EpubPackageParser {
     }
 
     /**
-     * Fails closed: an unparseable `encryption.xml`, or one whose only algorithms are
-     * not in the known-benign font-obfuscation set, is treated as real DRM. An unknown
-     * encryption scheme is exactly the case where refusing to guess is the safe choice.
+     * Fails closed on anything that isn't recognisably an `encryption.xml`: unparseable
+     * bytes, the wrong file entirely, or a document with no `<encryption>` root — that is
+     * exactly the case where refusing to guess is the safe choice, same as an algorithm
+     * outside the known-benign font-obfuscation set.
+     *
+     * A real `<encryption>` document that lists zero `EncryptionMethod` elements is
+     * different, and opens. Some producers emit a vestigial `encryption.xml` that
+     * declares nothing at all; that describes a book with zero encrypted entries, not
+     * DRM. The two cases are distinguished structurally — by whether an `<encryption>`
+     * element exists — rather than by whether any algorithms were found, because an
+     * empty algorithm list is otherwise ambiguous: Jsoup's XML parser is lenient enough
+     * that garbage input (no `<encryption>` element at all) also yields an empty list
+     * once you only look at `EncryptionMethod` children. Telling those apart is why
+     * [extractEncryptionAlgorithms] returns `null` for "not an encryption document" and
+     * a (possibly empty) list for "an encryption document that failed to specify one".
      */
     private fun checkEncryption(source: ResourceSource) {
         val algorithms = readTextChecked(source, ENCRYPTION_PATH)?.let { extractEncryptionAlgorithms(it) }
-        val isFontObfuscationOnly = !algorithms.isNullOrEmpty() &&
-            algorithms.all { it in FONT_OBFUSCATION_ALGORITHMS }
-        if (!isFontObfuscationOnly) {
+            ?: throw EpubException.DrmProtected("This book is DRM-protected and cannot be opened.")
+        if (algorithms.any { it !in FONT_OBFUSCATION_ALGORITHMS }) {
             throw EpubException.DrmProtected("This book is DRM-protected and cannot be opened.")
         }
     }
 
+    /**
+     * Returns `null` when [xml] isn't recognisably an `encryption.xml` document — unparseable,
+     * or simply lacking an `<encryption>` root element — and a (possibly empty) list of
+     * `Algorithm` values otherwise. The `null` vs. empty-list distinction is load-bearing: see
+     * [checkEncryption].
+     */
     private fun extractEncryptionAlgorithms(xml: String): List<String>? = runCatching {
-        Jsoup.parse(xml, "", Parser.xmlParser())
-            .allElements
-            // Match by local name: the namespace prefix on <enc:EncryptionMethod> varies
-            // by tool and isn't worth depending on Jsoup's CSS namespace syntax for.
+        val elements = Jsoup.parse(xml, "", Parser.xmlParser()).allElements
+        // Match by local name: the namespace prefix varies by tool and isn't worth
+        // depending on Jsoup's CSS namespace syntax for (same idiom as EncryptionMethod
+        // below, and as the OPF parsing in this file).
+        if (elements.none { it.tagName().substringAfter(':') == "encryption" }) return@runCatching null
+        elements
             .filter { it.tagName().substringAfter(':') == "EncryptionMethod" }
             .map { it.attr("Algorithm") }
             .filter { it.isNotEmpty() }

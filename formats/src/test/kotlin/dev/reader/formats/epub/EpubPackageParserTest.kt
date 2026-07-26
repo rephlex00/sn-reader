@@ -174,6 +174,30 @@ class EpubPackageParserTest {
     }
 
     @Test
+    fun `opens when encryption xml declares no algorithms at all`() {
+        // A well-formed but vestigial <encryption/> with zero EncryptionMethod elements
+        // describes a book with zero encrypted entries — that is affirmatively benign,
+        // unlike the garbage/unparseable case above, which has no <encryption> element
+        // at all and must still fail closed.
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry(
+                "META-INF/encryption.xml",
+                """<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"/>""",
+            )
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>No Declared Encryption</dc:title></metadata>
+  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+        }
+        val pkg = source.use(parser::parse)
+
+        assertThat(pkg.metadata.title).isEqualTo("No Declared Encryption")
+    }
+
+    @Test
     fun `opens normally when encryption xml only records font obfuscation`() {
         val source = buildEpub(file()) {
             entry("META-INF/container.xml", CONTAINER_XML)
