@@ -1406,7 +1406,20 @@ open class ReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val dao = (application as ReaderApplication).database.bookmarkDao()
             val marks = withContext(Dispatchers.IO) { dao.bookmarksFor(path) }
-            val fractions = marks.map { readerSurface.progressFor(it.spineIndex, it.charOffset) }
+            // progressFor paginates a chapter on its first lazy read, so a bookmark anchored in a
+            // chapter that fails to read throws here — and this pass runs at EVERY open, so the
+            // throw crashed the book permanently (the row persists). Glyph placement is decoration:
+            // a bookmark that cannot be located precisely falls back to the whole-book fraction
+            // captured when it was saved, and the reader opens either way.
+            val fractions = marks.map { mark ->
+                try {
+                    readerSurface.progressFor(mark.spineIndex, mark.charOffset)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    mark.progressFraction
+                }
+            }
             chapterScrubber.setBookmarks(fractions)
         }
     }

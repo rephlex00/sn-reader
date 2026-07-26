@@ -13,6 +13,7 @@ import com.google.common.truth.Truth.assertThat
 import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
+import dev.reader.data.BookmarkEntity
 import dev.reader.data.HighlightEntity
 import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
@@ -970,6 +971,34 @@ class ReaderActivityTest {
         idleUntil { ShadowToast.getTextOfLatestToast() != null }
         assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("This book isn't in your library yet.")
         assertThat(runBlocking { app.database.bookmarkDao().bookmarksFor(book.path) }).isEmpty()
+    }
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a bookmark that cannot be located does not crash the open`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        runBlocking {
+            app.database.bookDao().upsertAll(listOf(dbBook(book.path)))
+            // spineIndex 999 is past the end of the spine: progressFor throws on it, exactly as a
+            // corrupt chapter does on its first lazy read.
+            app.database.bookmarkDao().insert(
+                BookmarkEntity(
+                    bookPath = book.path, spineIndex = 999, charOffset = 0,
+                    progressFraction = 0.42f, createdAtMs = 0L,
+                ),
+            )
+        }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+
+        // The reader opened rather than dying, and the unlocatable bookmark fell back to its
+        // stored fraction rather than being dropped.
+        assertThat(controller.get().isFinishing).isFalse()
+        idleUntil { scrubberBookmarkFractionsOf(controller.get()).isNotEmpty() }
+        assertThat(scrubberBookmarkFractionsOf(controller.get())).containsExactly(0.42f)
     }
 
     // -- Highlights: gesture state machine, chapter cache, panel ------------------------------
@@ -2311,6 +2340,9 @@ class ReaderActivityTest {
 
     private fun scrubberTextOf(activity: ReaderActivity): String =
         activity.findViewById<TextView>(R.id.scrubber).text.toString()
+
+    private fun scrubberBookmarkFractionsOf(activity: ReaderActivity): List<Float> =
+        activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber).bookmarkFractionsForTest
 
     /** Dispatches a real single-pointer touch to a laid-out [ChapterScrubberView] — the grace-flush
      *  test needs the view's own gesture state machine (DOWN/UP), not the callback seams the other

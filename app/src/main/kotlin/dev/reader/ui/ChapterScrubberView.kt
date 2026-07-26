@@ -156,6 +156,9 @@ class ChapterScrubberView @JvmOverloads constructor(
     private var chapterStarts: List<Float> = emptyList()
     private var progress: Float = 0f
     private var bookmarkFractions: List<Float> = emptyList()
+
+    /** The bookmark fractions currently drawn — a test asserts glyph placement without a screenshot. */
+    internal val bookmarkFractionsForTest: List<Float> get() = bookmarkFractions
     private var generatedChapters: Set<Int> = emptySet()
     private var previewsEnabled: Boolean = true
 
