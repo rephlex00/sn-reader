@@ -1811,6 +1811,8 @@ class ReaderActivityTest {
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
+        // The blit is decoded off-main now (Task 8); give it a chance to land before asserting.
+        idleUntil { preview.visibility == View.VISIBLE }
         assertThat(preview.visibility).isEqualTo(View.VISIBLE)
 
         scrubber.onScrubCommit?.invoke(0.5f, null)
@@ -1844,6 +1846,8 @@ class ReaderActivityTest {
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.9f, null)
+        // The blit is decoded off-main now (Task 8); give it a chance to land before committing.
+        idleUntil { preview.visibility == View.VISIBLE }
         assertThat(preview.visibility).isEqualTo(View.VISIBLE)
 
         scrubber.onScrubCommit?.invoke(0.9f, null)
@@ -1948,6 +1952,8 @@ class ReaderActivityTest {
         // Confirm the strip is live before the settings change: a drag shows the window.
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
+        // The blit is decoded off-main now (Task 8); give it a chance to land before asserting.
+        idleUntil { preview.visibility == View.VISIBLE }
         assertThat(preview.visibility).isEqualTo(View.VISIBLE)
         scrubber.onScrubCommit?.invoke(0.5f, null)
         idleUntil { activity.scrubIdleForTest }
@@ -2020,6 +2026,32 @@ class ReaderActivityTest {
         }
     }
 
+    // -- Task 8: the scrub drag decodes previews off the main thread ------------------------------
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a scrub drag decodes previews off the main thread`() {
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        runBlocking {
+            PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, activity.configForTest!!)
+        }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+        activity.showOverlayForTest()
+
+        // The move returns before any decode has happened: the blit lands later, off-main.
+        activity.scrubMoveForTest(fraction = 0.5f)
+        assertThat(activity.previewBitmapShownForTest).isFalse()
+
+        idleUntil { activity.previewBitmapShownForTest }
+        assertThat(activity.previewBitmapShownForTest).isTrue()
+    }
+
     // -- Task 4 (scrubber v2.1): snap fix, previews toggle, per-book delete ---------------------
 
     @Test
@@ -2062,6 +2094,11 @@ class ReaderActivityTest {
         scrubber.onScrubMove?.invoke(0.5f, null)
 
         assertThat(preview.visibility).isEqualTo(View.GONE) // no window when previews off
+
+        // Previews are genuinely off — the early return in onScrubMoved never even schedules a
+        // decode — not merely a decode still in flight. Idling confirms nothing shows up later.
+        shadowOf(Looper.getMainLooper()).idle()
+        assertThat(preview.visibility).isEqualTo(View.GONE)
     }
 
     @Test

@@ -278,6 +278,14 @@ open class ReaderActivity : AppCompatActivity() {
     private var fasterPageTurns: Boolean = false
     private var fullRefreshEveryN: Int = 6
 
+    /** Mirrors [ReaderPrefs.previewsEnabled], read once at open and kept current by the Aa toggle —
+     *  so the drag hot path never constructs [ReaderPrefs]. */
+    private var previewsEnabled: Boolean = true
+
+    /** The one in-flight preview decode, cancelled by the next move so a fast sweep never queues
+     *  a backlog of decodes for entries the finger has already passed. */
+    private var previewDecodeJob: Job? = null
+
     /** Whole-book progress `[0,1]` of the page [showPage] last drew — captured there (independently
      *  of [showProgressBar]) so [persistPosition] can store it for the library's percentage. */
     private var currentBookProgress: Float = 0f
@@ -584,6 +592,7 @@ open class ReaderActivity : AppCompatActivity() {
             val prefs = ReaderPrefs(this@ReaderActivity)
             val enabled = !prefs.previewsEnabled
             prefs.previewsEnabled = enabled
+            previewsEnabled = enabled
             chapterScrubber.setPreviewsEnabled(enabled)
             if (enabled) {
                 if (previewStrip == null) scheduleStripGeneration()
@@ -1265,6 +1274,7 @@ open class ReaderActivity : AppCompatActivity() {
                 showProgressBar = ReaderPrefs(this@ReaderActivity).showProgressBar
                 fasterPageTurns = ReaderPrefs(this@ReaderActivity).fasterPageTurns
                 fullRefreshEveryN = ReaderPrefs(this@ReaderActivity).fullRefreshEveryN
+                previewsEnabled = ReaderPrefs(this@ReaderActivity).previewsEnabled
                 bookPath = file.path
                 navigator = PageNavigator(doc.spineSize)
                 pageView.onTap = ::onTap
@@ -1720,7 +1730,8 @@ open class ReaderActivity : AppCompatActivity() {
 
         // Previews off: the readout above is the whole story; the window stays GONE (wherever it
         // already was — togglePreviews hides it the moment previews go off) and no disk is touched.
-        if (!ReaderPrefs(this).previewsEnabled) return
+        // Reads the mirrored field, never ReaderPrefs: this runs on every ACTION_MOVE.
+        if (!previewsEnabled) return
 
         // The preview blit: the snapped chapter's opening thumbnail, or (unsnapped) the nearest
         // sampled page, decoded off disk. No strip -> no window; the readout above already carries
@@ -1741,17 +1752,28 @@ open class ReaderActivity : AppCompatActivity() {
                 scrubPreview.visibility = View.GONE
                 shownPreviewEntry = null
             } else if (entry != shownPreviewEntry) {
-                val bmp = android.graphics.BitmapFactory.decodeFile(
-                    stripStore.thumbnailFile(bookFile, cfg, entry).path,
-                )
                 shownPreviewEntry = entry            // mark attempted either way — no re-decode churn
-                if (bmp != null) {
-                    scrubPreview.setImageBitmap(bmp)
-                    scrubPreview.visibility = View.VISIBLE
-                } else {
-                    // A missing/corrupt thumbnail: hide rather than leave a wrong page showing.
-                    scrubPreview.setImageDrawable(null)
-                    scrubPreview.visibility = View.GONE
+                // Off the main thread: this is a ~702x936 WEBP decoding to ~2.6MB, and it used to
+                // run inline in the touch handler on every entry the finger crossed. The previous
+                // decode is cancelled rather than queued — during a fast sweep the finger has
+                // already passed those entries, and their bitmaps would only be thrown away.
+                previewDecodeJob?.cancel()
+                val thumbnail = stripStore.thumbnailFile(bookFile, cfg, entry)
+                previewDecodeJob = lifecycleScope.launch {
+                    val bmp = withContext(Dispatchers.IO) {
+                        android.graphics.BitmapFactory.decodeFile(thumbnail.path)
+                    }
+                    // A newer move may have superseded this decode while it was in flight; only
+                    // paint if this is still the entry the finger is on.
+                    if (shownPreviewEntry != entry) return@launch
+                    if (bmp != null) {
+                        scrubPreview.setImageBitmap(bmp)
+                        scrubPreview.visibility = View.VISIBLE
+                    } else {
+                        // A missing/corrupt thumbnail: hide rather than leave a wrong page showing.
+                        scrubPreview.setImageDrawable(null)
+                        scrubPreview.visibility = View.GONE
+                    }
                 }
             }
         }
@@ -2037,11 +2059,20 @@ open class ReaderActivity : AppCompatActivity() {
      *  without reaching into [Intent] extras itself. Not called in production. */
     internal val bookPathForTest: String? get() = bookPath
 
+    /** Drives a drag position directly — a test moves the thumb without a touch stream. */
+    internal fun scrubMoveForTest(fraction: Float, snappedChapter: Int? = null) =
+        onScrubMoved(fraction, snappedChapter)
+
+    /** Whether the floating preview is currently showing a decoded page. */
+    internal val previewBitmapShownForTest: Boolean
+        get() = scrubPreview.visibility == View.VISIBLE && scrubPreview.drawable != null
+
     /** Sets [ReaderPrefs.previewsEnabled] directly and pushes it to the scrubber, without going
      *  through a real Aa-sheet tap — a test's way to drive the previews-off path. Not called in
      *  production; production always goes through [SettingsHost.togglePreviews]. */
     internal fun setPreviewsEnabledForTest(enabled: Boolean) {
         ReaderPrefs(this).previewsEnabled = enabled
+        previewsEnabled = enabled
         chapterScrubber.setPreviewsEnabled(enabled)
     }
 
