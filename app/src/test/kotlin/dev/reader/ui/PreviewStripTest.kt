@@ -72,6 +72,15 @@ class PreviewStripTest {
     }
 
     @Test
+    fun `an otherwise well-formed strip-v1 index is rejected — the pipeline outgrew it`() {
+        // A pre-upgrade strip is bit-for-bit valid by the old format: real header, real entry.
+        // It must still be rejected on version alone, so a renderer change that moved pagination
+        // without touching RenderConfig (see INDEX_VERSION's comment) can't survive as "valid".
+        val staleButWellFormed = "strip-v1\nabc 123 456 50\n0.0 0 0 000.webp\n"
+        assertThat(parseStripIndex(staleButWellFormed)).isNull()
+    }
+
+    @Test
     fun `nearest entry is by fraction distance with clamped ends`() {
         val entries = listOf(
             StripEntry(0.0f, 0, 0, "a"), StripEntry(0.4f, 1, 0, "b"), StripEntry(0.9f, 2, 0, "c"),
