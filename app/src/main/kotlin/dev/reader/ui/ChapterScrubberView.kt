@@ -160,7 +160,7 @@ class ChapterScrubberView @JvmOverloads constructor(
     /** The bookmark fractions currently drawn — a test asserts glyph placement without a screenshot. */
     internal val bookmarkFractionsForTest: List<Float> get() = bookmarkFractions
     private var generatedChapters: Set<Int> = emptySet()
-    private var previewsEnabled: Boolean = true
+    private var generationStateVisible: Boolean = true
 
     // Pixel-space geometry, rebuilt only when the book, bookmarks, generation state, or size
     // change — never on a thumb move. onDraw runs on every ACTION_MOVE, and rebuilding all of
@@ -277,11 +277,14 @@ class ChapterScrubberView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** When previews are off, every segment draws solid — pending dots only mean something while a
-     *  preview strip is actually being built. */
-    fun setPreviewsEnabled(enabled: Boolean) {
+    /** Whether pending-generation state (the dashed/dotted track, the pending-dot ticks) can be
+     *  shown at all. When false, every segment draws solid regardless of [generatedChapters] —
+     *  for a caller with no generation phase (comics: every page always exists), there is no
+     *  pending state to show. When true, [generatedChapters] decides solid vs pending per chapter,
+     *  as it does for the EPUB reader's background strip generation. */
+    fun setGenerationStateVisible(visible: Boolean) {
         invalidateGeometry()
-        previewsEnabled = enabled
+        generationStateVisible = visible
         invalidate()
     }
 
@@ -576,8 +579,8 @@ class ChapterScrubberView @JvmOverloads constructor(
         // finger-buffer, so a thumb drifting down while dragging stays on glass, off the bezel.
         val centreY = height * 0.35f
 
-        // allSolid when previews are off OR every chapter is generated (a complete/absent strip):
-        val allSolid = !previewsEnabled ||
+        // allSolid when generation state is hidden OR every chapter is generated (a complete/absent strip):
+        val allSolid = !generationStateVisible ||
             (chapterStarts.isNotEmpty() && generatedChapters.size >= chapterStarts.size)
 
         // Track: a solid STEEL rounded-cap line reads as filled-in; a pending chapter draws as a
@@ -603,7 +606,7 @@ class ChapterScrubberView @JvmOverloads constructor(
             if (run.size == 1) {
                 val idx = run[0]
                 if (idx == snapIdx) continue // redrawn below as the tall ink detent instead
-                val pending = previewsEnabled && !allSolid && idx !in generatedChapters
+                val pending = generationStateVisible && !allSolid && idx !in generatedChapters
                 drawChapterTick(canvas, chapterXs[idx], centreY, if (pending) mistPaint else graphitePaint)
             } else {
                 val meanX = run.map { chapterXs[it] }.average().toFloat()

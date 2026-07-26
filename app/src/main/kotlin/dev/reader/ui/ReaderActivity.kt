@@ -597,7 +597,7 @@ open class ReaderActivity : AppCompatActivity() {
             val enabled = !prefs.previewsEnabled
             prefs.previewsEnabled = enabled
             previewsEnabled = enabled
-            chapterScrubber.setPreviewsEnabled(enabled)
+            chapterScrubber.setGenerationStateVisible(enabled)
             if (enabled) {
                 if (previewStrip == null) scheduleStripGeneration()
             } else {
@@ -1373,7 +1373,7 @@ open class ReaderActivity : AppCompatActivity() {
                     // strip just loaded, if any) to the scrubber, so a book reopened with a complete
                     // strip already on disk shows its track solid from the first frame rather than
                     // dashed until some later event repaints it.
-                    chapterScrubber.setPreviewsEnabled(ReaderPrefs(this@ReaderActivity).previewsEnabled)
+                    chapterScrubber.setGenerationStateVisible(ReaderPrefs(this@ReaderActivity).previewsEnabled)
                     previewStrip?.let {
                         generatedChapters.clear()
                         generatedChapters.addAll(generatedChaptersOf(it))
@@ -2133,7 +2133,7 @@ open class ReaderActivity : AppCompatActivity() {
     internal fun setPreviewsEnabledForTest(enabled: Boolean) {
         ReaderPrefs(this).previewsEnabled = enabled
         previewsEnabled = enabled
-        chapterScrubber.setPreviewsEnabled(enabled)
+        chapterScrubber.setGenerationStateVisible(enabled)
     }
 
     /** Drives the Aa sheet's per-book delete without a real tap. Not called in production. */

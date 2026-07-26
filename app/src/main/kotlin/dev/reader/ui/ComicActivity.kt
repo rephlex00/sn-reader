@@ -75,8 +75,8 @@ open class ComicActivity : AppCompatActivity() {
      * on-device debugging against panel firmware that fabricates phantom lifts, and reimplementing
      * it for comics would reintroduce every misfire it fixed. Wired with an empty chapter list
      * ([ChapterScrubberView.setBook]'s `chapterStartFractions`) — comics have no chapters, and 358
-     * page ticks would smear anyway — and [ChapterScrubberView.setPreviewsEnabled] `false`, since a
-     * comic page has no generation phase to show pending-dots for.
+     * page ticks would smear anyway — and [ChapterScrubberView.setGenerationStateVisible] `false`,
+     * since a comic page has no generation phase to show pending-dots for.
      */
     private lateinit var chapterScrubber: ChapterScrubberView
 
@@ -170,7 +170,7 @@ open class ComicActivity : AppCompatActivity() {
         bookmarkButton = overlay.findViewById(R.id.comic_bookmark_button)
 
         chapterScrubber = overlay.findViewById(R.id.comic_scrubber)
-        chapterScrubber.setPreviewsEnabled(false)
+        chapterScrubber.setGenerationStateVisible(false)
         scrubberBackView = overlay.findViewById(R.id.comic_scrubber_back)
         scrubberBackView.setOnClickListener { onBackJump() }
         scrubPreview = overlay.findViewById(R.id.comic_preview)
