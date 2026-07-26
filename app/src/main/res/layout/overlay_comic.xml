@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The comic reader's chrome layer, mirroring overlay_reader.xml (the EPUB reader's overlay) so
+     the two readers share the same dimens, styles and type scale rather than approximations of
+     them: a monochrome layer drawn ABOVE the page (added after ComicPageView in the content
+     FrameLayout). The top bar holds Back, the book title, the bookmark toggle, the Bookmarks
+     panel opener and the reading-direction toggle; the foot holds a read-only "page X of Y"
+     readout, the ↩ jump-back ring and the chapter timeline.
+
+     Touch model: this root FrameLayout is NOT clickable, so it does not consume touches — only
+     its own controls do. A tap anywhere else on the overlay falls through to ComicPageView below,
+     whose onTap sees the overlay is up and dismisses it (one redraw) instead of turning a page.
+     Starts GONE; ComicActivity toggles visibility. No background on the root, so the page shows
+     through between the two opaque-white bars.
+
+     e-ink: solid white bars, black text, flat black divider lines. No ripple/selectableItemBackground
+     (it animates), no elevation/shadow (it ghosts), no animation of any kind. Large tap targets.
+
+     Wiring (ChapterScrubberView, the ↩ ring, the preview): placed here but left unwired — see the
+     comic chrome parity design doc. Reusing the EPUB reader's ChapterScrubberView unchanged is
+     the load-bearing decision; it is not touched by this layout. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/comic_overlay"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:visibility="gone">
+
+    <!-- Top bar: Back, book title, bookmark glyph, Bookmarks and the L→R/R→L direction toggle,
+         anchored to the top edge. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="@android:color/white"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/comic_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:gravity="center"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="12dp"
+                android:text="@string/reader_back"
+                android:textColor="@android:color/black"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/comic_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:paddingHorizontal="@dimen/toolbar_button_padding_h"
+                android:paddingVertical="@dimen/toolbar_padding_v"
+                android:textColor="@android:color/black"
+                android:textSize="18sp" />
+
+            <!-- Toggles the bookmark on the current page (glyph only, like the reader's own
+                 ic_bookmark control); its content description carries the add/remove state for
+                 accessibility since the glyph itself does not change. -->
+            <ImageView
+                android:id="@+id/comic_bookmark_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_bookmark"
+                android:contentDescription="@string/bookmark_add" />
+
+            <!-- Opens the Bookmarks panel (ComicBookmarksPanel). Flat text control styled exactly
+                 like the reader's Contents/Highlights buttons — not a Material Button. -->
+            <TextView
+                android:id="@+id/comic_bookmarks_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="12dp"
+                android:text="@string/reader_bookmarks"
+                android:textColor="@android:color/black"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <!-- Reading-direction toggle (L→R / R→L, set in code). Flat text control styled
+                 exactly like Contents/Highlights — deliberately NOT a Material Button, which is
+                 what this layout replaces. -->
+            <TextView
+                android:id="@+id/comic_direction_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="12dp"
+                android:textColor="@android:color/black"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="@android:color/black" />
+
+    </LinearLayout>
+
+    <!-- The scrubbing preview: on-demand decode of the page nearest the finger. Visible only
+         during a drag. A separate small view, so its repaints are its own region — the book page
+         underneath never repaints during a drag. Half screen: 374x499dp at the Nomad's 1.875
+         density = ~702x936px, matching overlay_reader.xml's scrub_preview exactly. -->
+    <ImageView
+        android:id="@+id/comic_preview"
+        android:layout_width="374dp"
+        android:layout_height="499dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="140dp"
+        android:background="@drawable/preview_window_border"
+        android:contentDescription="@null"
+        android:padding="2dp"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
+    <!-- Bottom scrubber: read-only "page X of Y" readout above a full-width timeline, anchored to
+         the bottom edge. The ↩ jump back-stack control gets its own fixed seat at the head of the
+         readout row, in a FrameLayout alongside the readout rather than beside it in a horizontal
+         row, so the readout stays independently centered and ↩ appearing/disappearing never
+         reflows anything — same shape as overlay_reader.xml's foot. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@android:color/white"
+        android:orientation="vertical">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="@android:color/black" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/comic_readout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="16dp"
+                android:textColor="@android:color/black"
+                android:textSize="16sp" />
+
+            <!-- Pops the jump back-stack. GONE until Task 28 wires JumpStack<Int> up for comics —
+                 see the comic chrome parity design doc. Anchored to the track's own left cap,
+                 identical placement to overlay_reader.xml's scrubber_back. -->
+            <TextView
+                android:id="@+id/comic_scrubber_back"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="start|center_vertical"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/return_seat"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:text="@string/scrubber_back"
+                android:textColor="#1A1A1A"
+                android:textSize="22sp"
+                android:visibility="gone" />
+
+        </FrameLayout>
+
+        <!-- Reused unchanged from the EPUB reader (see the design doc): the trusted-lift gesture
+             grammar here took several rounds of on-device debugging to get right. Placed but not
+             wired — Task 28 calls setBook/setBookmarks/setPreviewsEnabled and hooks the onScrub*
+             callbacks. -->
+        <dev.reader.ui.ChapterScrubberView
+            android:id="@+id/comic_scrubber"
+            android:layout_width="match_parent"
+            android:layout_height="88dp"
+            android:paddingHorizontal="16dp" />
+
+    </LinearLayout>
+
+</FrameLayout>
