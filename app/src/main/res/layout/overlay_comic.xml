@@ -198,8 +198,9 @@
 
         <!-- Reused UNCHANGED from the EPUB reader (see the design doc): the trusted-lift gesture
              grammar here took several rounds of on-device debugging to get right. ComicActivity
-             calls setBook(emptyList(), ...)/setBookmarks/setPreviewsEnabled(false) and hooks the
-             onScrub* callbacks — see its onScrubStart/onScrubMoved/onScrubCommitted/abandonScrub. -->
+             calls setBook(emptyList(), ...)/setBookmarks/setGenerationStateVisible(false) and
+             hooks the onScrub* callbacks — see its onScrubStart/onScrubMoved/onScrubCommitted/
+             abandonScrub. -->
         <dev.reader.ui.ChapterScrubberView
             android:id="@+id/comic_scrubber"
             android:layout_width="match_parent"

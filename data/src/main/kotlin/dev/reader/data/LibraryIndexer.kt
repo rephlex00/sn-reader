@@ -63,15 +63,23 @@ data class IndexResult(
  *
  * Deletion is **scoped to the roots the walk actually and completely enumerated**, never the
  * configured [roots]: a DB row is deleted only if its path is under a root that was walked start
- * to finish, every directory beneath it successfully listed, but the file itself is gone from
- * disk. A row for a book outside that walked scope — whether its root was never configured, or the
- * root (or some directory beneath it) could not be fully read this sync — is left completely
- * untouched: not refreshed, not deleted, not counted in [IndexResult]. That scoping is the
- * data-loss guard behind a configurable root: re-pointing the root *hides* the books it no longer
- * covers, but must never destroy their reading positions, and switching the root back reinstates
- * them unchanged. It equally guards a fixed root: a root or subdirectory that only *looks* empty —
- * unmounted storage, a renamed folder, or a partially revoked permission grant — is never mistaken
- * for one that genuinely lost every book beneath it.
+ * to finish, every directory beneath it visited and listed successfully, but the file itself is
+ * gone from disk. A row for a book outside that walked scope — whether its root was never
+ * configured, or the root (or some directory beneath it) could not be fully read this sync — is
+ * left completely untouched: not refreshed, not deleted, not counted in [IndexResult]. That
+ * scoping is the data-loss guard behind a configurable root: re-pointing the root *hides* the
+ * books it no longer covers, but must never destroy their reading positions, and switching the
+ * root back reinstates them unchanged. It equally guards a fixed root: a root or subdirectory that
+ * only *looks* empty — unmounted storage, a renamed folder, or a partially revoked permission
+ * grant — is never mistaken for one that genuinely lost every book beneath it.
+ *
+ * That guard is NOT complete, though: [walk]'s `maxDepth(10)` truncates silently — a directory
+ * past that depth is simply never descended into, with no `onFail` call, so the walk still
+ * reports `complete = true` and the root still counts as fully walked. A book living at depth 11
+ * or deeper is therefore invisible to this sync exactly as if it had been deleted from disk, and
+ * on the next sync its row — and its annotations, via the FK cascade — is removed for real.
+ * Unreachable on the target device's flat layout (hence left as-is here), but a real caveat should
+ * this ever run against a deeper tree.
  *
  * A file already indexed as `unreadable` whose `(size, mtime)` is unchanged is never reopened:
  * that falls straight out of the diff (its stat still matches, so it lands in the untouched

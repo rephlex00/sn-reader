@@ -1,8 +1,7 @@
 # Minification is ON (isMinifyEnabled = true, isShrinkResources = true in app/build.gradle.kts).
 # The rules below were arrived at by auditing every reflective call site and every XML-driven
-# class-name lookup in the app, rather than by pasting a generic template. See
-# .superpowers/sdd/task-23-report.md for the full audit trail (what was checked, what needed a
-# rule, and what turned out not to).
+# class-name lookup in the app: each rule that follows exists because a specific lookup below
+# needed it, and is commented in place with what it protects and why it's needed.
 
 # --- Room (dev.reader.data) ---------------------------------------------------------------------
 # Room.databaseBuilder(..., LibraryDatabase::class.java, ...) resolves the generated

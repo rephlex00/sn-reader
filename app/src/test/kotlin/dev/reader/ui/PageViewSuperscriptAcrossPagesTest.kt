@@ -37,12 +37,13 @@ import org.robolectric.annotation.GraphicsMode
  * [SuperscriptSpan] (via a baseline-shifting `translate`, see `TextLine.handleRun`/`drawTextRun`
  * in AOSP) actually surface at draw time.
  *
- * Extensive investigation (see task-32-report.md) could not reproduce the reported symptom
- * through this pipeline: every marker on every page — first or not — drew at the shrunk size on
- * every attempt, including this one. This test is therefore NOT a red-then-green regression test
- * for a fix; there is no code change to pin. It is a permanent guard recording exactly what was
- * verified correct here, so a future change to the builder/measurer/paginator/PageView draw path
- * that broke this invariant would be caught.
+ * Extensive investigation — driving the exact pipeline named above with a paragraph carrying 15
+ * markers spread across three pages, recording every `drawTextRun` call's paint size — could not
+ * reproduce the reported symptom: every marker on every page, first or not, drew at the shrunk
+ * size on every attempt, including this one. This test is therefore NOT a red-then-green
+ * regression test for a fix; there is no code change to pin. It is a permanent guard recording
+ * exactly what was verified correct here, so a future change to the builder/measurer/paginator/
+ * PageView draw path that broke this invariant would be caught.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
