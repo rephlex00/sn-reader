@@ -2203,6 +2203,79 @@ class ReaderActivityTest {
         assertThat(activity.stripGenerationsScheduledForTest).isEqualTo(2)
     }
 
+    // -- Fix pass Finding 1: a disk-reload hit must cancel the generation already in flight --------
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a settings change that reloads a strip cancels a generation already running for the abandoned config`() {
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { activity.stripGenerationsScheduledForTest == 1 }
+
+        // A real strip on disk for the book's ORIGINAL config — what the second toggle below
+        // should reload.
+        val originalConfig = activity.configForTest!!
+        runBlocking {
+            PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, originalConfig)
+        }
+
+        // First toggle: justified flips away from the strip's config — a genuine miss. Start a
+        // REAL generation for it (bypassing TestableReaderActivity's counting override), so there
+        // is an actual coroutine captured on this ABANDONED config once we flip back.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        val abandonedConfig = activity.configForTest!!
+        assertThat(abandonedConfig).isNotEqualTo(originalConfig)
+
+        // Hold the real generation open at a known point (past its own directory reset, before it
+        // touches the document) with a latch, rather than racing it against the settings-change
+        // click below on wall-clock timing — PreviewStripStoreTest found that exact race "resolves
+        // before generate's body starts often enough to be flaky."
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        activity.stripStoreForTest.onGenerateStartedForTest = {
+            started.countDown()
+            release.await()
+        }
+        activity.scheduleRealStripGenerationForTest()
+        started.await()
+        assertThat(activity.stripGenerationActiveForTest).isTrue()
+        // Captured by reference, not read again through the Activity field below: a fix for this
+        // finding supersedes/nulls that field on the very click that follows, so re-reading it
+        // afterward would silently stop tracking THIS job.
+        val abandonedJob = activity.stripGenerationJobForTest!!
+
+        // Second toggle: back to the exact config the strip on disk was generated for — a genuine
+        // hit — while the real generation above is still blocked mid-flight for the abandoned
+        // config.
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+
+        // Let the abandoned generation proceed to whatever completion cancellation allows, and wait
+        // for it to actually finish — one way or another — before checking the outcome. Without
+        // this wait, an unfixed hit branch (which resolves synchronously, with nothing async to
+        // wait on) would let this test's assertions run and pass BEFORE the still-uncancelled
+        // abandoned generation ever reaches its own damaging sibling sweep, proving nothing.
+        release.countDown()
+        idleUntil { abandonedJob.isCompleted }
+        // Let whatever is chained off that completion finish draining through the main looper —
+        // the fix's own join-then-reload coroutine, or the unfixed code's own previewStrip
+        // reassignment inside scheduleStripGeneration — before reading the final state.
+        repeat(5) { shadowOf(Looper.getMainLooper()).idle() }
+
+        // previewStrip must resolve to the CURRENT config (the one just reloaded), not the
+        // abandoned one the superseded generator was working on.
+        assertThat(activity.configForTest).isEqualTo(originalConfig)
+        assertThat(activity.previewStripConfigHashForTest).isEqualTo(configHash(originalConfig))
+        // And the strip actually reloaded must still be on disk — not deleted by the abandoned
+        // generator's sibling sweep.
+        assertThat(
+            PreviewStripStore(RuntimeEnvironment.getApplication()).stripFor(book, originalConfig)
+        ).isNotNull()
+    }
+
     // -- Task 7: turning previews off cancels generation in flight -------------------------------
 
     @Test
@@ -2225,7 +2298,16 @@ class ReaderActivityTest {
         activity.findViewById<View>(R.id.toggle_previews).performClick()
         shadowOf(Looper.getMainLooper()).idle()
 
+        // This only proves cancel() was requested, not that the coroutine has stopped running —
+        // cancellation is cooperative, so CPU may still be executing on Dispatchers.Default here
+        // (see stripGenerationFinishedForTest's KDoc).
         assertThat(activity.stripGenerationActiveForTest).isFalse()
+
+        // Wait for the real generation to actually stop before returning, or it can still be
+        // burning a Dispatchers.Default pool thread when the next test's idleUntil starts its own
+        // wall-clock deadline (see the fix-pass report's Finding 4: this is what caused an
+        // unrelated test to flake).
+        idleUntil { activity.stripGenerationFinishedForTest }
     }
 
     // -- Harness --------------------------------------------------------------------------------

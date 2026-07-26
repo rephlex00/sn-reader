@@ -592,8 +592,14 @@ open class ReaderActivity : AppCompatActivity() {
                 // of CPU producing thumbnails for a window that will not open — the pref was only
                 // ever checked when generation was SCHEDULED, so without this the reader watched
                 // the battery drain for a feature they had just switched off.
+                //
+                // Keep the handle (do NOT null it): cancel() is cooperative, so the coroutine can
+                // still be running when previews are switched back on. scheduleStripGeneration's
+                // own `previous?.cancelAndJoin()` is what actually waits for it to stop before a
+                // new generator touches the same directory — nulling the field here would throw
+                // that join away and let two generators race over one directory, exactly the
+                // hazard scheduleStripGeneration's KDoc says the join exists to prevent.
                 stripGenerationJob?.cancel()
-                stripGenerationJob = null
                 scrubPreview.visibility = View.GONE
                 scrubPreview.setImageDrawable(null)
                 shownPreviewEntry = null
@@ -861,16 +867,30 @@ open class ReaderActivity : AppCompatActivity() {
             // before (stepping text size back down, toggling justify off and on) usually still has
             // its strip sitting there. Only a genuine miss schedules generation, exactly as
             // openFirstBook does.
+            //
+            // A generation for the ABANDONED config may still be in flight, captured on its own
+            // cfg. Its completion runs a sibling sweep (see generate's KDoc) that deletes every
+            // OTHER config's strip — including the one about to be reloaded below — and then
+            // reassigns previewStrip to ITS config, stomping this reload. A bare cancel() only
+            // narrows that race: cancellation is cooperative, and generate()'s tail (writing the
+            // index, then the sibling sweep) runs with no suspension point to catch it. So this
+            // cancels AND joins before trusting the reload, exactly as scheduleStripGeneration's
+            // own supersede path does for the same reason.
             previewStrip = null
             shownPreviewEntry = null
-            val reloaded = bookPath?.let { stripStore.stripFor(File(it), newConfig) }
-            if (reloaded != null) {
-                previewStrip = reloaded
-                generatedChapters.clear()
-                generatedChapters.addAll(generatedChaptersOf(reloaded))
-                chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
-            } else {
-                scheduleStripGeneration()
+            val previous = stripGenerationJob
+            stripGenerationJob = null
+            lifecycleScope.launch {
+                previous?.cancelAndJoin()
+                val reloaded = bookPath?.let { stripStore.stripFor(File(it), newConfig) }
+                if (reloaded != null) {
+                    previewStrip = reloaded
+                    generatedChapters.clear()
+                    generatedChapters.addAll(generatedChaptersOf(reloaded))
+                    chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
+                } else {
+                    scheduleStripGeneration()
+                }
             }
             val newPageIndex = reflowedPageIndex(oldPages, state.pageIndex, newPages)
             state = ReadingState(state.spineIndex, newPageIndex)
@@ -1964,6 +1984,13 @@ open class ReaderActivity : AppCompatActivity() {
      *  against for [previewStrip] to recognize it as a match. */
     internal val configForTest: RenderConfig? get() = config
 
+    /** The Activity's own [PreviewStripStore] instance — a test's way to reach
+     *  [PreviewStripStore.onGenerateStartedForTest] on the SAME instance [scheduleStripGeneration]
+     *  actually uses (a freshly-constructed `PreviewStripStore(context)` elsewhere in a test is a
+     *  different object operating on the same disk directories, but can't set a hook this Activity
+     *  will ever call). Not called in production. */
+    internal val stripStoreForTest: PreviewStripStore get() = stripStore
+
     /** Re-runs the strip load [openFirstBook] does once, e.g. after a test has generated a strip for
      *  this exact (book, config) on disk after the fact. Not called in production. */
     internal fun loadPreviewStripForTest() {
@@ -1976,6 +2003,11 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** True once [loadPreviewStripForTest] (or the real open-time load) has found a strip. */
     internal val previewStripLoadedForTest: Boolean get() = previewStrip != null
+
+    /** The loaded [previewStrip]'s own config hash — lets a test tell WHICH config's strip ended up
+     *  loaded (e.g. after a race between a settings-change reload and a superseded generation for a
+     *  different config), not just that some strip is loaded. Null when none is. */
+    internal val previewStripConfigHashForTest: String? get() = previewStrip?.configHash
 
     /** The open book's absolute path — a test's seam for building files/strips against the same book
      *  without reaching into [Intent] extras itself. Not called in production. */
@@ -1999,6 +2031,20 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Whether a strip generation is running right now. */
     internal val stripGenerationActiveForTest: Boolean get() = stripGenerationJob?.isActive == true
+
+    /** The current [stripGenerationJob] itself — lets a test capture a REFERENCE to a specific
+     *  generation and poll ITS OWN completion later, even if [stripGenerationJob] itself is
+     *  reassigned or nulled out in the meantime (e.g. by a fix that supersedes it). Not called in
+     *  production. */
+    internal val stripGenerationJobForTest: Job? get() = stripGenerationJob
+
+    /** Whether [stripGenerationJob] has actually stopped running (null counts as stopped). Unlike
+     *  [stripGenerationActiveForTest], which goes false the instant `cancel()` is requested —
+     *  cancellation is cooperative, so the coroutine can still be executing — this only goes true
+     *  once the job reaches a terminal state. A test that cancels a real generation should poll
+     *  this (e.g. via `idleUntil`) before returning, or the coroutine can still be burning a
+     *  [Dispatchers.Default] pool thread when the next test starts. Not called in production. */
+    internal val stripGenerationFinishedForTest: Boolean get() = stripGenerationJob?.isCompleted != false
 
     /**
      * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s

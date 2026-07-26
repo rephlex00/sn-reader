@@ -82,6 +82,30 @@ class PreviewStripStoreTest {
     }
 
     @Test
+    fun `generate's no-op path sweeps a stale partial sibling left by a cancelled generation`() = runBlocking {
+        // At most one VALID strip can exist in a book's dir at any moment (stripFor's contract plus
+        // the sweep at the end of a completed generate() guarantee it), so a sibling sitting next to
+        // a valid strip can only be an index-less partial dir a cancelled generation left behind —
+        // never another config's live strip. Nothing else ever collects that garbage for the book
+        // currently open (evictOverBudget skips it), so the no-op path must sweep it itself or it
+        // survives indefinitely.
+        val book = multiChapterEpub(tempFolder.newFile("book.epub"))
+        val cfgA = config()
+        store.generate(book, cfgA)
+
+        val cfgB = config(textSizePx = 30f)
+        val partialDir = store.thumbnailFile(book, cfgB, StripEntry(0f, 0, 0, "000.webp")).parentFile!!
+        partialDir.mkdirs()
+        File(partialDir, "000.webp").writeText("partial, no index — exactly what a cancelled run leaves")
+        assertThat(store.stripFor(book, cfgB)).isNull() // confirm it really is inert garbage
+
+        store.generate(book, cfgA) // a no-op hit: A's own strip is already valid
+
+        assertThat(partialDir.exists()).isFalse()
+        assertThat(store.stripFor(book, cfgA)).isNotNull() // the sweep didn't touch the strip it kept
+    }
+
+    @Test
     fun `a config change invalidates the strip`() = runBlocking {
         val book = multiChapterEpub(tempFolder.newFile("book.epub"))
         store.generate(book, config())
