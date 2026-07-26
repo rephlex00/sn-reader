@@ -1308,6 +1308,23 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `toggling the progress bar on also draws the chapter-end tick`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY) // show the overlay
+
+        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick() // off
+        assertThat(pageViewOf(activity).chapterEndForTest).isNull()
+
+        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick() // back on
+
+        // showPage always passes both arguments to setProgress; the toggle used to default
+        // chapterEndFraction to null, leaving the "pages left in chapter" tick missing until the
+        // next page turn recomputed it.
+        assertThat(pageViewOf(activity).chapterEndForTest).isNotNull()
+    }
+
+    @Test
     fun `the progress fraction increases across a forward page turn`() {
         // Guards against an implementation that hardcodes pageIndex = 0 into the bookProgress(...)
         // call in showPage — that would still pass the "on by default, in [0,1]" test above but

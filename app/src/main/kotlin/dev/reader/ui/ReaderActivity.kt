@@ -1065,7 +1065,13 @@ open class ReaderActivity : AppCompatActivity() {
         } else {
             null
         }
-        pageView.setProgress(fraction)
+        // Both arguments, exactly as showPage passes them: the tick comes from chapterWeights
+        // alone — no pagination, no new state — so omitting it only meant the bar appeared
+        // incomplete until the next turn.
+        pageView.setProgress(
+            fraction,
+            if (showProgressBar) chapterEndFraction(chapterWeights, state.spineIndex) else null,
+        )
         settings.refresh()
     }
 
