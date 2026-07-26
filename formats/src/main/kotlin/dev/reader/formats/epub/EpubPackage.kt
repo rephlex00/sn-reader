@@ -88,20 +88,20 @@ class EpubPackageParser {
 
     /**
      * Fails closed on anything that isn't recognisably an `encryption.xml`: unparseable
-     * bytes, the wrong file entirely, or a document with no `<encryption>` root — that is
-     * exactly the case where refusing to guess is the safe choice, same as an algorithm
-     * outside the known-benign font-obfuscation set.
+     * bytes, the wrong file entirely, or a document whose *root* element isn't
+     * `<encryption>` — that is exactly the case where refusing to guess is the safe
+     * choice, same as an algorithm outside the known-benign font-obfuscation set.
      *
-     * A real `<encryption>` document that lists zero `EncryptionMethod` elements is
-     * different, and opens. Some producers emit a vestigial `encryption.xml` that
-     * declares nothing at all; that describes a book with zero encrypted entries, not
-     * DRM. The two cases are distinguished structurally — by whether an `<encryption>`
-     * element exists — rather than by whether any algorithms were found, because an
-     * empty algorithm list is otherwise ambiguous: Jsoup's XML parser is lenient enough
-     * that garbage input (no `<encryption>` element at all) also yields an empty list
-     * once you only look at `EncryptionMethod` children. Telling those apart is why
-     * [extractEncryptionAlgorithms] returns `null` for "not an encryption document" and
-     * a (possibly empty) list for "an encryption document that failed to specify one".
+     * A real `<encryption>` root that declares neither an `EncryptedData` nor an
+     * `EncryptionMethod` anywhere beneath it is different, and opens. Some producers
+     * emit a vestigial `encryption.xml` that declares nothing at all; that describes a
+     * book with zero encrypted entries, not DRM. Everything else fails closed: any
+     * declared algorithm outside the benign set, an algorithm that didn't survive
+     * attribute lookup (blank, missing, or namespace-prefixed), or an `EncryptedData`/
+     * `CipherReference` with no `EncryptionMethod` at all to vouch for it —
+     * `EncryptionMethod` is optional per the XML Encryption spec, so its absence doesn't
+     * mean the entry isn't encrypted. See [extractEncryptionAlgorithms] for how the
+     * `null` vs. list distinction carries this.
      */
     private fun checkEncryption(source: ResourceSource) {
         val algorithms = readTextChecked(source, ENCRYPTION_PATH)?.let { extractEncryptionAlgorithms(it) }
@@ -112,21 +112,43 @@ class EpubPackageParser {
     }
 
     /**
-     * Returns `null` when [xml] isn't recognisably an `encryption.xml` document — unparseable,
-     * or simply lacking an `<encryption>` root element — and a (possibly empty) list of
-     * `Algorithm` values otherwise. The `null` vs. empty-list distinction is load-bearing: see
-     * [checkEncryption].
+     * Returns `null` when [xml] isn't recognisably an `encryption.xml` document —
+     * unparseable, or its root element (Jsoup's [Document.children] under
+     * `Parser.xmlParser()`, i.e. top-level elements only; an `<encryption>` nested
+     * inside some other wrapper element doesn't count) isn't `encryption` by local
+     * name — and a (possibly empty) list of `Algorithm` values otherwise. The `null`
+     * vs. empty-list distinction is load-bearing: see [checkEncryption].
+     *
+     * The returned list is never filtered down to non-empty values. An `EncryptionMethod`
+     * with a blank, missing, or namespace-prefixed `Algorithm` attribute still
+     * contributes `""`, which is not in [FONT_OBFUSCATION_ALGORITHMS] and so still fails
+     * closed — dropping such entries previously let an unstated algorithm read as "no
+     * evidence", which [checkEncryption] then (wrongly) treated as benign.
+     *
+     * Likewise, an `EncryptedData`/`CipherReference` with no `EncryptionMethod` anywhere
+     * under the root is not "no evidence" either — it contributes a synthetic `""` too,
+     * so it fails closed like an unstated algorithm. A genuinely empty `<encryption/>`,
+     * with no `EncryptedData` and no `EncryptionMethod` at all, still yields an empty
+     * list and opens.
+     *
+     * All local-name comparisons (`encryption`, `EncryptionMethod`, `EncryptedData`,
+     * `CipherReference`) are case-insensitive: XML is case-sensitive and Jsoup's
+     * `xmlParser` preserves case, but a producer's casing choice shouldn't decide
+     * whether this check applies.
      */
     private fun extractEncryptionAlgorithms(xml: String): List<String>? = runCatching {
-        val elements = Jsoup.parse(xml, "", Parser.xmlParser()).allElements
-        // Match by local name: the namespace prefix varies by tool and isn't worth
-        // depending on Jsoup's CSS namespace syntax for (same idiom as EncryptionMethod
-        // below, and as the OPF parsing in this file).
-        if (elements.none { it.tagName().substringAfter(':') == "encryption" }) return@runCatching null
-        elements
-            .filter { it.tagName().substringAfter(':') == "EncryptionMethod" }
+        val root = Jsoup.parse(xml, "", Parser.xmlParser()).children()
+            .firstOrNull { it.localTag().equals("encryption", ignoreCase = true) }
+            ?: return@runCatching null
+        val elements = root.allElements
+        val algorithms = elements
+            .filter { it.localTag().equals("EncryptionMethod", ignoreCase = true) }
             .map { it.attr("Algorithm") }
-            .filter { it.isNotEmpty() }
+        val hasUnvouchedEncryptedEntry = algorithms.isEmpty() && elements.any {
+            it.localTag().equals("EncryptedData", ignoreCase = true) ||
+                it.localTag().equals("CipherReference", ignoreCase = true)
+        }
+        if (hasUnvouchedEncryptedEntry) listOf("") else algorithms
     }.getOrNull()
 
     private fun parseContainer(xml: String): String {
