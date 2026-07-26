@@ -1,16 +1,14 @@
 package dev.reader.ui
 
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
-import android.view.Gravity
 import android.view.View
-import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.LinearLayout
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.doOnLayout
 import androidx.lifecycle.lifecycleScope
 import dev.reader.R
@@ -29,10 +27,11 @@ import kotlinx.coroutines.withContext
 open class ComicActivity : AppCompatActivity() {
 
     private lateinit var pageView: ComicPageView
+    private lateinit var overlay: View
+    private lateinit var titleView: TextView
     private lateinit var readout: TextView
-    private lateinit var chrome: View
-    private lateinit var directionButton: Button
-    private lateinit var bookmarkButton: Button
+    private lateinit var directionButton: TextView
+    private lateinit var bookmarkButton: ImageView
     private lateinit var bookmarksPanel: ComicBookmarksPanel
     private val decoder = ComicPageDecoder()
 
@@ -65,43 +64,38 @@ open class ComicActivity : AppCompatActivity() {
             epd = EinkController.forContext(this@ComicActivity)
             onTap = ::onTap
         }
-        readout = TextView(this).apply {
-            setBackgroundColor(Color.WHITE); setTextColor(Color.BLACK); setPadding(24, 16, 24, 16)
+
+        // Wrap the page in a container so the overlay can draw ABOVE it, mirroring
+        // ReaderActivity's container shape: pageView is added first, the inflated overlay second,
+        // so it sits on top while page-area taps still fall through to pageView's onTap.
+        val container = FrameLayout(this)
+        container.addView(pageView, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        overlay = layoutInflater.inflate(R.layout.overlay_comic, container, false)
+        container.addView(overlay)
+
+        titleView = overlay.findViewById(R.id.comic_title)
+        readout = overlay.findViewById(R.id.comic_readout)
+        // Literata + tabular numerals, same as ReaderActivity.scrubberView: the readout's digits
+        // must not shift width as they change, and the XML's default sans doesn't carry tabular
+        // figures. 16sp/black stay as set in overlay_comic.xml — only the face and figure style
+        // change here.
+        readout.typeface = ResourcesCompat.getFont(this, R.font.literata)
+        readout.fontFeatureSettings = "tnum"
+        directionButton = overlay.findViewById(R.id.comic_direction_button)
+        bookmarkButton = overlay.findViewById(R.id.comic_bookmark_button)
+
+        overlay.findViewById<View>(R.id.comic_back).setOnClickListener { finish() }
+        directionButton.setOnClickListener { toggleDirection() }
+        bookmarkButton.setOnClickListener { toggleBookmark() }
+        overlay.findViewById<View>(R.id.comic_bookmarks_button).setOnClickListener {
+            bookmarksPanel.show(bookmarks); bookmarksPanel.visibility = View.VISIBLE
         }
-        val back = Button(this).apply { text = getString(android.R.string.cancel); setOnClickListener { finish() } }
-        val direction = Button(this).apply {
-            setOnClickListener { toggleDirection() }
-        }
-        directionButton = direction
-        val bookmark = Button(this).apply {
-            setOnClickListener { toggleBookmark() }
-        }
-        bookmarkButton = bookmark
-        val bookmarkList = Button(this).apply {
-            text = getString(R.string.reader_bookmarks)
-            setOnClickListener { bookmarksPanel.show(bookmarks); bookmarksPanel.visibility = View.VISIBLE }
-        }
-        val topEnd = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(direction, LinearLayout.LayoutParams(-2, -2))
-            addView(bookmark, LinearLayout.LayoutParams(-2, -2))
-            addView(bookmarkList, LinearLayout.LayoutParams(-2, -2))
-        }
-        chrome = FrameLayout(this).apply {
-            visibility = View.GONE
-            addView(back, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
-            addView(topEnd, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
-            addView(readout, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-        }
+
         bookmarksPanel = ComicBookmarksPanel(this) { page ->
             bookmarksPanel.visibility = View.GONE
             if (page in 0 until pageCount) showPage(page)
         }.apply { visibility = View.GONE }
-        val container = FrameLayout(this).apply {
-            addView(pageView, FrameLayout.LayoutParams(-1, -1))
-            addView(chrome, FrameLayout.LayoutParams(-1, -1))
-            addView(bookmarksPanel, FrameLayout.LayoutParams(-1, -1))
-        }
+        container.addView(bookmarksPanel, FrameLayout.LayoutParams(-1, -1))
         setContentView(container)
         pageView.doOnLayout { openComic() }
     }
@@ -121,6 +115,7 @@ open class ComicActivity : AppCompatActivity() {
                 showMessage(e.message ?: getString(android.R.string.dialog_alert_title)); finish(); return@launch
             }
             document = doc
+            titleView.text = doc.metadata.title
             pageCount = doc.spineSize
             bookPath = file.path
             val stored = withContext(Dispatchers.IO) { dao.getByPath(file.path) }
@@ -185,12 +180,15 @@ open class ComicActivity : AppCompatActivity() {
     }
 
     private fun updateBookmarkLabel() {
+        // The bookmark control is a glyph (comic_bookmark_button), not text, so the add/remove
+        // state lives in its content description for accessibility rather than in visible text.
         val bookmarked = bookmarks.any { it.spineIndex == currentPage }
-        bookmarkButton.text = getString(if (bookmarked) R.string.bookmark_remove else R.string.bookmark_add)
+        bookmarkButton.contentDescription =
+            getString(if (bookmarked) R.string.bookmark_remove else R.string.bookmark_add)
     }
 
     private fun onTap(zone: TapZone) {
-        if (chrome.visibility == View.VISIBLE) { toggleChrome(); return }
+        if (overlay.visibility == View.VISIBLE) { toggleChrome(); return }
         when (zone) {
             TapZone.TOGGLE_OVERLAY -> toggleChrome()
             else -> {
@@ -257,12 +255,12 @@ open class ComicActivity : AppCompatActivity() {
     }
 
     private fun toggleChrome() {
-        if (chrome.visibility == View.VISIBLE) {
-            chrome.visibility = View.GONE
+        if (overlay.visibility == View.VISIBLE) {
+            overlay.visibility = View.GONE
             pageView.epd.exitFastMode()
         } else {
             pageView.epd.enterFastMode()
-            chrome.visibility = View.VISIBLE
+            overlay.visibility = View.VISIBLE
         }
     }
 

@@ -3,7 +3,10 @@ package dev.reader.ui
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Looper
+import android.view.View
+import android.widget.TextView
 import com.google.common.truth.Truth.assertThat
+import dev.reader.R
 import dev.reader.data.BookEntity
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -188,6 +191,30 @@ class ComicActivityTest {
         a.toggleBookmarkForTest()
         idleUntil { a.bookmarkedPagesForTest.isEmpty() }
         assertThat(a.bookmarkedPagesForTest).isEmpty()
+    }
+
+    @Test fun `every overlay control from the comic chrome parity layout exists by its new id`() {
+        val a = launch(cbz("chrome.cbz", 3).path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        assertThat(a.findViewById<View>(R.id.comic_overlay)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_back)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_title)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_bookmark_button)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_bookmarks_button)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_direction_button)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_readout)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_scrubber_back)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_scrubber)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_preview)).isNotNull()
+    }
+
+    @Test fun `the readout reads page 1 of N at open`() {
+        val a = launch(cbz("readout.cbz", 7).path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        val readout = a.findViewById<TextView>(R.id.comic_readout)
+        assertThat(readout.text.toString()).isEqualTo("page 1 of 7")
     }
 
     @Test fun `resumes at the stored page`() = runBlocking {
