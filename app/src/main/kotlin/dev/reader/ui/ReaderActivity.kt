@@ -769,13 +769,19 @@ open class ReaderActivity : AppCompatActivity() {
     /** The current chapter's source text — a test computes the expected word-snap against it. */
     internal fun currentChapterTextForTest(): String? = currentChapterText()
 
-    /** The char offset at the top of the page on screen — the anchor a re-pagination preserves. */
-    internal fun currentTopOffsetForTest(): Locator? {
+    /**
+     * The reader's exact position right now: the char offset at the top of the page on screen, which
+     * is the anchor a re-pagination preserves. Null before a page has been drawn.
+     */
+    private fun currentLocator(): Locator? {
         val doc = document ?: return null
         val cfg = config ?: return null
         val page = doc.chapter(state.spineIndex, cfg).pages.getOrNull(state.pageIndex) ?: return null
         return Locator(state.spineIndex, page.startOffset)
     }
+
+    /** The char offset at the top of the page on screen — the anchor a re-pagination preserves. */
+    internal fun currentTopOffsetForTest(): Locator? = currentLocator()
 
     /** The on-page delete chip — a test asserts a highlight-tap reveals it and its tap deletes. */
     internal val deleteChipForTest: TextView get() = highlights.deleteChipForTest
@@ -1729,7 +1735,12 @@ open class ReaderActivity : AppCompatActivity() {
         // inside the right chapter, and a coarse offset-0 write would WORSEN a rare death there
         // (chapter start vs the exact page already stored).
         val coarseChapter = snappedChapter ?: locateByFraction(chapterWeights, fraction).spineIndex
-        if (coarseChapter != origin.spineIndex) {
+        // Captured BEFORE the down-payment overwrites the stored row, so a commit that never
+        // resolves can put back exactly what was there. currentLocator() reads the already-cached
+        // current chapter, so this costs nothing.
+        val originLocator = if (coarseChapter != origin.spineIndex) currentLocator() else null
+        val downPaymentWritten = coarseChapter != origin.spineIndex
+        if (downPaymentWritten) {
             persistPosition(Locator(coarseChapter, 0))
         }
         // The preview window deliberately STAYS UP through the commit. Lift-off starts a
@@ -1741,66 +1752,84 @@ open class ReaderActivity : AppCompatActivity() {
         // gap honestly; it comes down inside the coroutine, after the real page has rendered
         // beneath it (every terminal path below hides it).
         scrubJob = lifecycleScope.launch {
-            // Resolve the landing page WITHOUT touching the chapter cache off the main thread. The
-            // cache is a LinkedHashMap(accessOrder = true) — "even a read mutates link order" — and
-            // is main-thread-only by contract; the prefetch honours that by computing with the PURE
-            // paginate() off-main and installing via publish() back on main. This block used to call
-            // doc.chapter()/firstNonEmptyFrom inside Dispatchers.IO instead, racing the cache
-            // against exactly the main-thread traffic a just-committed page guarantees (its
-            // showPage's own chapter() and its prefetch's publish). That data race was the
-            // intermittent "scrubbing after a page selection misbehaves" seen on the device. Same
-            // choreography as the prefetch now: pure paginate off-main, publish + resolve on main.
-            val doc = document
-            val cfg = config
-            var target: ReadingState? = null
-            if (doc != null && cfg != null) {
-                val located = locateByFraction(chapterWeights, fraction)
-                val spine = snappedChapter ?: located.spineIndex
-                try {
-                    if (!doc.isPaginated(spine, cfg)) {
-                        val paginated = withContext(Dispatchers.Default) { doc.paginate(spine, cfg) }
-                        doc.publish(spine, cfg, paginated) // main thread — the sanctioned install
+            // True once this commit has written a position of its own (or established that the
+            // stored one is already right). While false, a down-payment is standing unrefined.
+            var resolved = false
+            try {
+                // Resolve the landing page WITHOUT touching the chapter cache off the main thread. The
+                // cache is a LinkedHashMap(accessOrder = true) — "even a read mutates link order" — and
+                // is main-thread-only by contract; the prefetch honours that by computing with the PURE
+                // paginate() off-main and installing via publish() back on main. This block used to call
+                // doc.chapter()/firstNonEmptyFrom inside Dispatchers.IO instead, racing the cache
+                // against exactly the main-thread traffic a just-committed page guarantees (its
+                // showPage's own chapter() and its prefetch's publish). That data race was the
+                // intermittent "scrubbing after a page selection misbehaves" seen on the device. Same
+                // choreography as the prefetch now: pure paginate off-main, publish + resolve on main.
+                val doc = document
+                val cfg = config
+                var target: ReadingState? = null
+                if (doc != null && cfg != null) {
+                    val located = locateByFraction(chapterWeights, fraction)
+                    val spine = snappedChapter ?: located.spineIndex
+                    try {
+                        if (!doc.isPaginated(spine, cfg)) {
+                            val paginated = withContext(Dispatchers.Default) { doc.paginate(spine, cfg) }
+                            doc.publish(spine, cfg, paginated) // main thread — the sanctioned install
+                        }
+                        // Main thread from here: every cache touch is single-threaded again.
+                        target = if (snappedChapter != null) {
+                            readerSurface.firstNonEmptyFrom(snappedChapter)
+                        } else {
+                            resolveScrubTarget(located)
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // A corrupt chapter surfaces on its first (lazy) read — right here, on the first
+                        // scrub into it. Every other jump path reports and stays put; a scrub commit now
+                        // does the same, falling through with no target into the no-op branch below.
+                        // (The old code had NO guard: a corrupt chapter mid-scrub crashed the reader.)
+                        showError(R.string.error_open_section, e)
                     }
-                    // Main thread from here: every cache touch is single-threaded again.
-                    target = if (snappedChapter != null) {
-                        readerSurface.firstNonEmptyFrom(snappedChapter)
-                    } else {
-                        resolveScrubTarget(located)
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // A corrupt chapter surfaces on its first (lazy) read — right here, on the first
-                    // scrub into it. Every other jump path reports and stays put; a scrub commit now
-                    // does the same, falling through with no target into the no-op branch below.
-                    // (The old code had NO guard: a corrupt chapter mid-scrub crashed the reader.)
-                    showError(R.string.error_open_section, e)
+                }
+                // Only a commit that actually moves the reader is a jump: a null target (a chapter that
+                // paginates to zero pages, e.g. image-only/cover content) or a target equal to where we
+                // already are pushes nothing onto the back-stack and arms no ↩ — mirroring jumpToAnchor
+                // (6d822a3), which pushes only after its target resolves, for the same reason.
+                if (target != null && target != origin) {
+                    jumpStack.push(origin)
+                    updateBackControl()
+                    showPage(target)
+                    session.drainPending()?.let { persistPosition(it) }
+                    resolved = true
+                } else {
+                    // A no-op commit: the drag ended on the page already being read (target == origin, or
+                    // a target that paginates to nothing). showPage never runs, so the thumb — moved all
+                    // over during the drag — would otherwise be left stranded, the slider lying about
+                    // where the reader is. currentBookProgress still holds this page's fraction (no
+                    // showPage ran during the drag), so snap the thumb back to the truth.
+                    chapterScrubber.setProgress(currentBookProgress)
+                    // The commit landed back where it started, so any down-payment now describes a
+                    // chapter the reader never reached. The finally below puts the origin back.
+                }
+                // The page under the window is now correct (freshly rendered, or unchanged for a no-op):
+                // the bridge has done its job, take the preview down. A commit cancelled before reaching
+                // here (a new drag's race guard) leaves the window up on purpose — the new drag is
+                // already re-blitting it, and its own commit will take it down.
+                scrubPreview.visibility = View.GONE
+                scrubPreview.setImageDrawable(null)
+                shownPreviewEntry = null
+            } finally {
+                // The down-payment exists so a process death mid-commit reopens at the committed
+                // chapter rather than reverting. But a commit that is CANCELLED (a second touch on
+                // the track, the overlay closing) or that resolves back to where it started never
+                // refines it, and the reader would then reopen in a chapter they never visited.
+                // persistPosition launches into the app-scoped writer, so it still commits even
+                // though this coroutine is being cancelled.
+                if (downPaymentWritten && !resolved) {
+                    originLocator?.let { persistPosition(it) }
                 }
             }
-            // Only a commit that actually moves the reader is a jump: a null target (a chapter that
-            // paginates to zero pages, e.g. image-only/cover content) or a target equal to where we
-            // already are pushes nothing onto the back-stack and arms no ↩ — mirroring jumpToAnchor
-            // (6d822a3), which pushes only after its target resolves, for the same reason.
-            if (target != null && target != origin) {
-                jumpStack.push(origin)
-                updateBackControl()
-                showPage(target)
-                session.drainPending()?.let { persistPosition(it) }
-            } else {
-                // A no-op commit: the drag ended on the page already being read (target == origin, or
-                // a target that paginates to nothing). showPage never runs, so the thumb — moved all
-                // over during the drag — would otherwise be left stranded, the slider lying about
-                // where the reader is. currentBookProgress still holds this page's fraction (no
-                // showPage ran during the drag), so snap the thumb back to the truth.
-                chapterScrubber.setProgress(currentBookProgress)
-            }
-            // The page under the window is now correct (freshly rendered, or unchanged for a no-op):
-            // the bridge has done its job, take the preview down. A commit cancelled before reaching
-            // here (a new drag's race guard) leaves the window up on purpose — the new drag is
-            // already re-blitting it, and its own commit will take it down.
-            scrubPreview.visibility = View.GONE
-            scrubPreview.setImageDrawable(null)
-            shownPreviewEntry = null
         }
     }
 
@@ -1878,6 +1907,10 @@ open class ReaderActivity : AppCompatActivity() {
     internal fun cancelScrubJobForTest() {
         scrubJob?.cancel()
     }
+
+    /** Drives a scrub lift-off directly — a test commits without synthesizing a touch stream. */
+    internal fun commitScrubForTest(fraction: Float, snappedChapter: Int? = null) =
+        onScrubCommitted(fraction, snappedChapter)
 
     // -- Preview-strip test seams -------------------------------------------------------------------
     // Strip GENERATION is Task 6; until then a test that needs the preview window to actually show

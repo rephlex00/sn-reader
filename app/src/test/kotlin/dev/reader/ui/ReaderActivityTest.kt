@@ -1411,12 +1411,13 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `a commit killed before it resolves still leaves a durable coarse position`() {
+    fun `a commit killed before it resolves writes a durable coarse position, ahead of the repair`() {
         // The commit coroutine rides lifecycleScope: a lift flushed by onPause and immediately
         // followed by teardown (fast double-Back, swipe-away) cancels it before showPage/persist
         // run. The synchronous down-payment in onScrubCommitted — (committed chapter, offset 0)
-        // through the app-scoped writer — is what keeps that death from silently reverting the
-        // navigation: reopening lands at the committed chapter's start, not back at the origin.
+        // through the app-scoped writer — fires FIRST, so a genuine process death right then still
+        // reopens at the committed chapter's start rather than reverting silently. This test proves
+        // that ordering directly, before cancelling.
         val app = RuntimeEnvironment.getApplication() as ReaderApplication
         val book = tocEpub(tempFolder.newFile("book.epub"))
         runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
@@ -1429,17 +1430,113 @@ class ReaderActivityTest {
 
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
-        // Lift-off at 0.9 of the book: a different chapter, so the down-payment fires. The commit
-        // coroutine is suspended at its off-main pagination when the invoke returns — cancel it
-        // there, exactly where a teardown's lifecycleScope cancellation would land.
+        // Lift-off at 0.9 of the book: a different chapter, so the down-payment fires. Check it
+        // BEFORE cancelling anything — this is the synchronous write, unaffected by the repair.
         scrubber.onScrubCommit?.invoke(0.9f, null)
-        activity.cancelScrubJobForTest()
 
         idleUntil { rowFor(app, book.path)!!.spineIndex != originChapter }
         assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(originChapter)
         assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(0)
-        // The page itself never moved — the coroutine died before showPage.
+        // The page itself never moved — the coroutine hasn't reached showPage yet.
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(originChapter)
+    }
+
+    @Test
+    fun `a commit cancelled before it resolves repairs the down-payment back to the origin`() {
+        // Continuation of the test above: the commit coroutine is still suspended at its off-main
+        // pagination — cancel it there, exactly where a teardown's lifecycleScope cancellation
+        // would land. The process is NOT actually dying (this is a coroutine cancel, not a real
+        // kill), so it survives to run the coroutine's `finally`, which now repairs the down-payment
+        // it just wrote back to the origin — the reader's screen never left, so that is the only
+        // truthful stored value. persistPosition launches into the app-scoped writer, so the repair
+        // still commits even though this coroutine is being cancelled.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val origin = activity.currentTopOffsetForTest()!!
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        idleUntil { rowFor(app, book.path)!!.spineIndex != origin.spineIndex } // down-payment landed
+        activity.cancelScrubJobForTest()
+
+        idleUntil { activity.scrubIdleForTest }
+        idleUntil { rowFor(app, book.path)!!.spineIndex == origin.spineIndex }
+
+        assertThat(rowFor(app, book.path)!!.spineIndex).isEqualTo(origin.spineIndex)
+        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(origin.charOffset)
+        // The page itself never moved — the coroutine died before showPage.
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(origin.spineIndex)
+    }
+
+    @Test
+    fun `a scrub commit cancelled before it resolves restores the position it left`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val before = activity.currentTopOffsetForTest()!!
+        activity.showOverlayForTest()
+
+        // Lift-off on a distant chapter writes the down-payment, then the commit is cancelled
+        // before its pagination can refine it — exactly what a second touch on the track does.
+        activity.commitScrubForTest(fraction = 0.9f)
+        idleUntil { rowFor(app, book.path)!!.spineIndex != before.spineIndex } // down-payment landed
+        activity.cancelScrubJobForTest()
+        idleUntil { activity.scrubIdleForTest }
+        idleUntil { rowFor(app, book.path)!!.spineIndex == before.spineIndex }
+
+        // The stored row must describe where the reader actually is, not the chapter the
+        // cancelled commit was aiming at.
+        val stored = rowFor(app, book.path)!!
+        assertThat(stored.spineIndex).isEqualTo(before.spineIndex)
+        assertThat(stored.charOffset).isEqualTo(before.charOffset)
+    }
+
+    @Test
+    fun `a scrub commit that resolves back to the origin repairs the down-payment instead of leaving it`() {
+        // The OTHER unresolved path: a commit that isn't cancelled at all, but whose target turns
+        // out to equal origin. A snapped commit onto an empty chapter (1) walks forward past another
+        // empty chapter (2) — see emptyMidChaptersEpub — landing on chapter 3's first page, which is
+        // exactly where the reader already is. The no-op branch never calls showPage, so nothing
+        // refines the (1, 0) down-payment unless the repair does.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = emptyMidChaptersEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+
+        // Put the reader on chapter 3 first, so there is somewhere for the walk below to land back on.
+        activity.showOverlayForTest()
+        activity.commitScrubForTest(fraction = 1f, snappedChapter = 3)
+        idleUntil { activity.scrubIdleForTest }
+        assertThat(activity.currentStateForTest).isEqualTo(ReadingState(3, 0))
+        val origin = activity.currentTopOffsetForTest()!!
+
+        // Snap onto the empty chapter 1. Down-payment (1, 0) fires on the spine-index gate alone,
+        // before the walk below ever runs.
+        activity.commitScrubForTest(fraction = 0.3f, snappedChapter = 1)
+        idleUntil { rowFor(app, book.path)!!.spineIndex == 1 } // down-payment landed
+        idleUntil { activity.scrubIdleForTest }
+        idleUntil { rowFor(app, book.path)!!.spineIndex == origin.spineIndex }
+
+        val stored = rowFor(app, book.path)!!
+        assertThat(stored.spineIndex).isEqualTo(origin.spineIndex)
+        assertThat(stored.charOffset).isEqualTo(origin.charOffset)
+        // The page itself never moved — target == origin means showPage never ran.
+        assertThat(activity.currentStateForTest).isEqualTo(ReadingState(3, 0))
     }
 
     @Test
@@ -2497,6 +2594,79 @@ class ReaderActivityTest {
             )
             entry("OEBPS/ch1.xhtml", "<html><body><h1>One</h1>${chapterBody("One")}</body></html>")
             entry("OEBPS/ch2.xhtml", "<html><body><h1>Two</h1>${chapterBody("Two")}</body></html>")
+            entry("OEBPS/ch3.xhtml", "<html><body><h1>Three</h1>${chapterBody("Three")}</body></html>")
+        }
+        return file
+    }
+
+    /**
+     * Four chapters, spine order 0..3: content, EMPTY, EMPTY, content. Chapters 1 and 2 have a
+     * blank `<body>`, which `EpubDocument.paginate` short-circuits to `pages = emptyList()` (no
+     * text blocks to measure) — a real zero-page chapter, not a mocked `pageCountFor`. Built for the
+     * no-op-commit repair test: a snapped commit onto chapter 1 walks [advance] forward through
+     * chapter 2 and lands on chapter 3's first page, exactly reproducing a commit that resolves back
+     * to wherever the reader already is.
+     */
+    private fun emptyMidChaptersEpub(file: File): File {
+        fun chapterBody(label: String) = buildString {
+            repeat(12) {
+                append("<p>$label paragraph $it with enough words to lay out into a line or two ")
+                append("on the test viewport so the chapter paginates to at least one page.</p>")
+            }
+        }
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            fun entry(path: String, content: String) {
+                zip.putNextEntry(ZipEntry(path))
+                zip.write(content.toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+            }
+            entry("mimetype", "application/epub+zip")
+            entry(
+                "META-INF/container.xml",
+                """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""",
+            )
+            entry(
+                "OEBPS/content.opf",
+                """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Empty Middle</dc:title></metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch0" href="ch0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch0"/>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+    <itemref idref="ch3"/>
+  </spine>
+</package>""",
+            )
+            entry(
+                "OEBPS/nav.xhtml",
+                """<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="ch0.xhtml">Zero</a></li>
+        <li><a href="ch3.xhtml">Three</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>""",
+            )
+            entry("OEBPS/ch0.xhtml", "<html><body><h1>Zero</h1>${chapterBody("Zero")}</body></html>")
+            entry("OEBPS/ch1.xhtml", "<html><body></body></html>")
+            entry("OEBPS/ch2.xhtml", "<html><body></body></html>")
             entry("OEBPS/ch3.xhtml", "<html><body><h1>Three</h1>${chapterBody("Three")}</body></html>")
         }
         return file
