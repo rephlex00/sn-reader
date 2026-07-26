@@ -17,10 +17,39 @@ import dev.reader.data.BookmarkEntity
 import dev.reader.formats.comic.ComicDocument
 import dev.reader.formats.comic.ComicException
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/**
+ * Maps a drag fraction in `[0,1]` to a 0-based page index for a [pageCount]-page comic — the
+ * scrubber's whole-book position resolved to the page it names. Pure — JVM-tested; the testable
+ * seam behind [ComicActivity.onScrubMoved]/[ComicActivity.onScrubCommitted].
+ *
+ * Chosen as the inverse of [comicProgressForPage] (`(index+1)/pageCount`), so a page shown at
+ * progress P and a drag that lands back on P resolve to the SAME page — `roundToInt` on
+ * `fraction * pageCount` undoes the `+1`/`pageCount` exactly at the fraction [comicProgressForPage]
+ * itself produces, and degrades gracefully (clamped, never a divide-by-zero) off that grid.
+ */
+internal fun comicPageForFraction(fraction: Float, pageCount: Int): Int {
+    if (pageCount <= 0) return 0
+    val raw = (fraction.coerceIn(0f, 1f) * pageCount).roundToInt() - 1
+    return raw.coerceIn(0, pageCount - 1)
+}
+
+/**
+ * The whole-book fraction for 0-based [pageIndex] of [pageCount] pages — the same `(index+1)/count`
+ * formula already used for a bookmark's stored `progressFraction` and for [ComicActivity.persist]'s
+ * library percentage, reused here so the scrubber thumb, a freshly bookmarked page and the stored
+ * position all agree on where a page sits on the track. Pure — JVM-tested.
+ */
+internal fun comicProgressForPage(pageIndex: Int, pageCount: Int): Float {
+    if (pageCount <= 0) return 0f
+    return (pageIndex + 1).toFloat() / pageCount
+}
 
 /** Image-based comic reader. Portrait-locked (manifest). Reuses the text reader's tap zones, EPD
  *  refresher and page-turn-driven prefetch, but draws bitmaps, not text. */
@@ -34,6 +63,50 @@ open class ComicActivity : AppCompatActivity() {
     private lateinit var bookmarkButton: ImageView
     private lateinit var bookmarksPanel: ComicBookmarksPanel
     private val decoder = ComicPageDecoder()
+
+    /**
+     * The timeline beneath the readout — reused UNCHANGED from the EPUB reader (see the comic
+     * chrome parity design doc): the trusted-lift gesture grammar it carries took several rounds of
+     * on-device debugging against panel firmware that fabricates phantom lifts, and reimplementing
+     * it for comics would reintroduce every misfire it fixed. Wired with an empty chapter list
+     * ([ChapterScrubberView.setBook]'s `chapterStartFractions`) — comics have no chapters, and 358
+     * page ticks would smear anyway — and [ChapterScrubberView.setPreviewsEnabled] `false`, since a
+     * comic page has no generation phase to show pending-dots for.
+     */
+    private lateinit var chapterScrubber: ChapterScrubberView
+
+    /** The ↩ control beside [chapterScrubber]: pops [jumpStack]. GONE whenever the stack is empty —
+     *  see [updateBackControl]. */
+    private lateinit var scrubberBackView: TextView
+
+    /** The floating page-preview window over [chapterScrubber]: the on-demand decode of the page
+     *  nearest the finger, blitted during a drag via [previewLoader]. GONE at rest — see
+     *  [onScrubMoved]/[hidePreview]. Never the book page itself; [pageView] never repaints mid-drag. */
+    private lateinit var scrubPreview: ImageView
+
+    /** On-demand comic-page previews for [scrubPreview] (see its KDoc for the caller contract that
+     *  makes overlapping decodes for the same page impossible). */
+    private val previewLoader = ComicPreviewLoader(decoder)
+
+    /** The one in-flight preview decode, cancelled by the next hover so a fast sweep never queues a
+     *  backlog of decodes for pages the finger has already passed — mirrors ReaderActivity's own
+     *  `previewDecodeJob`. This cancel-before-relaunch discipline is also what keeps
+     *  [ComicPreviewLoader.preview] safe to call: see its KDoc. */
+    private var previewDecodeJob: Job? = null
+
+    /** The page [previewDecodeJob] currently targets, or the page already shown in [scrubPreview] —
+     *  lets a same-page re-hover skip a redundant decode, and lets a superseded decode's resumed
+     *  callback recognise it is stale and skip painting. */
+    private var previewTargetPage: Int? = null
+
+    /** Where the current scrub began, or null when no scrub is in flight — the ↩ push target on a
+     *  commit that moves the page, and what [abandonScrub] restores the readout/thumb to. Mirrors
+     *  ReaderActivity's `scrubOrigin`. */
+    private var scrubOrigin: Int? = null
+
+    /** The jump back-stack: a scrub commit that actually turns the page pushes the page being left;
+     *  [onBackJump] pops. In-memory, per book-open — mirrors ReaderActivity's `jumpStack`. */
+    private val jumpStack = JumpStack<Int>()
 
     private var document: ComicDocument? = null
     private var bookPath: String = ""
@@ -57,6 +130,13 @@ open class ComicActivity : AppCompatActivity() {
     fun onTapForTest(zone: TapZone) = onTap(zone)
     fun toggleDirectionForTest() = toggleDirection()
     fun toggleBookmarkForTest() = toggleBookmark()
+    internal fun toggleChromeForTest() = toggleChrome()
+    internal fun onScrubStartForTest() = onScrubStart()
+    internal fun onScrubMoveForTest(fraction: Float) = onScrubMoved(fraction)
+    internal fun onScrubCommitForTest(fraction: Float) = onScrubCommitted(fraction)
+    internal fun abandonScrubForTest() = abandonScrub()
+    internal fun backJumpForTest() = onBackJump()
+    internal val previewDecodeJobForTest: Job? get() = previewDecodeJob
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,6 +163,19 @@ open class ComicActivity : AppCompatActivity() {
         readout.fontFeatureSettings = "tnum"
         directionButton = overlay.findViewById(R.id.comic_direction_button)
         bookmarkButton = overlay.findViewById(R.id.comic_bookmark_button)
+
+        chapterScrubber = overlay.findViewById(R.id.comic_scrubber)
+        chapterScrubber.setPreviewsEnabled(false)
+        scrubberBackView = overlay.findViewById(R.id.comic_scrubber_back)
+        scrubberBackView.setOnClickListener { onBackJump() }
+        scrubPreview = overlay.findViewById(R.id.comic_preview)
+        // Mirrors ReaderActivity's scrubPreview tap: the explicit "go there" for a scrub the
+        // trusted-lift grammar left ARMED (a light drag's lift the panel fabricated, not obeyed).
+        scrubPreview.setOnClickListener { chapterScrubber.commitArmed() }
+        chapterScrubber.onScrubStart = { onScrubStart() }
+        chapterScrubber.onScrubMove = { fraction, _ -> onScrubMoved(fraction) }
+        chapterScrubber.onScrubCommit = { fraction, _ -> onScrubCommitted(fraction) }
+        chapterScrubber.onScrubCancel = { abandonScrub() }
 
         overlay.findViewById<View>(R.id.comic_back).setOnClickListener { finish() }
         directionButton.setOnClickListener { toggleDirection() }
@@ -132,7 +225,14 @@ open class ComicActivity : AppCompatActivity() {
         lifecycleScope.launch {
             bookmarks = withContext(Dispatchers.IO) { bookmarkDao.bookmarksFor(bookPath) }
             updateBookmarkLabel()
+            refreshScrubberBookmarks()
         }
+    }
+
+    /** Pushes the current [bookmarks] onto [chapterScrubber] as glyph fractions — mirrors
+     *  ReaderActivity's `refreshScrubberBookmarks`. Called whenever [bookmarks] changes. */
+    private fun refreshScrubberBookmarks() {
+        chapterScrubber.setBookmarks(bookmarks.map { it.progressFraction })
     }
 
     /**
@@ -149,12 +249,13 @@ open class ComicActivity : AppCompatActivity() {
      */
     private fun toggleBookmark() {
         val existing = bookmarks.firstOrNull { it.spineIndex == currentPage }
-        val fraction = if (pageCount > 0) (currentPage + 1).toFloat() / pageCount else 0f
+        val fraction = comicProgressForPage(currentPage, pageCount)
         lifecycleScope.launch {
             val inLibrary = withContext(Dispatchers.IO) { dao.getByPath(bookPath) != null }
             if (!inLibrary) {
                 bookmarks = withContext(Dispatchers.IO) { bookmarkDao.bookmarksFor(bookPath) }
                 updateBookmarkLabel()
+                refreshScrubberBookmarks()
                 showMessage(getString(R.string.error_book_not_indexed))
                 return@launch
             }
@@ -168,6 +269,7 @@ open class ComicActivity : AppCompatActivity() {
                 }
                 bookmarks = withContext(Dispatchers.IO) { bookmarkDao.bookmarksFor(bookPath) }
                 updateBookmarkLabel()
+                refreshScrubberBookmarks()
             } catch (e: CancellationException) {
                 // The Activity was destroyed mid-write: let structured-concurrency cancellation
                 // propagate rather than swallowing it into a toast on a dying screen.
@@ -199,9 +301,15 @@ open class ComicActivity : AppCompatActivity() {
         }
     }
 
-    private fun showPage(index: Int) {
-        val doc = document ?: return
-        lifecycleScope.launch {
+    /**
+     * Draws page [index] and returns the launched [Job] — the caller's only way to know when the
+     * decode has actually landed on screen. [onScrubCommitted] awaits it before taking the floating
+     * preview down, so the preview bridges the ~decode-latency gap instead of leaving the OLD page
+     * on screen with no feedback the instant the finger lifts.
+     */
+    private fun showPage(index: Int): Job? {
+        val doc = document ?: return null
+        return lifecycleScope.launch {
             val pre = prefetch
             prefetch = null
             val bmp = if (pre != null && pre.first == index) {
@@ -219,6 +327,12 @@ open class ComicActivity : AppCompatActivity() {
             pagesShownForTest += index
             updateReadout()
             updateBookmarkLabel()
+            // Ticks (none, for comics) and thumb follow the page, so opening the chrome always shows
+            // the true position. scrubOrigin is always null by the time showPage runs — a commit
+            // clears it before calling showPage, and no other caller ever has a drag in flight — so
+            // there is no "mid-drag" case here to guard against, unlike ReaderActivity's own
+            // showPage, which can run its own re-entrant scrub-commit path.
+            chapterScrubber.setBook(emptyList(), comicProgressForPage(index, pageCount))
             persist(index)
             prefetchNeighbor()
         }
@@ -236,7 +350,7 @@ open class ComicActivity : AppCompatActivity() {
     }
 
     private fun persist(index: Int) {
-        val fraction = if (pageCount > 0) (index + 1).toFloat() / pageCount else 0f
+        val fraction = comicProgressForPage(index, pageCount)
         app.positionWriteScope.launch {
             dao.updatePosition(bookPath, index, 0, fraction, System.currentTimeMillis())
         }
@@ -254,14 +368,155 @@ open class ComicActivity : AppCompatActivity() {
         directionButton.text = getString(if (rtl) R.string.comic_dir_rtl else R.string.comic_dir_ltr)
     }
 
+    /**
+     * Toggles the chrome. Mirrors ReaderActivity's showOverlay/hideOverlay pair: fast e-ink mode
+     * runs only while the chrome is up, and closing it resolves any scrub the trusted-lift grammar
+     * left open before the one clean refresh that clears whatever ghosting accumulated in fast mode.
+     */
     private fun toggleChrome() {
         if (overlay.visibility == View.VISIBLE) {
+            // A lift still inside its commit grace window when the chrome closes is resolved
+            // synchronously first, exactly as ReaderActivity.hideOverlay does — a trusted lift
+            // commits, an untrusted one arms, and abandonScrub below discards it quietly.
+            chapterScrubber.flushPendingCommit()
+            abandonScrub()
             overlay.visibility = View.GONE
             pageView.epd.exitFastMode()
+            // One clean refresh on the way out, so the page the reader returns to is crisp rather
+            // than carrying whatever ghosting fast mode accumulated while the chrome was up.
+            pageView.fullRefresh()
         } else {
             pageView.epd.enterFastMode()
             overlay.visibility = View.VISIBLE
+            updateBackControl()
         }
+    }
+
+    /** ACTION_DOWN: cancel any preview decode left over from a prior hover before this drag starts,
+     *  and remember the page being left — the ↩ push target on commit, and abandonScrub's return
+     *  point on cancel. */
+    private fun onScrubStart() {
+        previewDecodeJob?.cancel()
+        previewTargetPage = null
+        scrubOrigin = currentPage
+    }
+
+    /**
+     * A drag position: update the readout and the floating preview only. Deliberately NO decode of
+     * the PAGE ITSELF and no call to [showPage] — the page does not repaint until the finger lifts
+     * (see [onScrubCommitted]), the e-ink invariant a drag must never violate.
+     *
+     * [chapterScrubber] is wired with an empty chapter list, so its `onScrubMove`/`onScrubCommit`
+     * callbacks' snapped-chapter parameter is always null for comics — accepted by the lambdas in
+     * `onCreate` and dropped there, rather than narrowing this function's own signature.
+     */
+    private fun onScrubMoved(fraction: Float) {
+        if (pageCount <= 0) return
+        val page = comicPageForFraction(fraction, pageCount)
+        val percent = (fraction.coerceIn(0f, 1f) * 100).roundToInt()
+        readout.text = getString(R.string.comic_page_readout_drag, page + 1, pageCount, percent)
+
+        // The finger dithered within the same page's fraction span: the decode already dispatched
+        // (or already shown) for it is still correct — nothing to cancel or relaunch.
+        if (page == previewTargetPage) return
+        previewTargetPage = page
+
+        // Cancel the previous hover's decode BEFORE dispatching this one. This is the one thing
+        // that keeps ComicPreviewLoader safe to call at all (see its KDoc): withContext's prompt
+        // cancellation guarantee means a job cancelled here discards its decode result at its next
+        // resumption point, before it can ever reach ComicPreviewLoader.preview's own cache.put —
+        // so a superseded hover's bitmap is never cached, and two preview() calls for the same page
+        // can never overlap in the cache, as long as every hover past the first cancels its
+        // predecessor unconditionally, before decoding, exactly as this does.
+        previewDecodeJob?.cancel()
+        val doc = document ?: return
+        previewDecodeJob = lifecycleScope.launch {
+            val bmp = try {
+                previewLoader.preview(page) { doc.openPage(page) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "comic preview decode failed", e)
+                null
+            }
+            // A newer hover may have superseded this decode while it was in flight; only paint if
+            // this is still the page the finger is on.
+            if (previewTargetPage != page) return@launch
+            if (bmp != null) {
+                scrubPreview.setImageBitmap(bmp)
+                scrubPreview.visibility = View.VISIBLE
+            } else {
+                hidePreview()
+            }
+        }
+    }
+
+    /**
+     * Lift-off: the only path that turns the page from a scrub. Simpler than ReaderActivity's own
+     * commit — a comic page IS the unit shown, so there is no chapter to resolve or paginate first,
+     * just [comicPageForFraction] and a [showPage] call.
+     */
+    private fun onScrubCommitted(fraction: Float) {
+        previewDecodeJob?.cancel()
+        previewDecodeJob = null
+        previewTargetPage = null
+        val origin = scrubOrigin
+        scrubOrigin = null
+        if (origin == null || pageCount <= 0) { hidePreview(); return }
+        val target = comicPageForFraction(fraction, pageCount)
+        if (target != origin) {
+            jumpStack.push(origin)
+            updateBackControl()
+            // The preview window deliberately stays up through the commit — showPage's decode is
+            // not instant, and hiding the preview at lift-off would leave the OLD page on screen
+            // with no feedback for that gap. It comes down once the new page has actually landed.
+            val turned = showPage(target)
+            lifecycleScope.launch { turned?.join(); hidePreview() }
+        } else {
+            // A no-op commit: the drag ended on the page already showing. showPage never runs, so
+            // the thumb (moved all over during the drag) is snapped back to the truth instead of
+            // lying about where the reader is.
+            chapterScrubber.setProgress(comicProgressForPage(currentPage, pageCount))
+            updateReadout()
+            hidePreview()
+        }
+    }
+
+    /**
+     * Returns to where the scrub began and writes nothing — called when the chrome is dismissed or
+     * a gesture is cancelled with a scrub in flight. The origin page never left the screen during
+     * the drag, so there is nothing to repaint; only the readout and the thumb need restoring.
+     */
+    private fun abandonScrub() {
+        if (scrubOrigin == null) return
+        previewDecodeJob?.cancel()
+        previewDecodeJob = null
+        previewTargetPage = null
+        scrubOrigin = null
+        hidePreview()
+        updateReadout()
+        // The view may still be holding an ARMED session (or an open grace window) — reset it
+        // BEFORE moving the thumb, or the next touch would "resume" a session whose origin this
+        // method just cleared.
+        chapterScrubber.resetSession()
+        chapterScrubber.setProgress(comicProgressForPage(currentPage, pageCount))
+    }
+
+    private fun hidePreview() {
+        scrubPreview.setImageDrawable(null)
+        scrubPreview.visibility = View.GONE
+    }
+
+    /** Pops one jump and turns to it — like a scrub commit, not a fresh navigation. Does NOT push:
+     *  ↩ is one-way. */
+    private fun onBackJump() {
+        val target = jumpStack.pop() ?: return
+        if (target in 0 until pageCount) showPage(target)
+        updateBackControl()
+    }
+
+    private fun updateBackControl() {
+        scrubberBackView.visibility = if (jumpStack.isEmpty) View.GONE else View.VISIBLE
     }
 
     private fun updateReadout() {
@@ -287,6 +542,13 @@ open class ComicActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        previewDecodeJob?.cancel()
+        // Clear the ImageView's reference to whatever bitmap it holds BEFORE previewLoader.clear()
+        // recycles it — clear() recycles every cached bitmap unconditionally, including the one
+        // last handed to comic_preview, and an ImageView still holding a recycled Bitmap crashes
+        // ("trying to use a recycled bitmap") the next time it is asked to draw.
+        if (::scrubPreview.isInitialized) scrubPreview.setImageDrawable(null)
+        previewLoader.clear()
         currentBitmap?.recycle()
         prefetch?.second?.recycle()
         document?.close()

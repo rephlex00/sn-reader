@@ -15,9 +15,9 @@
      e-ink: solid white bars, black text, flat black divider lines. No ripple/selectableItemBackground
      (it animates), no elevation/shadow (it ghosts), no animation of any kind. Large tap targets.
 
-     Wiring (ChapterScrubberView, the ↩ ring, the preview): placed here but left unwired — see the
-     comic chrome parity design doc. Reusing the EPUB reader's ChapterScrubberView unchanged is
-     the load-bearing decision; it is not touched by this layout. -->
+     Wiring (ChapterScrubberView, the ↩ ring, the preview): wired in ComicActivity — see the comic
+     chrome parity design doc. Reusing the EPUB reader's ChapterScrubberView unchanged is the
+     load-bearing decision; it is not touched by this layout, nor by ComicActivity's code. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/comic_overlay"
     android:layout_width="match_parent"
@@ -176,9 +176,9 @@
                 android:textColor="@android:color/black"
                 android:textSize="16sp" />
 
-            <!-- Pops the jump back-stack. GONE until Task 28 wires JumpStack<Int> up for comics —
-                 see the comic chrome parity design doc. Anchored to the track's own left cap,
-                 identical placement to overlay_reader.xml's scrubber_back. -->
+            <!-- Pops the jump back-stack (JumpStack<Int> — see ComicActivity). GONE whenever the
+                 stack is empty. Anchored to the track's own left cap, identical placement to
+                 overlay_reader.xml's scrubber_back. -->
             <TextView
                 android:id="@+id/comic_scrubber_back"
                 android:layout_width="64dp"
@@ -196,10 +196,10 @@
 
         </FrameLayout>
 
-        <!-- Reused unchanged from the EPUB reader (see the design doc): the trusted-lift gesture
-             grammar here took several rounds of on-device debugging to get right. Placed but not
-             wired — Task 28 calls setBook/setBookmarks/setPreviewsEnabled and hooks the onScrub*
-             callbacks. -->
+        <!-- Reused UNCHANGED from the EPUB reader (see the design doc): the trusted-lift gesture
+             grammar here took several rounds of on-device debugging to get right. ComicActivity
+             calls setBook(emptyList(), ...)/setBookmarks/setPreviewsEnabled(false) and hooks the
+             onScrub* callbacks — see its onScrubStart/onScrubMoved/onScrubCommitted/abandonScrub. -->
         <dev.reader.ui.ChapterScrubberView
             android:id="@+id/comic_scrubber"
             android:layout_width="match_parent"

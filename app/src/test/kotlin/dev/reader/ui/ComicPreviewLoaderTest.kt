@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import com.google.common.truth.Truth.assertThat
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -66,6 +67,14 @@ class ComicPreviewLoaderTest {
         val loader = ComicPreviewLoader(ComicPageDecoder())
 
         assertThat(loader.preview(0) { null }).isNull()
+    }
+
+    @Test
+    fun `a cacheSize below 2 is rejected`() {
+        // At cacheSize 1, every new page would evict (and recycle) the one entry already on
+        // screen the instant a second page decodes — see the class KDoc's caller contract.
+        assertThrows(IllegalArgumentException::class.java) { ComicPreviewLoader(ComicPageDecoder(), cacheSize = 1) }
+        assertThrows(IllegalArgumentException::class.java) { ComicPreviewLoader(ComicPageDecoder(), cacheSize = 0) }
     }
 
     @Test

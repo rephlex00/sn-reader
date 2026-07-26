@@ -138,6 +138,8 @@
 
     <!-- ComicActivity's minimal overlay readout: 1-based current page, of the archive's page count. -->
     <string name="comic_page_readout">page %1$d of %2$d</string>
+    <!-- The comic scrubber's readout while dragging: 1-based page, page count, whole-book percent. -->
+    <string name="comic_page_readout_drag">page %1$d of %2$d · %3$d%%</string>
     <!-- ComicActivity's per-book direction toggle button label, current direction. -->
     <string name="comic_dir_ltr">L → R</string>
     <string name="comic_dir_rtl">R → L</string>
