@@ -43,12 +43,24 @@ internal fun readBytesChecked(source: ResourceSource, path: String): ByteArray? 
  * Resolves a manifest/TOC href against the file that declared it, producing a path
  * usable as a zip entry name. Parent traversal is clamped at the archive root — a
  * malicious href must never address anything outside the container.
+ *
+ * Two shapes that are not simple relative paths:
+ *  - **Fragment-only** (`#chapter1`) or empty: addresses the declaring file itself. Resolving it
+ *    against the base DIRECTORY instead (the old behaviour) yields a path that matches no entry,
+ *    which silently drops the TOC entry — and takes the whole table of contents with it when a
+ *    nav document is itself a spine chapter.
+ *  - **Root-relative** (`/images/cover.jpg`): spec-invalid but common in the wild. It addresses
+ *    the archive root, not the base directory; prepending the base dir made the lookup miss and
+ *    the chapter, image or cover silently degrade to nothing. Still normalized, so the `..` clamp
+ *    applies exactly as it does to every other path.
  */
 internal fun resolveHref(basePath: String, href: String): String {
     val withoutFragment = href.substringBefore('#')
     // Decode BEFORE normalizing: this is what stops %2e%2e%2f from bypassing the
     // ".." clamp below — decode first, then walk the resulting segments.
     val decoded = percentDecode(withoutFragment)
+    if (decoded.isEmpty()) return normalizePath(basePath)
+    if (decoded.startsWith('/')) return normalizePath(decoded)
     val baseDir = basePath.substringBeforeLast('/', missingDelimiterValue = "")
     val combined = if (baseDir.isEmpty()) decoded else "$baseDir/$decoded"
     return normalizePath(combined)

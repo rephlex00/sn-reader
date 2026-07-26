@@ -153,4 +153,24 @@ class PathsTest {
         // the rest of the string, not be encoded one UTF-16 code unit at a time.
         assertThat(percentDecode("📚 ch%20one")).isEqualTo("📚 ch one")
     }
+
+    @Test
+    fun `a fragment-only href resolves to the declaring file itself`() {
+        assertThat(resolveHref("OEBPS/nav.xhtml", "#chapter1")).isEqualTo("OEBPS/nav.xhtml")
+    }
+
+    @Test
+    fun `an empty href resolves to the declaring file itself`() {
+        assertThat(resolveHref("OEBPS/nav.xhtml", "")).isEqualTo("OEBPS/nav.xhtml")
+    }
+
+    @Test
+    fun `a root-relative href resolves against the archive root, not the base directory`() {
+        assertThat(resolveHref("OEBPS/content.opf", "/images/cover.jpg")).isEqualTo("images/cover.jpg")
+    }
+
+    @Test
+    fun `a root-relative href is still clamped at the archive root`() {
+        assertThat(resolveHref("OEBPS/content.opf", "/../../etc/passwd")).isEqualTo("etc/passwd")
+    }
 }
