@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import dev.reader.engine.BookMetadata
 import dev.reader.formats.ResourceSource
+import dev.reader.formats.writeGrayscalePng
 import java.io.File
 
 /**
@@ -25,6 +26,12 @@ import java.io.File
  * `OutOfMemoryError` is an `Error`, not an `Exception`, and would escape that catch. Keeping
  * the real allocation properly bounded (see [sampleSize]) is therefore load-bearing, not just
  * an optimization.
+ *
+ * **Grayscale, always.** Same reasoning as `EpubCoverExtractor`: the target panel is
+ * grayscale, so a 4-channel ARGB thumbnail would be roughly 4x the storage and write cost
+ * for information the display physically cannot show. The written PNG is single-channel
+ * (`color type 0`, bit depth 8) via the shared [dev.reader.formats.writeGrayscalePng]
+ * encoder — never [Bitmap.compress] onto an ARGB_8888 bitmap.
  */
 class ComicCoverExtractor(
     private val maxWidthPx: Int = 240,
@@ -36,11 +43,13 @@ class ComicCoverExtractor(
         val path = metadata.coverHref
         val bitmap = path?.let { decodeThumbnail(source, it) }
         return if (bitmap != null) {
-            writePng(bitmap, destination)
+            writeGrayscalePng(bitmap, destination)
             bitmap.recycle()
             CoverOutcome.EXTRACTED
         } else {
-            writePng(placeholder(), destination)
+            val placeholderBitmap = placeholder()
+            writeGrayscalePng(placeholderBitmap, destination)
+            placeholderBitmap.recycle()
             CoverOutcome.GENERATED
         }
     }
@@ -93,8 +102,4 @@ class ComicCoverExtractor(
         Bitmap.createBitmap(maxWidthPx, maxHeightPx, Bitmap.Config.ARGB_8888).apply {
             Canvas(this).drawColor(Color.rgb(0xDD, 0xDD, 0xDD))
         }
-
-    private fun writePng(bitmap: Bitmap, destination: File) {
-        destination.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-    }
 }
