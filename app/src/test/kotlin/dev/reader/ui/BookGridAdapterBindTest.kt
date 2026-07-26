@@ -156,6 +156,28 @@ class BookGridAdapterBindTest {
     }
 
     @Test
+    fun `a failing cover is not re-decoded on every bind`() {
+        // decodeCover returning null is never cached — LruCache cannot hold null and bindCover
+        // only checks bitmapCache.get. So every scroll past a tile whose cover is missing or
+        // corrupt launches a fresh decode against a file known to fail. This test binds the
+        // same failing cover twice and asserts decodeCover was called exactly once.
+        val adapter = TestableAdapter(scope, failureMode = true)
+        adapter.submitList(listOf(bookRow("/a.epub", coverPath = "/covers/a.png")))
+        val holder = adapter.onCreateViewHolder(FrameLayout(RuntimeEnvironment.getApplication()), BookGridAdapter.VIEW_TYPE_BOOK_TILE) as BookGridAdapter.BookTileViewHolder
+
+        adapter.onBindViewHolder(holder, 0)
+        idleUntil { holder.job?.isCompleted == true }
+        val firstDecodeCount = adapter.decodeCallCount
+
+        adapter.onBindViewHolder(holder, 0)
+        idleUntil { holder.job?.isCompleted == true }
+        val secondDecodeCount = adapter.decodeCallCount
+
+        assertThat(firstDecodeCount).isEqualTo(1)
+        assertThat(secondDecodeCount).isEqualTo(1)
+    }
+
+    @Test
     fun `an unreadable book's list row says it cannot be opened, without the raw reason`() {
         // statusTextRes is unit-tested, but this pins the actual bound TextView: the row a user sees
         // must carry the reason, not just the pure helper's return value.
@@ -226,14 +248,16 @@ class BookGridAdapterBindTest {
     }
 
     /** [BookGridAdapter] whose decode is latched, so tests control exactly when it finishes. */
-    private class TestableAdapter(scope: CoroutineScope) : BookGridAdapter(scope, onBookClick = {}, onFolderClick = {}) {
+    private class TestableAdapter(scope: CoroutineScope, private val failureMode: Boolean = false) : BookGridAdapter(scope, onBookClick = {}, onFolderClick = {}) {
         val decodeEntered = CountDownLatch(1)
         var blockDecode: CountDownLatch? = null
+        var decodeCallCount = 0
 
         override fun decodeCover(path: String): Bitmap? {
+            decodeCallCount++
             decodeEntered.countDown()
             blockDecode?.await()
-            return Bitmap.createBitmap(2, 2, Bitmap.Config.RGB_565)
+            return if (failureMode) null else Bitmap.createBitmap(2, 2, Bitmap.Config.RGB_565)
         }
     }
 

@@ -163,6 +163,14 @@ open class BookGridAdapter(
     }
 
     /**
+     * Cache keys whose decode already failed. `LruCache` cannot hold null, so without this a cover
+     * that is missing or corrupt is re-decoded from disk on every single bind — a permanent,
+     * repeating disk read for a result that will never change. Bounded by the library size, and
+     * keyed the same way as the bitmap cache so a regenerated cover at a new mtime retries once.
+     */
+    private val failedCoverKeys = mutableSetOf<String>()
+
+    /**
      * True when a [viewMode] change has happened but the full rebind it requires has not been
      * dispatched yet. Cleared by [commitPendingModeInvalidation], which every [render] submission
      * passes as its commit callback. The flag — rather than hanging `notifyDataSetChanged` directly
@@ -294,13 +302,18 @@ open class BookGridAdapter(
             return
         }
 
+        if (cacheKey in failedCoverKeys) {
+            holder.cover.setImageDrawable(null)
+            return
+        }
+
         // Clear immediately: without this, a recycled holder keeps showing the PREVIOUS book's
         // cover on screen for the whole time this one's decode is in flight.
         holder.cover.setImageDrawable(null)
         holder.job = scope.launch(Dispatchers.IO) {
             val bitmap = decodeCover(path)
             withContext(Dispatchers.Main.immediate) {
-                if (bitmap != null) bitmapCache.put(cacheKey, bitmap)
+                if (bitmap != null) bitmapCache.put(cacheKey, bitmap) else failedCoverKeys += cacheKey
                 // The holder may have been rebound while this decode was in flight; only paint
                 // if it is still bound to the exact (path, mtime) this decode was for. The
                 // cancellation in onBindViewHolder/onViewRecycled normally stops a stale decode
