@@ -8,7 +8,7 @@ class JumpStackTest {
 
     @Test
     fun `pops in reverse push order and empties`() {
-        val stack = JumpStack()
+        val stack = JumpStack<ReadingState>()
         stack.push(ReadingState(1, 2))
         stack.push(ReadingState(3, 4))
 
@@ -20,7 +20,7 @@ class JumpStackTest {
 
     @Test
     fun `the cap drops the OLDEST entry, not the newest`() {
-        val stack = JumpStack(cap = 3)
+        val stack = JumpStack<ReadingState>(cap = 3)
         for (i in 0 until 5) stack.push(ReadingState(i, 0))
 
         assertThat(stack.pop()!!.spineIndex).isEqualTo(4)
@@ -31,9 +31,21 @@ class JumpStackTest {
 
     @Test
     fun `clear empties without navigation`() {
-        val stack = JumpStack()
+        val stack = JumpStack<ReadingState>()
         stack.push(ReadingState(1, 1))
         stack.clear()
+        assertThat(stack.isEmpty).isTrue()
+    }
+
+    @Test
+    fun `works generically over page indices for comics`() {
+        val stack = JumpStack<Int>(cap = 3)
+        for (i in 0 until 5) stack.push(i)
+
+        assertThat(stack.pop()).isEqualTo(4)
+        assertThat(stack.pop()).isEqualTo(3)
+        assertThat(stack.pop()).isEqualTo(2)
+        assertThat(stack.pop()).isNull()
         assertThat(stack.isEmpty).isTrue()
     }
 }

@@ -328,7 +328,7 @@ open class ReaderActivity : AppCompatActivity() {
      * push. In-memory, per book-open — cleared in [openFirstBook] alongside [previewStrip]/bookmarks,
      * since a new book is a new session. Costs nothing at rest: no timer, no observer.
      */
-    private val jumpStack = JumpStack()
+    private val jumpStack = JumpStack<ReadingState>()
 
     /** Whether the Aa font options have been given their preview typefaces yet (loaded once, on
      * the first sheet-open — see [loadFontPreviewsOnce]). */
