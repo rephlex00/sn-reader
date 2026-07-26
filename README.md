@@ -4,7 +4,7 @@
 
 <h1 align="center">Reader</h1>
 
-<p align="center">A quiet EPUB reader built for Supernote e-ink tablets.</p>
+<p align="center">A quiet reader for EPUB and comics, built for Supernote e-ink tablets.</p>
 
 ---
 
@@ -32,10 +32,13 @@ app uses **no measurable CPU at all**.
 * **A chapter scrubber**, with a tick for every chapter, a preview of the page you'd land on as you
   drag, and **↩** to jump back — a progress bar at the foot of the page marks where the current
   chapter ends
+* **Comics too** — CBZ and zip-backed CBR, one page per screen with per-book reading direction for
+  manga, in the same library as your books
 * **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for
   speed; menus repaint quickly too, without touching the page's own crisp refresh
 
-Reader opens **EPUB files only**. No PDF, no CBR, no CBZ.
+Reader opens **EPUB**, **CBZ**, and **CBR** files that are really zips (many are). A genuine RAR
+archive does not open yet. No PDF.
 
 ## Getting it on your Supernote
 
@@ -45,7 +48,7 @@ Reader opens **EPUB files only**. No PDF, no CBR, no CBZ.
 **2. Install it over USB.**
 
 ```
-adb install -r sn-reader-2026.07.3.apk
+adb install -r sn-reader-2026.07.4.apk
 ```
 
 Debug mode needs to be on first. It lives in the Supernote's own Settings under security and
@@ -62,9 +65,9 @@ app's own storage, not in the APK.
 This one is not optional. Your books sit in shared storage and Android will not hand them over
 without it.
 
-**4. Add books.** Drop `.epub` files into the **Document** folder, where Supernote keeps its own.
-Reader finds them next time you open it, and you can point it somewhere else from its settings.
-Scanning is incremental, so a big library does not mean a slow start.
+**4. Add books.** Drop `.epub`, `.cbz` or `.cbr` files into the **Document** folder, where Supernote
+keeps its own. Reader finds them next time you open it, and you can point it somewhere else from
+its settings. Scanning is incremental, so a big library does not mean a slow start.
 
 ## Reading
 
@@ -180,6 +183,24 @@ behind.
 If you would rather turn pages quickly, switch on **Faster page turns**. Pages then update with a
 light, fast refresh and Reader does a full clean-up flash every few pages instead, every 3, 6, or
 10 as you prefer. You trade a little ghosting between flashes for speed.
+
+### Comics
+
+Reader opens **CBZ** comic archives, and **CBR** files that are really zips (many are). Pages are
+shown one at a time, fit to the screen, turned with the same taps as a book. Reading direction
+follows the archive's `ComicInfo.xml`, and you can flip it per book for manga.
+
+Comics sit in the same library as your books, with the first page as the cover and the same
+progress badge. Your place is kept per comic, and bookmarks work by page.
+
+Reader decides what a file really is by looking inside it, not by trusting the extension — so a
+comic named `.cbr` that was actually written as a zip opens without complaint. A **genuine RAR**
+archive does not open yet; Reader says so plainly rather than failing silently. Support can be
+added later without changing anything else.
+
+Two limits worth knowing. Comics are **portrait only** — turning the tablet sideways does not give
+you a two-page spread the way a book does. And pages are **fit to the screen with no zoom**, which
+suits manga and line art well; dense colour lettering can be marginal at that size.
 
 ## Worth knowing
 

@@ -65,6 +65,13 @@ data class BookEntity(
      * the reader fills it in.
      */
     val progressFraction: Float? = null,
+    /**
+     * Per-book override of comic reading direction: null trusts `ComicInfo.xml` (or the format's
+     * default when absent); non-null means the reader explicitly flipped the direction for this
+     * book. Schema v5. Defaulted so existing `BookEntity(...)` call sites and the v4->v5 migration
+     * both leave it unset until [BookDao.updateRtlOverride] writes it.
+     */
+    val rightToLeftOverride: Boolean? = null,
 )
 
 /**

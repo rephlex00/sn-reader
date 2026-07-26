@@ -4,6 +4,29 @@ Notable changes, newest first. Versions are `YYYY.MM.build` — the year and mon
 plus a counter within that month. Each release's APK is on the
 [Releases page](https://github.com/rephlex00/sn-reader/releases).
 
+## 2026.07.4
+
+### Comics
+
+Comic archives now open alongside your books. A comic shows one page per screen, fit to the
+display, turned with the same taps as a page of text — and it sits in the same library grid, with
+its first page as the cover and the same progress badge in the corner.
+
+* **CBZ, and CBR files that are really zips** — which most are. Reader decides by looking inside the
+  file rather than trusting its extension, so a comic named `.cbr` that a tool actually wrote as a
+  zip opens without complaint.
+* **A genuine RAR archive does not open yet.** Reader says so in the library, in those words, rather
+  than failing silently or blaming the file. Adding RAR later changes nothing else.
+* **Reading direction** comes from the archive's `ComicInfo.xml`, and there is a control in the
+  reader to flip it per book — so a manga reads right-to-left and the tap zones follow.
+* **Your place is kept**, per comic, the same way it is for a book, and **bookmarks** work by page.
+* Reader reads `ComicInfo.xml` for the series, number, title and author when it is there, and falls
+  back to the filename when it is not.
+
+Two limits worth knowing up front. Comics are **portrait only** — turning the tablet sideways will
+not give you a two-page spread the way a book does. And pages are shown **fit to the screen with no
+zoom**, which suits manga and line art well; dense colour lettering can be marginal at that size.
+
 ## 2026.07.3
 
 ### Reading progress moves onto the cover

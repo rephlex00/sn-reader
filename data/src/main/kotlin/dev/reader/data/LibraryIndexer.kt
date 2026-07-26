@@ -87,6 +87,9 @@ class LibraryIndexer(
     private val extractor: MetadataExtractor,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    private companion object {
+        val BOOK_EXTENSIONS = setOf("epub", "cbz", "cbr")
+    }
 
     suspend fun sync(): IndexResult = withContext(Dispatchers.IO) {
         val onDisk = walk()
@@ -308,7 +311,7 @@ class LibraryIndexer(
     private fun isUnderAnyRoot(path: String): Boolean =
         roots.any { root -> path == root.path || path.startsWith(root.path + File.separator) }
 
-    /** `(path, size, mtime)` for every `.epub` file under [roots]. Opens nothing. */
+    /** `(path, size, mtime)` for every book file under [roots]. Opens nothing. */
     private fun walk(): Map<String, FileStat> {
         val result = LinkedHashMap<String, FileStat>()
         for (root in roots) {
@@ -316,7 +319,7 @@ class LibraryIndexer(
                 root.walkTopDown()
                     .maxDepth(10) // Closes an unbounded symlink-loop walk; unreachable in practice
                     // on the Nomad's flat /Document layout, but free insurance.
-                    .filter { it.isFile && it.extension.equals("epub", ignoreCase = true) }
+                    .filter { it.isFile && it.extension.lowercase() in BOOK_EXTENSIONS }
                     .forEach { file ->
                         result[file.path] = FileStat(file.length(), file.lastModified())
                     }

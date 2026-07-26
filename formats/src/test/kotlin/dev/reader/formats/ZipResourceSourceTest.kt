@@ -1,6 +1,7 @@
 package dev.reader.formats
 
 import com.google.common.truth.Truth.assertThat
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.util.zip.ZipEntry
@@ -107,5 +108,18 @@ class ZipResourceSourceTest {
         val size = ZipResourceSource(file).use { it.size("absent.txt") }
 
         assertThat(size).isEqualTo(0L)
+    }
+
+    @Test
+    fun `entries lists every archive entry name`() {
+        val file = File.createTempFile("src", ".zip").also { it.deleteOnExit() }
+        java.util.zip.ZipOutputStream(file.outputStream()).use { zip ->
+            listOf("b/2.txt", "a/1.txt", "ComicInfo.xml").forEach {
+                zip.putNextEntry(java.util.zip.ZipEntry(it)); zip.write(1); zip.closeEntry()
+            }
+        }
+        ZipResourceSource(file).use { src ->
+            assertThat(src.entries()).containsExactly("b/2.txt", "a/1.txt", "ComicInfo.xml")
+        }
     }
 }

@@ -61,6 +61,13 @@
         <!-- exported="false": both are internal screens reached only from within the app (the
              library overflow, and Settings' book-folder row). Nothing outside has any business
              starting them. -->
+        <!-- Portrait-locked: the paged image reader has no landscape layout of its own (Task 14).
+             exported="false": reached only from within the app, same as ReaderActivity. -->
+        <activity
+            android:name=".ui.ComicActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <activity
             android:name=".ui.SettingsActivity"
             android:screenOrientation="portrait"

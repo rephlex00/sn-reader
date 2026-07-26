@@ -108,6 +108,13 @@ interface BookDao {
     @Query("UPDATE books SET unreadable = 1, unreadableReason = :reason WHERE path = :path")
     suspend fun markUnreadable(path: String, reason: String)
 
+    /**
+     * Sets or clears the per-book comic reading-direction override. `null` reverts to trusting
+     * `ComicInfo.xml` (or the format default); non-null pins the direction for this book.
+     */
+    @Query("UPDATE books SET rightToLeftOverride = :rightToLeftOverride WHERE path = :path")
+    suspend fun updateRtlOverride(path: String, rightToLeftOverride: Boolean?)
+
     @Query("SELECT * FROM books ORDER BY title COLLATE NOCASE ASC")
     fun observeAllByTitle(): Flow<List<BookEntity>>
 

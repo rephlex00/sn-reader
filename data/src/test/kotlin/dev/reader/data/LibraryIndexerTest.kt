@@ -632,4 +632,18 @@ class LibraryIndexerTest {
         assertThat(coverA.exists()).isFalse()
         assertThat(coverB.exists()).isFalse()
     }
+
+    @Test
+    fun `cbz and cbr files are indexed alongside epub`(): Unit = runBlocking {
+        File(root, "a.epub").writeText("stub")
+        File(root, "b.cbz").writeText("stub")
+        File(root, "c.cbr").writeText("stub")
+        File(root, "d.txt").writeText("stub")
+        val extractor = FakeExtractor()
+        val indexer = LibraryIndexer(dao, listOf(root), extractor)
+
+        indexer.sync()
+
+        assertThat(extractor.calls.map { File(it).name }).containsExactly("a.epub", "b.cbz", "c.cbr")
+    }
 }
