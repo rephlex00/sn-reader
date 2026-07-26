@@ -609,6 +609,7 @@ open class ReaderActivity : AppCompatActivity() {
                 // that join away and let two generators race over one directory, exactly the
                 // hazard scheduleStripGeneration's KDoc says the join exists to prevent.
                 stripGenerationJob?.cancel()
+                previewDecodeJob?.cancel()
                 scrubPreview.visibility = View.GONE
                 scrubPreview.setImageDrawable(null)
                 shownPreviewEntry = null
@@ -625,6 +626,7 @@ open class ReaderActivity : AppCompatActivity() {
         override fun deletePreviewsForCurrentBook() {
             bookPath?.let { stripStore.deleteStripsFor(File(it)) }
             previewStrip = null
+            previewDecodeJob?.cancel()
             shownPreviewEntry = null
             generatedChapters.clear()
             chapterScrubber.setGeneratedChapters(emptySet())
@@ -1754,9 +1756,13 @@ open class ReaderActivity : AppCompatActivity() {
             } else if (entry != shownPreviewEntry) {
                 shownPreviewEntry = entry            // mark attempted either way — no re-decode churn
                 // Off the main thread: this is a ~702x936 WEBP decoding to ~2.6MB, and it used to
-                // run inline in the touch handler on every entry the finger crossed. The previous
-                // decode is cancelled rather than queued — during a fast sweep the finger has
-                // already passed those entries, and their bitmaps would only be thrown away.
+                // run inline in the touch handler on every entry the finger crossed. cancel() here
+                // is cooperative — it cannot interrupt a decodeFile() already running on the IO
+                // pool, so during a fast sweep, decodes already dispatched before the cancel still
+                // run to completion in parallel (N concurrent ~2.6MB allocations are still
+                // possible). What it actually buys: a decode not yet dispatched is skipped
+                // entirely, and — via the shownPreviewEntry check below — the paint of any decode
+                // that does finish late is suppressed either way.
                 previewDecodeJob?.cancel()
                 val thumbnail = stripStore.thumbnailFile(bookFile, cfg, entry)
                 previewDecodeJob = lifecycleScope.launch {
@@ -1793,6 +1799,11 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private fun onScrubCommitted(fraction: Float, snappedChapter: Int?) {
         scrubJob?.cancel()
+        // The drag is over — any preview decode still in flight for the last-crossed entry would
+        // otherwise run to completion only to be thrown away (the bridge below already shows that
+        // entry's bitmap; nothing new needs painting). Cancel it now, freeing the IO thread right
+        // when the commit's own pagination could use it.
+        previewDecodeJob?.cancel()
         // Capture the position being LEFT now — `state` still holds it here, since showPage (inside
         // the coroutine below) hasn't moved it yet. The jump back-stack push itself is deferred until
         // the target resolves below (see the comment there); this is unrelated to scrubOrigin below:
@@ -1956,6 +1967,10 @@ open class ReaderActivity : AppCompatActivity() {
     private fun abandonScrub() {
         val origin = scrubOrigin ?: return
         scrubJob?.cancel()
+        // The drag is being thrown away entirely — any decode still in flight for the last-crossed
+        // entry has nothing left to paint (the window is about to go GONE below), so cancel it
+        // rather than let it burn an IO thread to a result nobody will use.
+        previewDecodeJob?.cancel()
         scrubOrigin = null
         scrubPreview.visibility = View.GONE
         scrubPreview.setImageDrawable(null)
@@ -2066,6 +2081,21 @@ open class ReaderActivity : AppCompatActivity() {
     /** Whether the floating preview is currently showing a decoded page. */
     internal val previewBitmapShownForTest: Boolean
         get() = scrubPreview.visibility == View.VISIBLE && scrubPreview.drawable != null
+
+    /** True once the in-flight preview decode ([previewDecodeJob]) has actually finished (null
+     *  counts as finished) — unlike polling [previewBitmapShownForTest], this is also true when the
+     *  decode resolved to the FAILURE branch (window stays GONE), so a test targeting that branch
+     *  can wait for the decode to actually land instead of asserting against a bitmap that was
+     *  never going to appear. Not called in production. */
+    internal val previewDecodeIdleForTest: Boolean get() = previewDecodeJob?.isCompleted != false
+
+    /** The current [previewDecodeJob] reference itself. [lifecycleScope] runs on
+     *  `Dispatchers.Main.immediate`, so `launch { ... }` executes inline up to its first suspension
+     *  point (the `withContext(Dispatchers.IO)` hop) — meaning a move that never reaches the decode
+     *  block (previews off, no strip, snapped-chapter-with-no-opening) leaves this null the instant
+     *  the triggering call returns. A race-free proof that no decode was ever scheduled, rather than
+     *  one that merely hasn't landed yet. Not called in production. */
+    internal val previewDecodeJobForTest: Job? get() = previewDecodeJob
 
     /** Sets [ReaderPrefs.previewsEnabled] directly and pushes it to the scrubber, without going
      *  through a real Aa-sheet tap — a test's way to drive the previews-off path. Not called in

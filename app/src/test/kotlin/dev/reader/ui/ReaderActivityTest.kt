@@ -1879,6 +1879,12 @@ class ReaderActivityTest {
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
+        // The blit is decoded off-main now (Task 8); wait for it to actually land — and assert it
+        // did — before cancelling, or the GONE assertion below would trivially hold from the
+        // window's initial state without the cancel path having done anything at all.
+        idleUntil { preview.visibility == View.VISIBLE }
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+
         scrubber.onScrubCancel?.invoke()
 
         assertThat(preview.visibility).isEqualTo(View.GONE)
@@ -2012,6 +2018,11 @@ class ReaderActivityTest {
 
             scrubber.onScrubStart?.invoke()
             scrubber.onScrubMove?.invoke(0.5f, null)
+            // The decode is off-main now (Task 8); wait for it to actually land — under the forced
+            // allowInvalidImageData(false) — before asserting, or the GONE/null assertions below
+            // would trivially hold from the window's initial state without the null-decode branch
+            // ever having run.
+            idleUntil { activity.previewDecodeIdleForTest }
 
             // The window stays hidden rather than showing a stale/mismatched bitmap, and nothing crashes.
             assertThat(preview.visibility).isEqualTo(View.GONE)
@@ -2019,9 +2030,14 @@ class ReaderActivityTest {
 
             // Moving again at the same fraction re-hits the same (still-missing) file without crashing —
             // the entry was marked attempted, so this is not an infinite decode retry, just idempotent.
+            // (No new decode is even scheduled — entry == shownPreviewEntry already — so there is
+            // nothing new to wait for here.)
             scrubber.onScrubMove?.invoke(0.5f, null)
             assertThat(preview.visibility).isEqualTo(View.GONE)
         } finally {
+            // Held until the forced decode above has actually landed (idleUntil, above) — restoring
+            // this JVM-wide static any earlier risks a leaked coroutine decoding a synthetic bitmap
+            // against a static this test has already reset, corrupting a later test in the same fork.
             org.robolectric.shadows.ShadowBitmapFactory.setAllowInvalidImageData(true)
         }
     }
@@ -2094,6 +2110,11 @@ class ReaderActivityTest {
         scrubber.onScrubMove?.invoke(0.5f, null)
 
         assertThat(preview.visibility).isEqualTo(View.GONE) // no window when previews off
+        // lifecycleScope runs on Main.immediate, so onScrubMoved's launch (if any were started)
+        // would have already run inline up to its IO hop by the time this call returns. A null job
+        // here is a hard, race-free proof that the early return fired and no decode was ever
+        // scheduled — not merely one that hasn't landed yet.
+        assertThat(activity.previewDecodeJobForTest).isNull()
 
         // Previews are genuinely off — the early return in onScrubMoved never even schedules a
         // decode — not merely a decode still in flight. Idling confirms nothing shows up later.
