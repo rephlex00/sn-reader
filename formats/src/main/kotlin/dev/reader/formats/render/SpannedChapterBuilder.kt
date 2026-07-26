@@ -470,7 +470,12 @@ class SpannedChapterBuilder {
             }?.let { set(AlignmentSpan.Standard(it)) }
         }
         style.textIndentEm?.let { indent ->
-            set(LeadingMarginSpan.Standard((indent * config.textSizePx).roundToInt(), 0))
+            // Clamped at zero: a negative text-indent is half of the hanging-indent idiom
+            // (`padding-left: 1.5em; text-indent: -1.5em`), and this renderer deliberately ignores
+            // the padding that would compensate for it. Honouring the negative half alone draws the
+            // first line at negative x and clips its opening glyphs off the content box. The parsed
+            // model keeps the true value; only the drawn margin is clamped.
+            set(LeadingMarginSpan.Standard((indent.coerceAtLeast(0f) * config.textSizePx).roundToInt(), 0))
         }
         // lineHeightMultiplier: intentionally ignored — the reader's line spacing always wins.
         // marginTopEm / marginBottomEm: deferred — see KDoc.
