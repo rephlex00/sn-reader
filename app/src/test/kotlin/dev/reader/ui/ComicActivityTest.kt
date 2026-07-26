@@ -309,7 +309,12 @@ class ComicActivityTest {
         a.onScrubMoveForTest(0.1f)
         a.onScrubMoveForTest(0.5f)
         a.onScrubMoveForTest(0.9f)
-        drainMain()
+        // A single drainMain only advances the decode chain one hop — nowhere near enough for a
+        // violating onScrubMoved (one that called showPage) to have its Dispatchers.Default decode
+        // round-trip back to main and append to pagesShownForTest. Poll on the last hover's own
+        // decode job — a real dispatcher hop of the same shape — to give a violation many chances
+        // to land before asserting it didn't.
+        idleUntil { a.previewDecodeJobForTest?.isCompleted == true }
 
         assertThat(a.pagesShownForTest).isEqualTo(before)
     }
@@ -335,8 +340,13 @@ class ComicActivityTest {
 
         a.onScrubStartForTest()
         a.onScrubMoveForTest(0.1f) // comicPageForFraction(0.1, 10) == 0, the page already showing
+        // Captured before the commit cancels it: waiting for ITS completion (a real dispatcher hop,
+        // same as `dragging the scrubber never repaints the page`) gives a violating no-op-commit
+        // branch (one that called showPage anyway) many pump chances to land before the assertion —
+        // a bare drainMain would return long before such a decode round-trips back to main.
+        val moveJob = a.previewDecodeJobForTest
         a.onScrubCommitForTest(0.1f)
-        drainMain()
+        idleUntil { moveJob == null || moveJob.isCompleted }
 
         assertThat(a.pagesShownForTest).isEqualTo(before)
         assertThat(a.findViewById<View>(R.id.comic_scrubber_back).visibility).isEqualTo(View.GONE)
@@ -371,9 +381,14 @@ class ComicActivityTest {
         a.onScrubStartForTest()
         a.onScrubMoveForTest(0.7f)
         assertThat(readout.text.toString()).isNotEqualTo("page 1 of 10")
+        // Captured before abandonScrub cancels it — same reasoning as the no-op-commit test above:
+        // waiting for its completion gives a violating abandonScrub (one that called showPage) many
+        // pump chances to land before the assertion, instead of a single drainMain that returns long
+        // before such a decode could round-trip back to main.
+        val moveJob = a.previewDecodeJobForTest
 
         a.abandonScrubForTest()
-        drainMain()
+        idleUntil { moveJob == null || moveJob.isCompleted }
 
         assertThat(a.pagesShownForTest).isEqualTo(before)
         assertThat(readout.text.toString()).isEqualTo("page 1 of 10")
@@ -476,6 +491,46 @@ class ComicActivityTest {
         a.findViewById<View>(R.id.comic_bookmarks_button).performClick()
         assertThat(a.findViewById<View>(R.id.comic_bookmarks_empty).visibility).isEqualTo(View.VISIBLE)
         assertThat(a.findViewById<View>(R.id.comic_bookmarks_list).visibility).isEqualTo(View.GONE)
+    }
+
+    @Test fun `a bookmark jump pushes the origin page, and back returns to it`() = runBlocking {
+        val file = cbz("bookmark-jump.cbz", 10)
+        val dao = (RuntimeEnvironment.getApplication() as dev.reader.ReaderApplication).database.bookDao()
+        dao.upsertAll(listOf(BookEntity(
+            path = file.path, sizeBytes = file.length(), modifiedAtMs = 0, title = "bj", author = null,
+            coverPath = null, spineIndex = 0, charOffset = 0, unreadable = false,
+            unreadableReason = null, addedAtMs = 0, lastOpenedAtMs = null,
+        )))
+        val a = launch(file.path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+
+        // Move to page 5 (via a scrub commit, itself a jump) and bookmark it, then pop straight back
+        // to page 0 so the jump stack starts empty and page 0 is a known origin.
+        a.onScrubStartForTest()
+        a.onScrubMoveForTest(0.6f) // comicPageForFraction(0.6, 10) == 5
+        a.onScrubCommitForTest(0.6f)
+        idleUntil { a.currentPageForTest == 5 }
+        a.toggleBookmarkForTest()
+        idleUntil { a.bookmarkedPagesForTest.contains(5) }
+        a.backJumpForTest()
+        idleUntil { a.currentPageForTest == 0 }
+        val backControl = a.findViewById<View>(R.id.comic_scrubber_back)
+        assertThat(backControl.visibility).isEqualTo(View.GONE)
+
+        // Tap the page-5 bookmark row from the panel: a bookmark jump must push page 0 (the page
+        // being left) exactly like a Contents/highlight jump does in the EPUB reader — this is the
+        // parity gap ↩ existed to close.
+        a.findViewById<View>(R.id.comic_bookmarks_button).performClick()
+        layOutBookmarkRow(a, 0).findViewById<View>(R.id.bookmark_label).performClick()
+        idleUntil { a.currentPageForTest == 5 }
+        assertThat(a.currentPageForTest).isEqualTo(5)
+        assertThat(backControl.visibility).isEqualTo(View.VISIBLE)
+
+        a.backJumpForTest()
+        idleUntil { a.currentPageForTest == 0 }
+        assertThat(a.currentPageForTest).isEqualTo(0)
+        assertThat(backControl.visibility).isEqualTo(View.GONE)
     }
 
     @Test fun `a bookmark row's ✕ deletes that bookmark and the list refreshes`() = runBlocking {

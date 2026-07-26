@@ -194,7 +194,16 @@ open class ComicActivity : AppCompatActivity() {
             overlay, lifecycleScope, bookmarkDao,
             onJump = { page ->
                 bookmarksPanelView.visibility = View.GONE
-                if (page in 0 until pageCount) showPage(page)
+                if (page in 0 until pageCount) {
+                    // Only a jump that actually moves the reader pushes — mirrors jumpToAnchor and
+                    // a scrub commit: tapping the bookmark already on the current page is a no-op,
+                    // not a jump, and should arm no ↩.
+                    if (page != currentPage) {
+                        jumpStack.push(currentPage)
+                        updateBackControl()
+                    }
+                    showPage(page)
+                }
             },
             onDeleted = { marks ->
                 bookmarks = marks
@@ -435,6 +444,11 @@ open class ComicActivity : AppCompatActivity() {
      */
     private fun onScrubMoved(fraction: Float) {
         if (pageCount <= 0) return
+        // Bail before touching any state: a null document leaves previewTargetPage/previewDecodeJob
+        // exactly as they were, rather than recording a target for a decode that never launches
+        // (which would dedup-away a later legitimate hover on that same page) or leaving a
+        // just-cancelled job sitting in previewDecodeJob.
+        val doc = document ?: return
         val page = comicPageForFraction(fraction, pageCount)
         val percent = (fraction.coerceIn(0f, 1f) * 100).roundToInt()
         readout.text = getString(R.string.comic_page_readout_drag, page + 1, pageCount, percent)
@@ -452,7 +466,6 @@ open class ComicActivity : AppCompatActivity() {
         // can never overlap in the cache, as long as every hover past the first cancels its
         // predecessor unconditionally, before decoding, exactly as this does.
         previewDecodeJob?.cancel()
-        val doc = document ?: return
         previewDecodeJob = lifecycleScope.launch {
             val bmp = try {
                 previewLoader.preview(page) { doc.openPage(page) }
