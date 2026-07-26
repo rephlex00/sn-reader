@@ -137,8 +137,21 @@ internal class BookmarksPanel(
     /** Deletes a bookmark from the list's ✕ and reloads the panel. */
     private fun delete(row: BookmarkRow) {
         scope.launch {
-            withContext(Dispatchers.IO) { bookmarks.deleteById(row.id) }
-            refresh()
+            try {
+                withContext(Dispatchers.IO) { bookmarks.deleteById(row.id) }
+                refresh()
+            } catch (e: CancellationException) {
+                // The Activity was destroyed mid-write: let structured-concurrency cancellation
+                // propagate rather than swallowing it into a "couldn't save" toast on a dying
+                // screen — the same rule the open and prefetch coroutines hold.
+                throw e
+            } catch (e: Exception) {
+                // Guards BOTH calls: refresh() re-reads through the DAO and resolves each row's
+                // page, so it can throw on a chapter that fails its lazy read just as the delete
+                // can throw on a DB error. toggleCurrentPage two methods up already guards this
+                // exact pair; this path had nothing at all.
+                reader.error(R.string.error_save_bookmark, e)
+            }
         }
     }
 

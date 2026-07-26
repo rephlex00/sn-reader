@@ -1849,8 +1849,17 @@ open class ReaderActivity : AppCompatActivity() {
      *  and no closeOverlay (so repeated taps walk back). Does NOT push — back is one-way. */
     private fun onBackJump() {
         val target = jumpStack.pop() ?: return
-        showPage(target)
-        session.drainPending()?.let { persistPosition(it) }
+        // showPage paginates on the first read of a chapter no longer in the LRU, so this can throw
+        // exactly as onTap and jumpToAnchor can — and this path had no guard at all. Report and
+        // stay put; `state` is only reassigned inside showPage after its own chapter() succeeded.
+        try {
+            showPage(target)
+            session.drainPending()?.let { persistPosition(it) }
+        } catch (e: EpubException) {
+            showError(R.string.error_open_section, e)
+        } catch (e: Exception) {
+            showError(R.string.error_open_section, e)
+        }
         updateBackControl()
     }
 
@@ -1926,6 +1935,9 @@ open class ReaderActivity : AppCompatActivity() {
     /** Drives a scrub lift-off directly — a test commits without synthesizing a touch stream. */
     internal fun commitScrubForTest(fraction: Float, snappedChapter: Int? = null) =
         onScrubCommitted(fraction, snappedChapter)
+
+    /** Drives the ↩ control directly — a test pops a jump without hunting the view. */
+    internal fun backJumpForTest() = onBackJump()
 
     // -- Preview-strip test seams -------------------------------------------------------------------
     // Strip GENERATION is Task 6; until then a test that needs the preview window to actually show

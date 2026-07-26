@@ -276,9 +276,15 @@ internal class HighlightsController(
     /** Deletes a highlight by id (off-main), reloads the chapter's washes, then runs [also]. */
     private fun delete(id: Long, also: () -> Unit) {
         scope.launch {
-            withContext(Dispatchers.IO) { highlights.deleteById(id) }
-            reloadChapterHighlightsIfCurrent(reader.currentState.spineIndex)
-            also()
+            try {
+                withContext(Dispatchers.IO) { highlights.deleteById(id) }
+                reloadChapterHighlightsIfCurrent(reader.currentState.spineIndex)
+                also()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reader.error(R.string.error_save_highlight, e)
+            }
         }
     }
 

@@ -1750,6 +1750,36 @@ class ReaderActivityTest {
         assertThat(back.visibility).isEqualTo(View.GONE)
     }
 
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a jump back into an unreadable chapter reports instead of crashing`() {
+        val book = multiChapterEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        // Jump to chapter 1, arming ↩ with chapter 0 (the opening position) as its sole target.
+        activity.showOverlayForTest()
+        activity.commitScrubForTest(fraction = 0.3f, snappedChapter = 1)
+        idleUntil { activity.scrubIdleForTest }
+        activity.hideOverlayForTest() // page turns below must turn pages, not just dismiss the chrome
+
+        // Page forward past chapters 2, 3 and 4: EpubDocument's chapter cache holds only three
+        // chapters at once, so reading this far evicts chapter 0's pagination — it has not been
+        // touched again since the reader opened there. Regular page turns never touch the jump
+        // stack, so ↩ still points at chapter 0 afterward.
+        repeat(20) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
+
+        // The book is replaced with bytes that cannot be paginated while the reader holds it open;
+        // the jump back re-reads a chapter that is no longer there.
+        book.writeText("not a zip any more")
+        activity.backJumpForTest()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertThat(activity.isFinishing).isFalse()
+    }
+
     // -- Task 4: the floating preview window --------------------------------------------------
 
     @Test
@@ -2715,6 +2745,64 @@ class ReaderActivityTest {
             entry("OEBPS/ch1.xhtml", "<html><body></body></html>")
             entry("OEBPS/ch2.xhtml", "<html><body></body></html>")
             entry("OEBPS/ch3.xhtml", "<html><body><h1>Three</h1>${chapterBody("Three")}</body></html>")
+        }
+        return file
+    }
+
+    /**
+     * Five real (non-empty) chapters — one more than [EpubDocument]'s chapter-cache capacity of
+     * three — so that reading forward through all of them evicts the chapter the reader opened at.
+     * No nav document: nothing here needs [EpubDocument.toc].
+     */
+    private fun multiChapterEpub(file: File): File {
+        fun chapterBody(label: String) = buildString {
+            repeat(12) {
+                append("<p>$label paragraph $it with enough words to lay out into a line or two ")
+                append("on the test viewport so the chapter paginates to at least one page.</p>")
+            }
+        }
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            fun entry(path: String, content: String) {
+                zip.putNextEntry(ZipEntry(path))
+                zip.write(content.toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+            }
+            entry("mimetype", "application/epub+zip")
+            entry(
+                "META-INF/container.xml",
+                """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""",
+            )
+            entry(
+                "OEBPS/content.opf",
+                """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Multi Chapter Book</dc:title></metadata>
+  <manifest>
+    <item id="ch0" href="ch0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch4" href="ch4.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch0"/>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+    <itemref idref="ch3"/>
+    <itemref idref="ch4"/>
+  </spine>
+</package>""",
+            )
+            entry("OEBPS/ch0.xhtml", "<html><body><h1>Zero</h1>${chapterBody("Zero")}</body></html>")
+            entry("OEBPS/ch1.xhtml", "<html><body><h1>One</h1>${chapterBody("One")}</body></html>")
+            entry("OEBPS/ch2.xhtml", "<html><body><h1>Two</h1>${chapterBody("Two")}</body></html>")
+            entry("OEBPS/ch3.xhtml", "<html><body><h1>Three</h1>${chapterBody("Three")}</body></html>")
+            entry("OEBPS/ch4.xhtml", "<html><body><h1>Four</h1>${chapterBody("Four")}</body></html>")
         }
         return file
     }
