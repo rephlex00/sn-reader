@@ -2165,6 +2165,44 @@ class ReaderActivityTest {
         idleUntil { activity.stripGenerationsScheduledForTest == 2 }
     }
 
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a settings change back to a config with a strip on disk schedules no generation`() {
+        // The motivating case: toggling justify off and on again nets back to the original
+        // RenderConfig. Note this does NOT use toggleProgressBar as a trigger — that toggle is
+        // documented (see its KDoc) to deliberately bypass applySettingsChange entirely, so it
+        // would exercise nothing here. toggle_justify is a real Aa-sheet control that always goes
+        // through applyTypography -> applySettingsChange, same as the reported bug.
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { activity.stripGenerationsScheduledForTest == 1 }
+
+        // Generate + load a strip for the book's ACTUAL initial config, exactly as a real reader
+        // would have one sitting on disk from a previous open.
+        runBlocking {
+            PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, activity.configForTest!!)
+        }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        // First toggle: justified flips away from the strip's config — a genuine miss, correctly
+        // scheduling generation (mocked to a count in TestableReaderActivity).
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        idleUntil { activity.stripGenerationsScheduledForTest == 2 }
+        assertThat(activity.previewStripLoadedForTest).isFalse()
+
+        // Second toggle: back to the exact config the strip on disk was generated for.
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+
+        // The still-valid strip is reloaded from disk, not thrown away and rebuilt.
+        assertThat(activity.previewStripLoadedForTest).isTrue()
+        assertThat(activity.stripGenerationsScheduledForTest).isEqualTo(2)
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses

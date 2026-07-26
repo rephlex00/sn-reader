@@ -78,6 +78,16 @@ class PreviewStripStore(private val context: Context) {
         config: RenderConfig,
         onChapterDone: (spineIndex: Int) -> Unit = {},
     ) = withContext(Dispatchers.Default) {
+        // A strip that is already valid for this exact (book, config) is the finished product of
+        // this very job — regenerating it is a whole-book pagination plus ~120 bitmap renders for a
+        // result byte-identical to what is on disk. The deleteRecursively below made that worse than
+        // wasteful: it destroyed the valid strip first, so a toggle flipped off and back on paid
+        // full price to arrive where it started. The stale-sibling sweep at the end of this function
+        // is skipped too: this call produced nothing new, so it has no fresher claim to "the book's
+        // only valid strip" than the one already sitting there, and sweeping would delete OTHER
+        // configs' strips for no work done in exchange — a reader stepping A -> B -> A would lose
+        // B's strip on the no-op third call instead of only on a call that actually regenerates A.
+        if (stripFor(bookFile, config) != null) return@withContext
         val dir = stripDir(bookFile, config)
         dir.deleteRecursively()
         dir.mkdirs()

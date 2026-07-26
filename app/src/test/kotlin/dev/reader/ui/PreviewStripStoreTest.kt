@@ -64,6 +64,24 @@ class PreviewStripStoreTest {
     }
 
     @Test
+    fun `generate is a no-op when a valid strip for this exact config already exists`() = runBlocking {
+        val book = multiChapterEpub(tempFolder.newFile("book.epub"))
+        val cfg = config()
+        store.generate(book, cfg)
+        val first = store.stripFor(book, cfg)!!
+        val firstThumb = store.thumbnailFile(book, cfg, first.entries.first())
+        val stamp = firstThumb.lastModified()
+
+        var chaptersRegenerated = 0
+        store.generate(book, cfg) { chaptersRegenerated++ }
+
+        // Nothing was re-rendered and the existing thumbnails were never deleted and rewritten.
+        assertThat(chaptersRegenerated).isEqualTo(0)
+        assertThat(firstThumb.exists()).isTrue()
+        assertThat(firstThumb.lastModified()).isEqualTo(stamp)
+    }
+
+    @Test
     fun `a config change invalidates the strip`() = runBlocking {
         val book = multiChapterEpub(tempFolder.newFile("book.epub"))
         store.generate(book, config())

@@ -850,13 +850,22 @@ open class ReaderActivity : AppCompatActivity() {
             // leaves the field agreeing with the page still on screen — the invariant the KDoc states.
             val newPages = doc.chapter(state.spineIndex, newConfig).pages
             config = newConfig
-            // The strip is keyed to the typography; a visual change makes it stale. Drop it so the
-            // preview degrades to the readout until a strip for the new config is loaded.
-            // shownPreviewEntry is cleared so a later drag re-blits fresh. The old strip directory
-            // is deleted by the generator on completion; until then stripFor simply misses.
+            // The strip is keyed to the typography; a visual change makes the loaded one stale.
+            // Drop the in-memory handle, then reload from disk — a config the reader has used
+            // before (stepping text size back down, toggling justify off and on) usually still has
+            // its strip sitting there. Only a genuine miss schedules generation, exactly as
+            // openFirstBook does.
             previewStrip = null
             shownPreviewEntry = null
-            scheduleStripGeneration()
+            val reloaded = bookPath?.let { stripStore.stripFor(File(it), newConfig) }
+            if (reloaded != null) {
+                previewStrip = reloaded
+                generatedChapters.clear()
+                generatedChapters.addAll(generatedChaptersOf(reloaded))
+                chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
+            } else {
+                scheduleStripGeneration()
+            }
             val newPageIndex = reflowedPageIndex(oldPages, state.pageIndex, newPages)
             state = ReadingState(state.spineIndex, newPageIndex)
             showPage(state)
