@@ -588,6 +588,12 @@ open class ReaderActivity : AppCompatActivity() {
             if (enabled) {
                 if (previewStrip == null) scheduleStripGeneration()
             } else {
+                // Previews off: stop paying for them immediately. A generation in flight is 5-15s
+                // of CPU producing thumbnails for a window that will not open — the pref was only
+                // ever checked when generation was SCHEDULED, so without this the reader watched
+                // the battery drain for a feature they had just switched off.
+                stripGenerationJob?.cancel()
+                stripGenerationJob = null
                 scrubPreview.visibility = View.GONE
                 scrubPreview.setImageDrawable(null)
                 shownPreviewEntry = null
@@ -1990,6 +1996,9 @@ open class ReaderActivity : AppCompatActivity() {
      *  without needing to drive [SettingsSheet.refresh] through a real Aa-sheet open. Not called in
      *  production. */
     internal fun hasPreviewsForCurrentBookForTest(): Boolean = settingsHost.hasPreviewsForCurrentBook()
+
+    /** Whether a strip generation is running right now. */
+    internal val stripGenerationActiveForTest: Boolean get() = stripGenerationJob?.isActive == true
 
     /**
      * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s

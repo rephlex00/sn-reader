@@ -2203,6 +2203,31 @@ class ReaderActivityTest {
         assertThat(activity.stripGenerationsScheduledForTest).isEqualTo(2)
     }
 
+    // -- Task 7: turning previews off cancels generation in flight -------------------------------
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `turning previews off cancels a generation in flight`() {
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        // Real generation (not TestableReaderActivity's counting override — see the seam's KDoc),
+        // so there is an actual coroutine on Dispatchers.Default for the toggle to cancel.
+        activity.scheduleRealStripGenerationForTest()
+        assertThat(activity.stripGenerationActiveForTest).isTrue()
+
+        // The real Aa-sheet control, so this exercises togglePreviews() itself, not just the pref.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.toggle_previews).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertThat(activity.stripGenerationActiveForTest).isFalse()
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
@@ -2245,6 +2270,10 @@ class ReaderActivityTest {
         override fun scheduleStripGeneration() {
             stripGenerationsScheduledForTest++
         }
+
+        /** Starts a REAL generation (bypassing the counting override just above) so a test can
+         *  cancel an actual in-flight coroutine. Not called in production. */
+        fun scheduleRealStripGenerationForTest() = super.scheduleStripGeneration()
 
         override fun findFirstEpub(): File? {
             findFirstCalls++
