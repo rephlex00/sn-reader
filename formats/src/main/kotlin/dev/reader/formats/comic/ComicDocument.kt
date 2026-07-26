@@ -44,6 +44,7 @@ class ComicDocument private constructor(
 
     companion object {
         private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
+        private const val COMIC_INFO_ENTRY = "ComicInfo.xml"
 
         /** @throws ComicException if [file] is not a readable comic. */
         fun open(file: File): ComicDocument {
@@ -64,8 +65,11 @@ class ComicDocument private constructor(
             try {
                 val pages = imagePagesOf(source.entries())
                 if (pages.isEmpty()) throw ComicException.NoImages("This archive contains no images.")
-                val info = source.takeIf { it.exists("ComicInfo.xml") }
-                    ?.readText("ComicInfo.xml")?.let { parseComicInfo(it) }
+                // Case-insensitive, and anywhere in the archive: `comicinfo.xml` and
+                // `ComicInfo.XML` are both common in the wild, and an exact-case lookup silently
+                // dropped series, writer and reading direction for every one of them.
+                val infoEntry = source.entries().firstOrNull { it.equals(COMIC_INFO_ENTRY, ignoreCase = true) }
+                val info = infoEntry?.let { source.readText(it) }?.let { parseComicInfo(it) }
                 return ComicDocument(source, pages, info, file.nameWithoutExtension)
             } catch (e: Throwable) {
                 // Every throw path above lands here, so the source is closed regardless of
