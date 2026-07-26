@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
 import com.google.common.truth.Truth.assertThat
 import dev.reader.R
 import dev.reader.data.BookEntity
@@ -431,5 +432,73 @@ class ComicActivityTest {
 
         assertThat(a.previewDecodeJobForTest).isSameInstanceAs(firstJob)
         drainMain()
+    }
+
+    // -- Task 29: the comic bookmarks panel matches the reader's -----------------------------------
+
+    /** Measures/lays out the comic Bookmarks RecyclerView (Robolectric does not on its own) and
+     *  returns the row's itemView at [position], so a child click lands on a real holder — mirrors
+     *  ReaderActivityTest's own layOutHighlightRow/clickTocRow helpers. */
+    private fun layOutBookmarkRow(activity: ComicActivity, position: Int): View {
+        val list = activity.findViewById<RecyclerView>(R.id.comic_bookmarks_list)
+        list.measure(
+            View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+        )
+        list.layout(0, 0, 800, 600)
+        return (
+            list.findViewHolderForAdapterPosition(position)
+                ?: error("no bookmark row at position $position after layout")
+            ).itemView
+    }
+
+    @Test fun `the bookmarks panel's close dismisses an empty panel without finishing the activity`() {
+        // The defect this task fixes: a bare ScrollView list had no ✕, so on a device with no
+        // hardware Back the only way out of an empty bookmarks panel was to exit the whole reader.
+        val a = launch(cbz("empty-panel.cbz", 5).path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+
+        a.findViewById<View>(R.id.comic_bookmarks_button).performClick()
+        val panel = a.findViewById<View>(R.id.comic_bookmarks_panel)
+        assertThat(panel.visibility).isEqualTo(View.VISIBLE)
+
+        a.findViewById<View>(R.id.comic_bookmarks_close).performClick()
+        assertThat(panel.visibility).isEqualTo(View.GONE)
+        assertThat(a.isFinishing).isFalse()
+    }
+
+    @Test fun `the bookmarks panel shows its empty state when there are no bookmarks`() {
+        val a = launch(cbz("empty-state.cbz", 5).path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+
+        a.findViewById<View>(R.id.comic_bookmarks_button).performClick()
+        assertThat(a.findViewById<View>(R.id.comic_bookmarks_empty).visibility).isEqualTo(View.VISIBLE)
+        assertThat(a.findViewById<View>(R.id.comic_bookmarks_list).visibility).isEqualTo(View.GONE)
+    }
+
+    @Test fun `a bookmark row's ✕ deletes that bookmark and the list refreshes`() = runBlocking {
+        val file = cbz("row-delete.cbz", 5)
+        val dao = (RuntimeEnvironment.getApplication() as dev.reader.ReaderApplication).database.bookDao()
+        dao.upsertAll(listOf(BookEntity(
+            path = file.path, sizeBytes = file.length(), modifiedAtMs = 0, title = "rd", author = null,
+            coverPath = null, spineIndex = 0, charOffset = 0, unreadable = false,
+            unreadableReason = null, addedAtMs = 0, lastOpenedAtMs = null,
+        )))
+        val a = launch(file.path).get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        a.toggleBookmarkForTest()
+        idleUntil { a.bookmarkedPagesForTest.contains(0) }
+
+        a.findViewById<View>(R.id.comic_bookmarks_button).performClick()
+        assertThat(a.findViewById<View>(R.id.comic_bookmarks_list).visibility).isEqualTo(View.VISIBLE)
+        layOutBookmarkRow(a, 0).findViewById<View>(R.id.bookmark_delete).performClick()
+
+        idleUntil { a.bookmarkedPagesForTest.isEmpty() }
+        assertThat(a.bookmarkedPagesForTest).isEmpty()
+        assertThat(a.findViewById<View>(R.id.comic_bookmarks_empty).visibility).isEqualTo(View.VISIBLE)
+        Unit
     }
 }

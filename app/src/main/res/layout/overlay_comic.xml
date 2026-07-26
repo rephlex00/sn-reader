@@ -208,4 +208,82 @@
 
     </LinearLayout>
 
+    <!-- The bookmarks panel: this book's saved pages (page N, tap to jump, ✕ to delete), restyled
+         to match the EPUB reader's bookmarks_panel — same header, rule, RecyclerView, empty state
+         and dimens/styles/drawables (item_bookmark.xml, PanelClose, bookmarks_empty). One
+         deliberate difference: no "Add/remove this page" toggle row, since that control is already
+         the glyph in the top bar (comic_bookmark_button) — duplicating it here would be two
+         controls for the same action. The ✕ here also fixes the panel's one real defect: with no
+         hardware Back, an empty panel with no in-panel dismiss forced exiting the whole reader.
+         Visibility-toggled like the top bar/foot; one e-ink redraw, no animation. clickable=true so
+         a tap on its own chrome is consumed, not fallen through to dismiss the overlay. -->
+    <LinearLayout
+        android:id="@+id/comic_bookmarks_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/white"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <!-- Header row: title + a top-right ✕ that closes this panel (back to the reading chrome). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="@dimen/panel_header_padding_v"
+                android:text="@string/reader_bookmarks"
+                android:textColor="@android:color/black"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/comic_bookmarks_close"
+                style="@style/PanelClose"
+                android:contentDescription="@string/panel_close_bookmarks" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="@android:color/black" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/comic_bookmarks_list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="vertical" />
+
+        <LinearLayout
+            android:id="@+id/comic_bookmarks_empty"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="top|center_horizontal"
+            android:paddingHorizontal="24dp"
+            android:paddingTop="48dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/bookmarks_empty"
+                android:textColor="@color/reader_text_primary"
+                android:textSize="@dimen/text_body" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
 </FrameLayout>

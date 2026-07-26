@@ -61,6 +61,11 @@ open class ComicActivity : AppCompatActivity() {
     private lateinit var readout: TextView
     private lateinit var directionButton: TextView
     private lateinit var bookmarkButton: ImageView
+
+    /** The bookmarks panel view (`comic_bookmarks_panel`): this Activity owns only its visibility —
+     *  everything else (the list, the delete write, the empty state) belongs to [bookmarksPanel] —
+     *  mirrors ReaderActivity's own `bookmarksPanel: View` / `bookmarks: BookmarksPanel` split. */
+    private lateinit var bookmarksPanelView: View
     private lateinit var bookmarksPanel: ComicBookmarksPanel
     private val decoder = ComicPageDecoder()
 
@@ -181,14 +186,32 @@ open class ComicActivity : AppCompatActivity() {
         directionButton.setOnClickListener { toggleDirection() }
         bookmarkButton.setOnClickListener { toggleBookmark() }
         overlay.findViewById<View>(R.id.comic_bookmarks_button).setOnClickListener {
-            bookmarksPanel.show(bookmarks); bookmarksPanel.visibility = View.VISIBLE
+            bookmarksPanel.show(bookPath, bookmarks); bookmarksPanelView.visibility = View.VISIBLE
         }
 
-        bookmarksPanel = ComicBookmarksPanel(this) { page ->
-            bookmarksPanel.visibility = View.GONE
-            if (page in 0 until pageCount) showPage(page)
-        }.apply { visibility = View.GONE }
-        container.addView(bookmarksPanel, FrameLayout.LayoutParams(-1, -1))
+        bookmarksPanelView = overlay.findViewById(R.id.comic_bookmarks_panel)
+        bookmarksPanel = ComicBookmarksPanel(
+            overlay, lifecycleScope, bookmarkDao,
+            onJump = { page ->
+                bookmarksPanelView.visibility = View.GONE
+                if (page in 0 until pageCount) showPage(page)
+            },
+            onDeleted = { marks ->
+                bookmarks = marks
+                updateBookmarkLabel()
+                refreshScrubberBookmarks()
+            },
+            onDeleteFailed = { e ->
+                Log.w(TAG, getString(R.string.error_save_bookmark), e)
+                showMessage(getString(R.string.error_save_bookmark))
+            },
+        )
+        // The device has no hardware Back, so the panel carries its own top-right ✕ that peels it
+        // back to the reading chrome — the same first step system Back takes, and the fix for the
+        // panel's known defect (an empty panel with no in-panel dismiss forced exiting the reader).
+        overlay.findViewById<View>(R.id.comic_bookmarks_close).setOnClickListener {
+            bookmarksPanelView.visibility = View.GONE
+        }
         setContentView(container)
         pageView.doOnLayout { openComic() }
     }
