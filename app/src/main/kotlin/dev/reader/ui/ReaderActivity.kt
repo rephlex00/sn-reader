@@ -876,20 +876,44 @@ open class ReaderActivity : AppCompatActivity() {
             // index, then the sibling sweep) runs with no suspension point to catch it. So this
             // cancels AND joins before trusting the reload, exactly as scheduleStripGeneration's
             // own supersede path does for the same reason.
+            //
+            // Keep the handle (do NOT null it): the join above is only awaited once this coroutine
+            // resumes, and the main thread is free to accept taps for the whole 0.1-2s it can take
+            // a cooperative cancellation to land. A second settings change (or a previews-off/on
+            // pair) landing in that window must see the SAME job here that this coroutine is
+            // waiting on — nulling it would make that next caller read `previous = null`, skip its
+            // own join, and start a second generator while this one's cancelled-but-still-running
+            // tail can still delete the directory the new one just created. Exactly the hazard
+            // togglePreviews' own KDoc documents for the same field.
             previewStrip = null
             shownPreviewEntry = null
             val previous = stripGenerationJob
-            stripGenerationJob = null
             lifecycleScope.launch {
                 previous?.cancelAndJoin()
-                val reloaded = bookPath?.let { stripStore.stripFor(File(it), newConfig) }
-                if (reloaded != null) {
-                    previewStrip = reloaded
-                    generatedChapters.clear()
-                    generatedChapters.addAll(generatedChaptersOf(reloaded))
-                    chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
-                } else {
-                    scheduleStripGeneration()
+                try {
+                    val path = bookPath
+                    val reloaded = if (path != null) {
+                        withContext(Dispatchers.IO) { stripStore.stripFor(File(path), newConfig) }
+                    } else {
+                        null
+                    }
+                    if (reloaded != null) {
+                        previewStrip = reloaded
+                        generatedChapters.clear()
+                        generatedChapters.addAll(generatedChaptersOf(reloaded))
+                        chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
+                    } else {
+                        scheduleStripGeneration()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A failed reload degrades to no preview window — never to a crashed reader,
+                    // exactly as scheduleStripGeneration's own identical guard states. stripFor is
+                    // a TOCTOU disk read (isFile then readText); a concurrent sweep or eviction
+                    // deleting the index between those two lines throws here, and this used to run
+                    // uncaught inside this launch, outside applySettingsChange's own try/catch.
+                    Log.w("Reader", "preview strip reload failed", e)
                 }
             }
             val newPageIndex = reflowedPageIndex(oldPages, state.pageIndex, newPages)

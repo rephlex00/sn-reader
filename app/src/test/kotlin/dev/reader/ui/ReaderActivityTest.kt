@@ -35,6 +35,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -2198,8 +2199,10 @@ class ReaderActivityTest {
         // Second toggle: back to the exact config the strip on disk was generated for.
         activity.findViewById<View>(R.id.toggle_justify).performClick()
 
-        // The still-valid strip is reloaded from disk, not thrown away and rebuilt.
-        assertThat(activity.previewStripLoadedForTest).isTrue()
+        // The still-valid strip is reloaded from disk, not thrown away and rebuilt. The reload's
+        // disk read now runs on Dispatchers.IO (see the fix-pass report's Finding 2), so it no
+        // longer resolves synchronously within performClick() and needs a real wait.
+        idleUntil { activity.previewStripLoadedForTest }
         assertThat(activity.stripGenerationsScheduledForTest).isEqualTo(2)
     }
 
@@ -2238,14 +2241,17 @@ class ReaderActivityTest {
         val release = CountDownLatch(1)
         activity.stripStoreForTest.onGenerateStartedForTest = {
             started.countDown()
-            release.await()
+            // Untimed here would hang the whole suite, not just this test, if the release below
+            // were ever missed — a timed wait fails loudly instead.
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue()
         }
         activity.scheduleRealStripGenerationForTest()
-        started.await()
+        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue()
         assertThat(activity.stripGenerationActiveForTest).isTrue()
-        // Captured by reference, not read again through the Activity field below: a fix for this
-        // finding supersedes/nulls that field on the very click that follows, so re-reading it
-        // afterward would silently stop tracking THIS job.
+        // Captured by reference, not read again through the Activity field below: the field is not
+        // guaranteed to keep pointing at THIS job afterward (a later miss reassigns it to a fresh
+        // generation), so re-reading it after the click below would risk silently tracking a
+        // different job instead.
         val abandonedJob = activity.stripGenerationJobForTest!!
 
         // Second toggle: back to the exact config the strip on disk was generated for — a genuine
@@ -2262,8 +2268,14 @@ class ReaderActivityTest {
         idleUntil { abandonedJob.isCompleted }
         // Let whatever is chained off that completion finish draining through the main looper —
         // the fix's own join-then-reload coroutine, or the unfixed code's own previewStrip
-        // reassignment inside scheduleStripGeneration — before reading the final state.
-        repeat(5) { shadowOf(Looper.getMainLooper()).idle() }
+        // reassignment inside scheduleStripGeneration — before reading the final state. A fixed
+        // pump count races the cross-thread dispatch: abandonedJob.isCompleted above can flip on
+        // the Dispatchers.Default thread before the continuation that runs the reload is posted to
+        // the main looper, so a handful of back-to-back idle() calls with no sleep between them can
+        // all no-op and leave a runnable queued for the NEXT test to trip over. idleUntil polls the
+        // actual condition being asserted below, on the same wall-clock-deadline primitive already
+        // used everywhere else in this suite for a cross-dispatcher wait.
+        idleUntil { activity.previewStripConfigHashForTest != null }
 
         // previewStrip must resolve to the CURRENT config (the one just reloaded), not the
         // abandoned one the superseded generator was working on.

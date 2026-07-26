@@ -41,7 +41,7 @@ class PreviewStripStore(private val context: Context) {
      *  this call's own stale directory has been reset. A test can block here (e.g. on a
      *  `CountDownLatch`) to hold a real generation open at a known point, deterministically, rather
      *  than racing it against other code on wall-clock timing. Not used in production. */
-    var onGenerateStartedForTest: (() -> Unit)? = null
+    internal var onGenerateStartedForTest: (() -> Unit)? = null
 
     private val root: File get() = File(context.filesDir, "previews")
 
