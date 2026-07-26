@@ -36,6 +36,7 @@ import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -2476,12 +2477,13 @@ class ReaderActivityTest {
 
         val hookCalls = AtomicInteger(0)
         val releaseB = CountDownLatch(1)
+        val releaseBSuccess = AtomicBoolean(false)
         activity.stripStoreForTest.onGenerateStartedForTest = {
             // Call 1 (generation A) returns immediately: A runs to full, real completion. Call 2
             // (generation B, for the new config below) is held so this test can inspect state after
             // A's stale posts have drained but before B produces any of its own.
             if (hookCalls.incrementAndGet() >= 2) {
-                assertThat(releaseB.await(5, TimeUnit.SECONDS)).isTrue()
+                releaseBSuccess.set(releaseB.await(5, TimeUnit.SECONDS))
             }
         }
 
@@ -2523,6 +2525,7 @@ class ReaderActivityTest {
         idleUntil { activity.stripGenerationFinishedForTest }
 
         assertThat(activity.generatedChaptersForTest).isEqualTo(setOf(0, 1, 2))
+        assertThat(releaseBSuccess.get()).isTrue()
     }
 
     // -- Harness --------------------------------------------------------------------------------
@@ -2879,6 +2882,7 @@ class ReaderActivityTest {
         while (!condition() && System.currentTimeMillis() < deadline) {
             Thread.sleep(5)
         }
+        check(condition()) { "condition never became true within ${timeoutMs}ms" }
     }
 
     /**

@@ -249,8 +249,7 @@ class PageView(context: Context) : View(context) {
      * A display-only change — it never re-paginates. Called once per page turn from
      * [ReaderActivity.showPage], and directly when the progress-bar toggle flips.
      *
-     * [chapterEndFraction] is defaulted so the toggle's single-argument call site, and the existing
-     * tests, keep working unchanged.
+     * [chapterEndFraction] is defaulted so existing test call sites keep working unchanged.
      */
     fun setProgress(fraction: Float?, chapterEndFraction: Float? = null) {
         this.progress = fraction
