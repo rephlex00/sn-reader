@@ -210,6 +210,10 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private var stripGenerationJob: Job? = null
 
+    /** Increments on every scheduled generation; a callback carrying a stale token is a superseded
+     *  run's queued main-thread post and must not repopulate [generatedChapters]. */
+    private var stripGenerationToken: Int = 0
+
     /** The entry currently blitted, to skip redundant decodes as the finger dithers in place. */
     private var shownPreviewEntry: StripEntry? = null
 
@@ -1435,6 +1439,11 @@ open class ReaderActivity : AppCompatActivity() {
         // says otherwise, even if a stale set survived from a superseded run.
         generatedChapters.clear()
         chapterScrubber.setGeneratedChapters(emptySet())
+        // Captured before the launch: a superseded run's per-chapter callback closes over ITS OWN
+        // token, so it can tell — even after landing on the main thread well after this run was
+        // abandoned — that [stripGenerationToken] has since moved on and it must not touch
+        // [generatedChapters].
+        val token = ++stripGenerationToken
         stripGenerationJob = lifecycleScope.launch {
             // Wait for any prior generator to fully stop before regenerating — see KDoc above.
             previous?.cancelAndJoin()
@@ -1443,6 +1452,11 @@ open class ReaderActivity : AppCompatActivity() {
                     // Fires on Dispatchers.Default (see generate's KDoc); marshal to the main thread
                     // before touching the Activity's fields or any View.
                     runOnUiThread {
+                        // A superseded run's callback, queued before the join above returned and
+                        // landing only now: the token it closed over no longer matches, so this is
+                        // stale data for a config nobody wants anymore — discard it rather than
+                        // repopulating generatedChapters out from under the run that superseded it.
+                        if (token != stripGenerationToken) return@runOnUiThread
                         generatedChapters.add(spineIndex)
                         chapterScrubber.setGeneratedChapters(generatedChapters.toSet())
                         settings.refresh() // live "N / M chapters" readout, a no-op while the sheet is closed
@@ -1462,18 +1476,21 @@ open class ReaderActivity : AppCompatActivity() {
                 // strip directories. The stripFor call below already knew that; this line didn't.
                 withContext(Dispatchers.IO) { stripStore.evictOverBudget(keep = file) }
                 previewStrip = withContext(Dispatchers.IO) { stripStore.stripFor(file, cfg) }
-                // Generation is done and previewStrip just reloaded above (back on the launch's
-                // main-thread context after that withContext returns): give the resting readout
-                // back its own line rather than leaving the transient "preparing previews · 100%"
-                // stuck on screen. Gated on not-mid-drag, same as the per-chapter ticks above — a
-                // finger holding still after DOWN would otherwise see its live "Chapter N · P%"
-                // stomped by the resting text until the next MOVE.
-                if (scrubOrigin == null) scrubberView.text = restingReadout
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // A failed generation degrades to no preview window — never to a crashed reader.
                 Log.w("Reader", "preview strip generation failed", e)
+            } finally {
+                // The per-chapter callback wrote a transient "preparing previews · N%" into the
+                // readout. On the failure path nothing used to take it back, so it sat there until
+                // the next page turn happened to call setRestingReadout. Gated on not-mid-drag, same
+                // as every other write to this line, AND on this run still being the current one —
+                // a superseded run's finally must not stomp the readout the run that replaced it
+                // (or its own failure/success path) already owns.
+                if (token == stripGenerationToken && scrubOrigin == null) {
+                    scrubberView.text = restingReadout
+                }
             }
         }
     }
@@ -2143,6 +2160,10 @@ open class ReaderActivity : AppCompatActivity() {
      *  this (e.g. via `idleUntil`) before returning, or the coroutine can still be burning a
      *  [Dispatchers.Default] pool thread when the next test starts. Not called in production. */
     internal val stripGenerationFinishedForTest: Boolean get() = stripGenerationJob?.isCompleted != false
+
+    /** A snapshot of [generatedChapters] — lets a test confirm a superseded generation's late,
+     *  stale-token callback did not repopulate it. Not called in production. */
+    internal val generatedChaptersForTest: Set<Int> get() = generatedChapters.toSet()
 
     /**
      * Paginates the neighbouring chapter a boundary turn is about to need — [PrefetchPolicy]'s

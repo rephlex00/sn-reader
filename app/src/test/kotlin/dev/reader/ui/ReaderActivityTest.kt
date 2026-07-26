@@ -36,6 +36,7 @@ import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -2424,6 +2425,106 @@ class ReaderActivityTest {
         idleUntil { activity.stripGenerationFinishedForTest }
     }
 
+    // -- Task 21: a failed or superseded generation must not leave stale readout/state ------------
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a failed generation restores the resting readout instead of leaving the transient progress text`() {
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        val resting = scrubberTextOf(activity)
+
+        // Simulates the transient "preparing previews · N%" text a real per-chapter callback would
+        // have written onto the scrubber line, then corrupts the book's bytes so the EpubDocument.open
+        // called right after this hook (still inside generate()) throws — exercising the failure
+        // path, not the happy one.
+        activity.stripStoreForTest.onGenerateStartedForTest = {
+            activity.runOnUiThread {
+                activity.findViewById<TextView>(R.id.scrubber).text = "preparing previews · 40%"
+            }
+            book.writeBytes(ByteArray(16))
+        }
+
+        activity.scheduleRealStripGenerationForTest()
+        idleUntil { activity.stripGenerationFinishedForTest }
+
+        // The failure path used to just log and leave whatever transient text was last written
+        // sitting on the scrubber line until some later page turn happened to restore it.
+        assertThat(scrubberTextOf(activity)).isEqualTo(resting)
+    }
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a superseded generation's late callback does not repopulate generatedChapters`() {
+        // Strategy: let generation A run to genuine, real completion for its own config — including
+        // all three of its real onChapterDone posts — WITHOUT ever letting the main looper drain
+        // them (no idle() call happens until this test says so). Only once A's work is confirmed
+        // done (via a filesystem poll, which needs no main-thread pumping) does the test change the
+        // config and start a second, real generation B for the NEW config — which cancels A and
+        // bumps the token synchronously, before A's already-queued (now stale) posts ever run.
+        clearReaderPrefs()
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        val originalConfig = activity.configForTest!!
+
+        val hookCalls = AtomicInteger(0)
+        val releaseB = CountDownLatch(1)
+        activity.stripStoreForTest.onGenerateStartedForTest = {
+            // Call 1 (generation A) returns immediately: A runs to full, real completion. Call 2
+            // (generation B, for the new config below) is held so this test can inspect state after
+            // A's stale posts have drained but before B produces any of its own.
+            if (hookCalls.incrementAndGet() >= 2) {
+                assertThat(releaseB.await(5, TimeUnit.SECONDS)).isTrue()
+            }
+        }
+
+        // Generation A: real, unblocked, for the book's original config.
+        activity.scheduleRealStripGenerationForTest()
+
+        // Wait for A's own strip to actually land on disk — proof its generate() call (and all
+        // three of its onChapterDone posts) already ran, entirely on a background thread. This is a
+        // plain filesystem poll, not [idleUntil]: idling here would drain A's queued posts under
+        // its OWN still-current token, before this test ever gets a chance to make them stale.
+        waitWithoutIdling { PreviewStripStore(RuntimeEnvironment.getApplication()).stripFor(book, originalConfig) != null }
+
+        // Change the render config for real (a real Aa-sheet control), so the second generation
+        // below is a genuine cache miss rather than short-circuiting on A's just-written strip.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        val newConfig = activity.configForTest!!
+        assertThat(newConfig).isNotEqualTo(originalConfig)
+
+        // Generation B supersedes A. This synchronously clears generatedChapters and bumps the
+        // token, on this thread, before B's own coroutine — or A's already-queued, now-stale
+        // posts — ever run.
+        activity.scheduleRealStripGenerationForTest()
+
+        // B's onGenerateStartedForTest firing a second time can only happen after A's job has been
+        // joined (cancelAndJoin awaits it, resuming through queued main-thread posts) and B's own
+        // generate() call is reached. Because A's stale posts were queued on the main thread
+        // strictly earlier than the messages that drive B to this point, draining up to this
+        // condition also drains every one of A's stale posts first — the same causal ordering
+        // [idleUntil] relies on elsewhere in this file.
+        idleUntil { hookCalls.get() >= 2 }
+
+        // Untouched by A's three late, stale-token posts: the guard must have discarded them rather
+        // than letting them repopulate the set B's own (not-yet-run) generation had already cleared.
+        assertThat(activity.generatedChaptersForTest).isEmpty()
+
+        // Let B run for real to completion and confirm it lands its own, correct, complete set.
+        releaseB.countDown()
+        idleUntil { activity.stripGenerationFinishedForTest }
+
+        assertThat(activity.generatedChaptersForTest).isEqualTo(setOf(0, 1, 2))
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
@@ -2766,6 +2867,17 @@ class ReaderActivityTest {
         while (!condition() && System.currentTimeMillis() < deadline) {
             shadowOf(Looper.getMainLooper()).idle()
             Thread.sleep(20)
+        }
+    }
+
+    /** Like [idleUntil], but deliberately never pumps the main looper — for waiting on a real
+     *  generation's background-thread side effect (e.g. a strip landing on disk) without draining
+     *  its queued `runOnUiThread` posts, which a test needs to stay queued until a config change
+     *  has made their token stale. */
+    private fun waitWithoutIdling(timeoutMs: Long = 5_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(5)
         }
     }
 
