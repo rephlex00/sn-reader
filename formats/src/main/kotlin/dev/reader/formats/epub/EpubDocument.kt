@@ -282,8 +282,17 @@ class EpubDocument private constructor(
                 val toc = EpubTocParser().parse(source, pkg)
                 return EpubDocument(source, pkg, measurer, toc)
             } catch (e: Throwable) {
+                // Every throw path above lands here, so the source is closed regardless of
+                // exception type. Unknown throwables are wrapped rather than rethrown raw: this
+                // function's contract is "throws EpubException", and every caller catches exactly
+                // that — a raw jsoup or zip-layer exception from a pathological archive would
+                // sail past all of them. Mirrors ComicDocument.open.
                 source.close()
-                throw e
+                throw when (e) {
+                    is EpubException -> e
+                    is java.util.concurrent.CancellationException -> e
+                    else -> EpubException.Malformed("The book could not be read: ${e.message}")
+                }
             }
         }
     }
