@@ -3,6 +3,7 @@ package dev.reader.ui
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -18,6 +19,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
+import org.robolectric.android.controller.ActivityController
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -73,6 +75,39 @@ class ComicActivityTest {
         return container.getChildAt(0) as ComicPageView
     }
 
+    /** Forces a real layout pass at the given size, mirroring ReaderActivityTest's `layOutAt` —
+     *  toggling the overlay from GONE to VISIBLE alone leaves the scrubber measured at 0x0 under
+     *  Robolectric, which never runs a Choreographer pass on its own. */
+    private fun layOutComicAt(controller: ActivityController<ComicActivity>, widthPx: Int, heightPx: Int) {
+        val decor = controller.get().window.decorView
+        decor.measure(
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY),
+        )
+        decor.layout(0, 0, widthPx, heightPx)
+        drainMain()
+    }
+
+    /** Dispatches a real single-pointer touch to a laid-out [ChapterScrubberView] — the grace-flush
+     *  test needs the view's own gesture state machine (DOWN/UP), not the callback seams the other
+     *  scrub tests invoke directly. y is an arbitrary point inside the 88dp-tall strip. Mirrors
+     *  ReaderActivityTest's own `touchScrubber`. */
+    private fun touchScrubber(scrubber: ChapterScrubberView, action: Int, x: Float) {
+        val event = MotionEvent.obtain(0L, 0L, action, x, 30f, 0)
+        scrubber.onTouchEvent(event)
+        event.recycle()
+    }
+
+    /** Inverts the view's fractionAt geometry (padding-based track ends) for a real, laid-out
+     *  scrubber — this one carries the 16dp horizontal padding from overlay_comic.xml, at
+     *  Robolectric's default density 1.0 (16dp == 16px). Mirrors ReaderActivityTest's own
+     *  `xForFraction`. */
+    private fun xForFraction(scrubber: ChapterScrubberView, fraction: Float): Float {
+        val left = scrubber.paddingLeft.toFloat()
+        val right = scrubber.width - scrubber.paddingRight.toFloat()
+        return left + fraction * (right - left)
+    }
+
     /**
      * ComicActivity's open/turn path is a real multi-hop coroutine (several `withContext
      * (Dispatchers.IO)` file/DB reads, then a `Dispatchers.Default` bitmap decode) running under
@@ -88,6 +123,7 @@ class ComicActivityTest {
             drainMain()
             Thread.sleep(20)
         }
+        check(condition()) { "condition never became true within ${timeoutMs}ms" }
     }
 
     @Test fun `opens at the first page`() {
@@ -280,6 +316,85 @@ class ComicActivityTest {
         a.toggleChromeForTest()
         assertThat(overlay.visibility).isEqualTo(View.GONE)
         assertThat(pv.fullRefreshCount).isGreaterThan(refreshesBefore)
+    }
+
+    // -- Lifecycle parity with ReaderActivity (onResume/onPause fast mode, onPause grace flush) ----
+
+    @Test fun `onPause restores the screen mode even with the overlay still open`() {
+        val controller = launch(cbz("pause-fastmode.cbz", 5).path)
+        val a = controller.get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        val epd = object : EpdRefresher {
+            override val available = true
+            var fastModeHeld = false
+            override fun cleanRefresh(): Boolean = true
+            override fun enterFastMode(): Boolean { fastModeHeld = true; return true }
+            override fun exitFastMode(): Boolean { fastModeHeld = false; return true }
+        }
+        comicPageViewOf(a).epd = epd
+
+        a.toggleChromeForTest()
+        assertThat(epd.fastModeHeld).isTrue()
+
+        controller.pause()
+
+        // The screen mode is device-wide runtime state. A leaked fast mode degrades the whole
+        // device UI, so the restore must ride on the last callback Android guarantees, exactly as
+        // ReaderActivity.onPause does — not on a close handler the user can bypass by swiping away.
+        assertThat(epd.fastModeHeld).isFalse()
+    }
+
+    @Test fun `onResume re-enters fast mode when the overlay is still open`() {
+        val controller = launch(cbz("resume-fastmode.cbz", 5).path)
+        val a = controller.get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        val epd = object : EpdRefresher {
+            override val available = true
+            var fastModeHeld = false
+            override fun cleanRefresh(): Boolean = true
+            override fun enterFastMode(): Boolean { fastModeHeld = true; return true }
+            override fun exitFastMode(): Boolean { fastModeHeld = false; return true }
+        }
+        comicPageViewOf(a).epd = epd
+
+        a.toggleChromeForTest()
+        assertThat(epd.fastModeHeld).isTrue()
+
+        controller.pause()
+        // onPause unconditionally gives the mode back — confirmed by the test above.
+        assertThat(epd.fastModeHeld).isFalse()
+
+        controller.resume()
+
+        // A resume with the chrome still open must re-enter fast mode, or every chrome interaction
+        // until the overlay is closed and reopened would run on the slow, full-quality waveform —
+        // exactly the ComicActivity had no onResume at all to prevent before this fix.
+        assertThat(epd.fastModeHeld).isTrue()
+    }
+
+    @Test fun `onPause flushes a page turn still inside its commit grace window`() {
+        val controller = launch(cbz("pause-flush.cbz", 10).path)
+        val a = controller.get()
+        a.openComic()
+        idleUntil { a.pagesShownForTest.isNotEmpty() }
+        a.toggleChromeForTest()
+        // toggleChromeForTest only flips visibility (GONE -> VISIBLE); Robolectric does not run a
+        // real Choreographer pass on its own, so the scrubber — measured out at 0x0 while GONE —
+        // needs an explicit re-layout before its real pixel width can back xForFraction below.
+        layOutComicAt(controller, 600, 800)
+        val scrubber = a.findViewById<ChapterScrubberView>(R.id.comic_scrubber)
+
+        touchScrubber(scrubber, MotionEvent.ACTION_DOWN, xForFraction(scrubber, 0.9f))
+        touchScrubber(scrubber, MotionEvent.ACTION_UP, xForFraction(scrubber, 0.9f))
+        // Grace is open; the app is backgrounded (Home, app switcher, an incoming call) before it
+        // expires. onPause must resolve it now — the reverse bug silently discarded a lift like
+        // this one, exactly as a lift the reader already committed to should never be discarded.
+        controller.pause()
+
+        idleUntil { a.currentPageForTest == comicPageForFraction(0.9f, 10) }
+        assertThat(a.currentPageForTest).isEqualTo(comicPageForFraction(0.9f, 10))
     }
 
     @Test fun `the readout shows page and percent mid-drag, and reverts to rest after a commit`() {

@@ -571,9 +571,30 @@ open class ComicActivity : AppCompatActivity() {
         super.onStop()
     }
 
+    /**
+     * Mirrors [ReaderActivity.onResume]: onPause gives the panel's screen mode back
+     * unconditionally (it is device-wide state that must never leak), so a resume with the
+     * overlay still open would otherwise run every subsequent chrome interaction on the slow,
+     * full-quality waveform until the overlay was closed and reopened. Idempotent: enterFastMode
+     * no-ops when already held. Guarded the same way [onPause] is: onResume can in principle race
+     * initialization before pageView/overlay are assigned.
+     */
+    override fun onResume() {
+        super.onResume()
+        if (::pageView.isInitialized && ::overlay.isInitialized && overlay.visibility == View.VISIBLE) {
+            pageView.epd.enterFastMode()
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         if (::pageView.isInitialized) pageView.epd.exitFastMode()
+        // Mirrors ReaderActivity.onPause: a lift still inside its commit grace window when the
+        // app is backgrounded (Home, app switcher, an incoming call) is a committed navigation —
+        // flush it now rather than let the process pause with it unresolved. Otherwise the
+        // grace-window timer never fires and the page turn the user already lifted their finger
+        // on is silently discarded, the reverse of the "lift-off is a commitment" contract.
+        if (::chapterScrubber.isInitialized) chapterScrubber.flushPendingCommit()
     }
 
     override fun onDestroy() {
