@@ -318,14 +318,15 @@ class SpannedChapterBuilder {
      * Never decodes a full-resolution image into memory: [BitmapFactory.Options.inJustDecodeBounds]
      * reads the header first, [sampleSizeFor] picks a power-of-two downsample factor, and only
      * then is the image decoded for real — the same protection the cover extractor uses (a 16 MB
-     * JPEG decodes to hundreds of MB otherwise). The decoded bitmap is bounded to the content box
-     * ([RenderConfig.contentWidthPx] x [contentHeightPx], aspect preserved, only ever shrunk) and
-     * rendered gray via a saturation-0 colour filter on the drawable — the e-ink panel has no
-     * colour, and a filter avoids allocating a second bitmap just to drop the colour.
+     * JPEG decodes to hundreds of MB otherwise). The image is rendered gray via a saturation-0
+     * colour filter on the drawable — the e-ink panel has no colour, and a filter avoids
+     * allocating a second bitmap just to drop the colour.
      */
     private fun appendImage(sb: SpannableStringBuilder, block: Block.Image, config: RenderConfig) {
         val bytes = block.bytes ?: return
-        val drawable = decodeGrayscaleDrawable(bytes, config.contentWidthPx, config.contentHeightPx) ?: return
+        val drawable = decodeGrayscaleDrawable(
+            bytes, config.contentWidthPx, config.contentHeightPx, config.density,
+        ) ?: return
         val start = sb.length
         sb.append(IMAGE_PLACEHOLDER)
         sb.setSpan(ImageSpan(drawable, ImageSpan.ALIGN_BASELINE), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -337,15 +338,46 @@ class SpannedChapterBuilder {
         )
     }
 
-    private fun decodeGrayscaleDrawable(bytes: ByteArray, maxWidthPx: Int, maxHeightPx: Int): BitmapDrawable? {
+    /**
+     * The drawable for [bytes], sized for display and no larger in memory than that.
+     *
+     * **Display size** is the source's dimensions read as CSS pixels — what they are, an EPUB
+     * being CSS all the way down — so they scale by [density] before being fitted within the
+     * content box ([maxWidthPx] x [maxHeightPx], aspect preserved). Reading them as device
+     * pixels instead, as this did before, drew every image at 1/density of its intended size:
+     * a 264px chapter ornament covered 19% of a 1404px Nomad panel rather than the ~35% the
+     * publisher drew. The content box is still the hard ceiling, so a full-page illustration
+     * is unaffected — density only ever changes images that had room to spare.
+     *
+     * **Memory** is bounded independently, and deliberately does not follow the display size
+     * upward: [sampleSizeFor] downsamples the decode toward the display size, the result is
+     * trimmed to it if the power-of-two floor overshot (the same two-step the cover extractor
+     * uses), and a source *smaller* than the display size is kept at its own resolution and
+     * stretched by the drawable's bounds at draw time. Allocating an upscaled bitmap would
+     * cost several times the memory per cached chapter to invent detail the source never had;
+     * [BitmapDrawable] filters as it draws, which is the same picture for free.
+     */
+    private fun decodeGrayscaleDrawable(
+        bytes: ByteArray,
+        maxWidthPx: Int,
+        maxHeightPx: Int,
+        density: Float,
+    ): BitmapDrawable? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             return null // not decodable as an image — BitmapFactory reports this via -1, not a throw
         }
 
+        val (displayWidth, displayHeight) = fitWithin(
+            (bounds.outWidth * density).roundToInt().coerceAtLeast(1),
+            (bounds.outHeight * density).roundToInt().coerceAtLeast(1),
+            maxWidthPx,
+            maxHeightPx,
+        )
+
         val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxWidthPx, maxHeightPx)
+            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, displayWidth, displayHeight)
         }
         val sampled = try {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
@@ -357,19 +389,23 @@ class SpannedChapterBuilder {
         } ?: return null
 
         // inSampleSize floors to a power of two >= the request, so the sampled bitmap can still
-        // overshoot the content box by nearly 2x per axis. Trim it to the fit dimensions and drop
-        // the oversized sampled bitmap — the same two-step the cover extractor uses — so what stays
-        // resident in the chapter cache is the displayed size, not up to ~4x its pixel area. On a
-        // memory-constrained e-ink device that difference matters across cached chapters.
-        val (targetWidth, targetHeight) = fitWithin(sampled.width, sampled.height, maxWidthPx, maxHeightPx)
-        val display = if (sampled.width == targetWidth && sampled.height == targetHeight) {
+        // overshoot the display size by nearly 2x per axis. Trim it down — the same two-step the
+        // cover extractor uses — so what stays resident in the chapter cache is the displayed
+        // size, not up to ~4x its pixel area. On a memory-constrained e-ink device that
+        // difference matters across cached chapters. fitWithin only ever shrinks, so a source
+        // already smaller than the display size passes through untouched and is upscaled by the
+        // bounds below instead of by an allocation.
+        val (keepWidth, keepHeight) = fitWithin(sampled.width, sampled.height, displayWidth, displayHeight)
+        val bitmap = if (sampled.width == keepWidth && sampled.height == keepHeight) {
             sampled
         } else {
-            Bitmap.createScaledBitmap(sampled, targetWidth, targetHeight, true)
+            Bitmap.createScaledBitmap(sampled, keepWidth, keepHeight, true)
                 .also { if (it !== sampled) sampled.recycle() }
         }
-        return BitmapDrawable(Resources.getSystem(), display).apply {
-            setBounds(0, 0, display.width, display.height)
+        return BitmapDrawable(Resources.getSystem(), bitmap).apply {
+            // The bounds, NOT the bitmap's own size, are what the ImageSpan lays out and draws
+            // to — so this is where an image smaller than its display size gets its upscale.
+            setBounds(0, 0, displayWidth, displayHeight)
             // Saturation 0 renders the image gray; the panel is grayscale.
             colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
         }

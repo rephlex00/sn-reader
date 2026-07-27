@@ -48,7 +48,7 @@ archive does not open yet. No PDF.
 **2. Install it over USB.**
 
 ```
-adb install -r sn-reader-2026.07.5.apk
+adb install -r sn-reader-2026.07.6.apk
 ```
 
 Debug mode needs to be on first. It lives in the Supernote's own Settings under security and

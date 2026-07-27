@@ -98,8 +98,14 @@ private fun sha256Hex(text: String): String {
  * "strip-v3": expandSelfClosingTags stopped page anchors from eating the following footnote
  * marker's sup span, so those markers now measure 0.75x — line breaks and pagination shift in
  * every endnote-heavy book with print-edition page anchors.
+ *
+ * "strip-v4": the parser started honoring `display: none` (content the publisher hid no longer
+ * paginates at all) and images are now sized in CSS pixels rather than device pixels (so every
+ * image below the content box grew by the panel density). Both change how many lines a chapter
+ * occupies. The density half IS visible to [configHash] — it is a new [RenderConfig] field — but
+ * the display:none half is a pure renderer change, so the version bump is what covers it.
  */
-private const val INDEX_VERSION = "strip-v3"
+private const val INDEX_VERSION = "strip-v4"
 
 /** Flat text, no JSON dependency: a version line, a header line, then one line per entry. */
 fun StripIndex.serialize(): String = buildString {

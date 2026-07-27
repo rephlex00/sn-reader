@@ -6,6 +6,7 @@ import dev.reader.engine.InlineStyle
 import dev.reader.engine.StyleSpan
 import dev.reader.engine.StyledText
 import dev.reader.engine.TextAlign
+import dev.reader.engine.isSeparatorLine
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -22,7 +23,9 @@ import kotlin.math.abs
  * color → grayLevel, text-decoration → underline/strikethrough, letter-spacing, and the
  * block-level text-align/margins/text-indent/line-height. Box-layout properties (float,
  * position, border, background, width/height, padding, `display` beyond the block/inline
- * split already inferred) are ignored, never half-honored.
+ * split already inferred) are ignored, never half-honored — with one exception:
+ * `display: none` removes an element and its subtree, because that is a statement about
+ * what the book *contains*, not about how it looks. See [isHidden].
  *
  * Font-size is resolved to a **ratio** against the document's own baseline, never an
  * absolute size: `em`/`rem`/`%`/keywords compose into [ComputedStyle.fontSizeRatio], and a
@@ -255,6 +258,7 @@ class XhtmlBlockParser {
         inferHeadings: Boolean,
     ) {
         el.childNodes().forEach { node ->
+            if (node is Element && isHidden(node, chain + ctxOf(node), css)) return@forEach
             when (node) {
                 is TextNode -> builder.appendText(node.wholeText)
                 is Element -> when (val tag = node.tagName().lowercase()) {
@@ -349,6 +353,7 @@ class XhtmlBlockParser {
         var ordinal = 0
         fun walk(container: Element, containerChain: List<ElementCtx>) {
             container.childNodes().forEach { node ->
+                if (node is Element && isHidden(node, containerChain + ctxOf(node), css)) return@forEach
                 when (node) {
                     is TextNode -> {
                         val builder = InlineBuilder()
@@ -379,6 +384,43 @@ class XhtmlBlockParser {
     private fun requestsPageBreak(el: Element, css: CssRules): Boolean {
         val declarations = declarationsFor(el, css)
         return declarations["page-break-before"] == "always" || declarations["break-before"] == "page"
+    }
+
+    /**
+     * Whether [el] (the element ending [chain]) is removed from the rendered document by
+     * `display: none`, resolved through the full cascade (so a descendant selector and an
+     * inline `style` attribute both count). Its whole subtree goes with it: `display: none`
+     * generates no box for the element *or* its descendants, so the walk simply never
+     * enters it — which is also why this needs no separate inherit-down flag.
+     *
+     * This is the one box-layout property the parser honors, and it earns the exception by
+     * being about *existence* rather than appearance: honoring `width`/`float`/`border`
+     * would change how content looks, but ignoring `display: none` renders content the
+     * publisher said is not part of this book at all. Dual-target exports make that routine
+     * — an Amazon-converted book ships both the KF8 and the mobi7 rendering of a chapter
+     * ornament in the markup and hides one in CSS, so ignoring the rule drew every chapter
+     * ornament twice, at two different sizes (device-observed in Dungeon Crawler Carl).
+     * The same books hide print-only page numbers, non-printing chapter titles and a
+     * duplicate text table of contents, all of which were being read as body prose.
+     *
+     * **A hidden scene-break line is kept.** Those same exports write an ornamental break as
+     * an image with a hidden `* * *` beside it as the text fallback, and their image is an
+     * SVG — which [android.graphics.BitmapFactory] cannot decode, so it renders as nothing.
+     * Honoring the rule literally therefore deleted the scene break outright: 313 of them
+     * across four Dungeon Crawler Carl books, reopening exactly the bug 2026.07.2 closed
+     * (blank space at a page boundary is indistinguishable from the page simply ending).
+     * Keeping the fallback is the conservative direction — the reader renders its own mark
+     * for it either way, so a book whose ornament image DOES decode shows the mark under the
+     * ornament rather than losing the break. [isSeparatorLine] is a tight predicate
+     * (punctuation only, no letters or digits), and an `<img>` has no text at all, so the
+     * exception cannot rescue the duplicate images this rule exists to remove.
+     *
+     * Any other `display` value is ignored, exactly as before: the block/inline split is
+     * already inferred from the tag, and half-honoring `display` would be worse than not.
+     */
+    private fun isHidden(el: Element, chain: List<ElementCtx>, css: CssRules): Boolean {
+        if (css.resolve(chain, baselinePx)["display"] != "none") return false
+        return !isSeparatorLine(el.text())
     }
 
     private fun emitImage(el: Element, chapterPath: String, out: MutableList<Block>) {
@@ -454,6 +496,7 @@ class XhtmlBlockParser {
         chain: List<ElementCtx>,
         css: CssRules,
     ) {
+        if (node is Element && isHidden(node, chain + ctxOf(node), css)) return
         when (node) {
             is TextNode -> builder.appendText(node.wholeText)
 
