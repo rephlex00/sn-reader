@@ -28,6 +28,15 @@ class ReaderPrefs(context: Context) {
 
     private val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
 
+    /**
+     * The panel's device-pixels-per-CSS-pixel, read once here rather than at each render:
+     * it cannot change without the process being recreated. Not a stored preference — like
+     * the viewport it is a property of the screen, not a choice — but unlike the viewport it
+     * needs no argument, since it does not change with rotation. Feeds [RenderConfig.density],
+     * which sizes a book's images; see its KDoc.
+     */
+    private val density: Float = context.resources.displayMetrics.density
+
     /** A bundled reader face — one of [BundledTypefaceProvider.FAMILIES] ("literata"/"bitter"/
      * "atkinson"). A legacy or unknown value resolves to the default face at render time (see
      * [BundledTypefaceProvider.fontResFor]); the store itself is a dumb string. */
@@ -160,6 +169,7 @@ class ReaderPrefs(context: Context) {
             // with the panel. See columnCountFor.
             columnCount = columns,
             columnGapPx = gap,
+            density = density,
         )
     }
 

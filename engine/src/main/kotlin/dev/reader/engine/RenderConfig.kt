@@ -79,6 +79,19 @@ data class RenderConfig(
     val columnCount: Int = 1,
     /** Whitespace between columns; ignored when [columnCount] is 1. See [COLUMN_GAP_PX]. */
     val columnGapPx: Int = COLUMN_GAP_PX,
+    /**
+     * The panel's display density — device pixels per CSS pixel. Everything else in this
+     * class is already in raw device pixels, so this exists for the one input that is NOT:
+     * an EPUB's image dimensions, which (like all CSS lengths) are authored in CSS pixels
+     * on the assumption of a ~1x screen. Drawing such an image at its raw pixel count on a
+     * 1.875x panel renders it at barely half the size the publisher drew it — the same
+     * class of mistake the running foot made before 2026.07.2. See the image branch of
+     * `SpannedChapterBuilder`.
+     *
+     * Defaults to 1.0 (raw pixels are CSS pixels), which is both the correct value for a
+     * 1x display and the behavior every caller had before this field existed.
+     */
+    val density: Float = 1f,
 ) {
     /**
      * The width of one column of text — NOT the full width between the margins. With
@@ -97,6 +110,7 @@ data class RenderConfig(
         require(marginPx >= 0) { "marginPx must be non-negative, was $marginPx" }
         require(columnCount >= 1) { "columnCount must be at least 1, was $columnCount" }
         require(columnGapPx >= 0) { "columnGapPx must be non-negative, was $columnGapPx" }
+        require(density > 0f) { "density must be positive, was $density" }
         require(contentWidthPx > 0) { "margins leave no content width: $this" }
         require(contentHeightPx > 0) { "margins leave no content height: $this" }
     }

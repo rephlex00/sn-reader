@@ -560,6 +560,127 @@ class SpannedChapterBuilderTest {
         assertThat(spans.single().drawable.colorFilter).isNotNull()
     }
 
+    // --- Image sizing: an EPUB's image dimensions are CSS pixels, so they scale by density
+    // before being fitted to the content box. Upscaling happens in the drawable's BOUNDS,
+    // never by allocating a larger bitmap. ---
+
+    /** [config] on a Nomad-like 1.875x panel, where the CSS-pixel/device-pixel gap shows up. */
+    private val denseConfig = config.copy(density = 1.875f)
+
+    @Test
+    fun `an image smaller than the content box is scaled up by the panel density`() {
+        // The Dungeon Crawler Carl chapter ornament: 264x264 CSS px. Drawn at raw pixels it
+        // covers 19% of a 1404px panel; at density it covers the ~35% the publisher drew.
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(264, 264))),
+            denseConfig,
+        )
+        val bounds = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)
+            .single().drawable.bounds
+
+        assertThat(bounds.width()).isEqualTo(495) // 264 * 1.875
+        assertThat(bounds.height()).isEqualTo(495)
+    }
+
+    @Test
+    fun `density scaling never pushes an image past the content box`() {
+        // 1000 CSS px * 1.875 = 1875, well past the 1324px content width: the box still wins.
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(1000, 500))),
+            denseConfig,
+        )
+        val bounds = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)
+            .single().drawable.bounds
+
+        assertThat(bounds.width()).isEqualTo(denseConfig.contentWidthPx)
+        assertThat(bounds.width().toFloat() / bounds.height()).isWithin(0.05f).of(2f)
+    }
+
+    @Test
+    fun `a tall image is bounded by the content height, not the width`() {
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(400, 1200))),
+            denseConfig,
+        )
+        val bounds = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)
+            .single().drawable.bounds
+
+        assertThat(bounds.height()).isAtMost(denseConfig.contentHeightPx)
+        assertThat(bounds.width()).isAtMost(denseConfig.contentWidthPx)
+        assertThat(bounds.width().toFloat() / bounds.height()).isWithin(0.02f).of(400f / 1200f)
+    }
+
+    @Test
+    fun `upscaling to the display size does not allocate a larger bitmap`() {
+        // The resolution/fit balance: a 264px source displayed at 495px keeps its 264px
+        // bitmap and is stretched by the drawable's bounds at draw time. Allocating a 495px
+        // bitmap would cost ~3.5x the memory per image and invent no detail whatsoever.
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(264, 264))),
+            denseConfig,
+        )
+        val drawable = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)
+            .single().drawable as android.graphics.drawable.BitmapDrawable
+
+        assertThat(drawable.bounds.width()).isEqualTo(495)
+        assertThat(drawable.bitmap.width).isEqualTo(264)
+    }
+
+    @Test
+    fun `an oversized source is not kept in memory at more than its displayed size`() {
+        // The other half of the balance: a source far larger than the box is downsampled and
+        // trimmed, so the chapter cache holds the displayed size rather than the source's.
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(4000, 2000))),
+            denseConfig,
+        )
+        val drawable = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)
+            .single().drawable as android.graphics.drawable.BitmapDrawable
+
+        assertThat(drawable.bitmap.width).isAtMost(drawable.bounds.width())
+        assertThat(drawable.bounds.width()).isEqualTo(denseConfig.contentWidthPx)
+    }
+
+    @Test
+    fun `an image in a landscape spread is bounded by its column, not the screen`() {
+        // contentWidthPx is one COLUMN's width, so a density-scaled image that fits the screen
+        // must still not run across the gutter into the facing page.
+        val spread = denseConfig.copy(viewportWidthPx = 1872, viewportHeightPx = 1404, columnCount = 2)
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(600, 300))),
+            spread,
+        )
+        val bounds = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)
+            .single().drawable.bounds
+
+        assertThat(bounds.width()).isAtMost(spread.contentWidthPx)
+        assertThat(spread.contentWidthPx).isLessThan(spread.viewportWidthPx / 2)
+    }
+
+    @Test
+    fun `an image is centered on its own line`() {
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(264, 264))),
+            denseConfig,
+        )
+        val aligns = chapter.text.getSpans(0, chapter.text.length, AlignmentSpan::class.java)
+        assertThat(aligns).hasLength(1)
+        assertThat(aligns.single().alignment).isEqualTo(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    @Test
+    fun `at density 1 an image still renders at its own pixel size`() {
+        // The default density is the pre-existing behavior, unchanged.
+        val chapter = builder.build(
+            listOf(Block.Image("img/fig.png", bytes = imageBytes(264, 264))),
+            config,
+        )
+        val bounds = chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)
+            .single().drawable.bounds
+
+        assertThat(bounds.width()).isEqualTo(264)
+    }
+
     @Test
     fun `a decodable image carries exactly one placeholder character`() {
         val chapter = builder.build(

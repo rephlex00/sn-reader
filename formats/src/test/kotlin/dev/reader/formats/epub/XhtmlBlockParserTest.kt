@@ -1277,4 +1277,119 @@ class XhtmlBlockParserTest {
         assertThat(p.text.spans).isEmpty()
         assertThat(p.style).isEqualTo(dev.reader.engine.BlockStyle())
     }
+
+    // -- display: none --
+
+    @Test
+    fun `a display none image is not emitted`() {
+        // The Dungeon Crawler Carl shape: an Amazon dual-target export ships BOTH renderings
+        // of a chapter ornament and hides one in CSS. Honoring display:none is what makes
+        // that one image instead of two.
+        val css = CssRules.parse(".heading-image-image1 { display: none }")
+        val blocks = parse(
+            """<div><img src="../Images/00006.jpeg" class="heading-image-image"/>""" +
+                """<img src="../Images/00003.jpeg" class="heading-image-image1"/></div>""",
+            css,
+        )
+
+        assertThat(blocks.map { (it as Block.Image).href })
+            .containsExactly("OEBPS/Images/00006.jpeg")
+    }
+
+    @Test
+    fun `a display none paragraph is not emitted`() {
+        val css = CssRules.parse(".hidden { display: none }")
+        val blocks = parse("""<p>Shown.</p><p class="hidden">Hidden.</p>""", css)
+
+        assertThat(blocks.map { (it as Block.Paragraph).text.text }).containsExactly("Shown.")
+    }
+
+    @Test
+    fun `a display none container hides everything inside it`() {
+        val css = CssRules.parse(".hidden { display: none }")
+        val blocks = parse(
+            """<div class="hidden"><h1>Gone</h1><p>Also gone.</p>""" +
+                """<img src="x.png"/></div><p>Kept.</p>""",
+            css,
+        )
+
+        assertThat(blocks.map { (it as Block.Paragraph).text.text }).containsExactly("Kept.")
+    }
+
+    @Test
+    fun `a display none inline run is dropped from its paragraph's text`() {
+        // The publisher's own way of writing a screen-reader-only or alternate-format run.
+        val css = CssRules.parse(".hidden { display: none }")
+        val blocks = parse("""<p>Before <span class="hidden">GONE</span>after.</p>""", css)
+
+        assertThat((blocks.single() as Block.Paragraph).text.text).isEqualTo("Before after.")
+    }
+
+    @Test
+    fun `a display none list item is not emitted`() {
+        val css = CssRules.parse(".hidden { display: none }")
+        val blocks = parse("""<ul><li>One</li><li class="hidden">Two</li><li>Three</li></ul>""", css)
+
+        assertThat(blocks.map { (it as Block.ListItem).text.text }).containsExactly("One", "Three")
+    }
+
+    @Test
+    fun `display none from an inline style attribute hides the element`() {
+        val blocks = parse("""<p>Shown.</p><p style="display:none">Hidden.</p>""")
+
+        assertThat(blocks.map { (it as Block.Paragraph).text.text }).containsExactly("Shown.")
+    }
+
+    @Test
+    fun `a display none element inside a blockquote is dropped`() {
+        val css = CssRules.parse(".hidden { display: none }")
+        val blocks = parse("""<blockquote><p>Kept.</p><p class="hidden">Gone.</p></blockquote>""", css)
+
+        assertThat(blocks.map { (it as Block.Quote).text.text }).containsExactly("Kept.")
+    }
+
+    @Test
+    fun `a hidden scene-break line survives, because it is an unrenderable image's fallback`() {
+        // The real Dungeon Crawler Carl ornamental break: an SVG (which BitmapFactory cannot
+        // decode, so it renders as nothing) beside a hidden "* * *" text fallback. Pruning the
+        // fallback here would delete the scene break outright.
+        val css = CssRules.parse(".ornamental-break-as-text { display: none }")
+        val blocks = parse(
+            """<div class="ornamental-break">""" +
+                """<div><img src="../Images/svgimg0003.svg"/></div>""" +
+                """<p class="ornamental-break-as-text">* * *</p></div>""",
+            css,
+        )
+
+        assertThat(blocks).hasSize(2)
+        assertThat((blocks[0] as Block.Image).href).isEqualTo("OEBPS/Images/svgimg0003.svg")
+        assertThat((blocks[1] as Block.Paragraph).text.text).isEqualTo("* * *")
+    }
+
+    @Test
+    fun `the scene-break exception does not rescue a hidden image`() {
+        // An <img> has no text at all, so it can never look like a separator line — the
+        // exception cannot undo the duplicate-image fix it sits beside.
+        val css = CssRules.parse(".hidden { display: none }")
+        val blocks = parse("""<img src="a.png"/><img src="b.png" class="hidden"/>""", css)
+
+        assertThat(blocks.map { (it as Block.Image).href }).containsExactly("OEBPS/text/a.png")
+    }
+
+    @Test
+    fun `a hidden paragraph of real prose is still pruned`() {
+        // The exception is scoped to separator lines: ordinary hidden text stays hidden.
+        val css = CssRules.parse(".hidden { display: none }")
+        val blocks = parse("""<p class="hidden">A real sentence, hidden.</p><p>Kept.</p>""", css)
+
+        assertThat(blocks.map { (it as Block.Paragraph).text.text }).containsExactly("Kept.")
+    }
+
+    @Test
+    fun `a display value other than none is still rendered`() {
+        val css = CssRules.parse(".b { display: block } .i { display: inline }")
+        val blocks = parse("""<p class="b">One.</p><p class="i">Two.</p>""", css)
+
+        assertThat(blocks.map { (it as Block.Paragraph).text.text }).containsExactly("One.", "Two.")
+    }
 }
