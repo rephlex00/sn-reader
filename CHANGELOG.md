@@ -4,6 +4,27 @@ Notable changes, newest first. Versions are `YYYY.MM.build` — the year and mon
 plus a counter within that month. Each release's APK is on the
 [Releases page](https://github.com/rephlex00/sn-reader/releases).
 
+## 2026.07.6
+
+Pictures. A book that drew a small illustration at the head of each chapter was drawing it
+twice, and both copies too small.
+
+### Fixed
+
+* **Chapter illustrations appeared twice, at two different sizes.** Books converted for the
+  Kindle routinely carry two copies of the same picture — one for each of Amazon's two formats
+  — and hide the spare one. Reader was not reading the instruction to hide it, so it drew both.
+  This also stops Reader reading the things those books hide on purpose, like print-edition page
+  numbers and a second, redundant table of contents, as though they were part of the story.
+* **Every picture in a book was drawn at roughly half the size it was meant to be.** Book
+  illustrations are sized for an ordinary screen, and Reader was taking those sizes literally on
+  a much finer one — so a chapter ornament covered a fifth of the page instead of a third.
+  Pictures are now drawn at their intended size, still centered, and still shrunk to fit when
+  they are larger than the page. A full-page illustration looks exactly as it did; it is the
+  small ones that were wrong.
+
+Page previews are rebuilt once per book after this update, since where the pages fall has moved.
+
 ## 2026.07.5
 
 Mostly a repair release, from an audit of the whole app: a library that could forget your books, a
