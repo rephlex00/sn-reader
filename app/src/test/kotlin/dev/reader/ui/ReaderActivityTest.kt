@@ -1481,19 +1481,29 @@ class ReaderActivityTest {
         // BEFORE cancelling anything — this is the synchronous write, unaffected by the repair.
         scrubber.onScrubCommit?.invoke(0.9f, null)
 
-        // Snapshot the row INSIDE the wait predicate: nothing has cancelled the commit coroutine
-        // yet, so it free-runs concurrently with this wait, and a second, separate DB read taken
-        // after idleUntil returns would race it resolving (and overwriting this row) during any
-        // further looper idling. The down-payment write beating full resolution is only guaranteed
-        // at this exact instant, not afterward.
+        // Wait WITHOUT pumping the main looper, which is what makes this observation deterministic
+        // rather than a race. The down-payment is written synchronously inside onScrubCommitted,
+        // before the commit coroutine is even launched, and it rides positionWriteScope
+        // (Dispatchers.IO.limitedParallelism(1)) — a real background thread — so it lands with no
+        // main-thread help at all. The refining coroutine rides lifecycleScope on the MAIN
+        // dispatcher, so under Robolectric's paused looper it cannot execute a single line until
+        // this test idles that looper. Not idling therefore freezes the refinement outright: the
+        // row can only ever hold the down-payment here.
+        //
+        // Idling instead (as this once did) let the coroutine free-run against the wait, and both
+        // the down-payment and the resolved write satisfy "spineIndex changed" — so on a slow or
+        // loaded machine the first row this predicate managed to read was already the RESOLVED one,
+        // and the offset-0 assertion below failed. That is a CI failure this test earned, not a
+        // fluke: it was asserting on a transient it had no way to pin.
         var downPayment: BookEntity? = null
-        idleUntil {
+        waitWithoutIdling {
             downPayment = rowFor(app, book.path)
             downPayment != null && downPayment!!.spineIndex != originChapter
         }
         assertThat(downPayment!!.spineIndex).isGreaterThan(originChapter)
         assertThat(downPayment!!.charOffset).isEqualTo(0)
-        // The page itself never moved — the coroutine hadn't reached showPage when this was taken.
+        // The page itself never moved — guaranteed, not merely observed: showPage lives in the
+        // commit coroutine, which the un-pumped looper above has kept from running at all.
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(originChapter)
 
         // Cancel now, after the assertions above, purely so the coroutine does not free-run past
