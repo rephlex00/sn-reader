@@ -3,8 +3,10 @@ package dev.reader.formats.epub
 import android.graphics.Typeface
 import android.text.Spanned
 import android.text.style.StyleSpan
+import android.text.style.SuperscriptSpan
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.RenderConfig
+import dev.reader.formats.ResourceSource
 import dev.reader.formats.render.AndroidMeasuredChapter
 import dev.reader.formats.render.AndroidTextMeasurer
 import dev.reader.formats.render.SpannedChapterBuilder
@@ -440,6 +442,38 @@ class EpubDocumentTest {
         }
     }
 
+    @Test
+    fun `a self-closing page anchor does not strip the next endnote marker's superscript`() {
+        // Same corruption XhtmlBlockParserTest pins at the parser level, but through
+        // readBlocks' own Jsoup parse — the render path a real book actually takes.
+        val file = temp.newFile("anchors.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Anchored</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+            entry(
+                "OEBPS/text/ch1.xhtml",
+                """<html><body><p>alpha <a id="page_70"/>beta.""" +
+                    """<sup><a href="e.html#n2" id="en2">2</a></sup> gamma.""" +
+                    """<sup><a href="e.html#n3" id="en3">3</a></sup> end</p></body></html>""",
+            )
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            val text = (doc.chapter(0, config).measured as AndroidMeasuredChapter).layout.text as Spanned
+            val supTexts = text.getSpans(0, text.length, SuperscriptSpan::class.java)
+                .map { text.subSequence(text.getSpanStart(it), text.getSpanEnd(it)).toString() }
+
+            assertThat(supTexts).containsExactly("2", "3")
+        }
+    }
+
     // --- Fix wave A, M3: the css cache was keyed by joinToString(" "), so an href
     // containing a space collided with a different chapter's two-href list and reused
     // the wrong CssRules. ---
@@ -676,5 +710,52 @@ $itemrefs
 
             if (errors.isNotEmpty()) throw AssertionError("${errors.size} concurrent failure(s); first:", errors.first())
         }
+    }
+
+    // --- Task 16: the `catch (e: Throwable)` in EpubDocument.open's internal seam overload has
+    // no reliable real-world trigger (this codebase already hardens readTextChecked/
+    // readBytesChecked against IOException, hand-rolls percentDecode to dodge URLDecoder's
+    // IllegalArgumentException, and has no unguarded toInt/substring/first()/!! in the package or
+    // TOC parsers) — so it is asserted structurally here via the internal `parsePackage` seam
+    // rather than through a constructed malformed archive. ---
+
+    /** Counts [close] calls so a test can assert the source was closed exactly once. */
+    private class CountingResourceSource : ResourceSource {
+        var closeCount = 0
+            private set
+        override fun open(path: String): java.io.InputStream? = null
+        override fun readText(path: String): String? = null
+        override fun exists(path: String): Boolean = false
+        override fun close() {
+            closeCount++
+        }
+    }
+
+    @Test
+    fun `open wraps a raw throwable escaping the parser as Malformed and still closes the source`() {
+        val source = CountingResourceSource()
+
+        val e = runCatching {
+            EpubDocument.open(source, measurer) { throw IllegalStateException("boom") }
+        }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.Malformed::class.java)
+        assertThat(e).isNotInstanceOf(IllegalStateException::class.java)
+        assertThat(source.closeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `open rethrows an EpubException from the parser identity-preserved, not rewrapped as Malformed`() {
+        val source = CountingResourceSource()
+        val drmException = EpubException.DrmProtected("this book is protected")
+
+        val e = runCatching {
+            EpubDocument.open(source, measurer) { throw drmException }
+        }.exceptionOrNull()
+
+        // Identity, not just type: a rewrap into a fresh Malformed would also satisfy
+        // isInstanceOf(EpubException) but lose the DrmProtected-specific message the UI shows.
+        assertThat(e).isSameInstanceAs(drmException)
+        assertThat(source.closeCount).isEqualTo(1)
     }
 }

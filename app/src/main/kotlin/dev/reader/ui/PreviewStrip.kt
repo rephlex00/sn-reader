@@ -81,7 +81,25 @@ private fun sha256Hex(text: String): String {
     return buildString(digest.size * 2) { digest.forEach { append("%02x".format(it)) } }
 }
 
-private const val INDEX_VERSION = "strip-v1"
+/**
+ * Bumped from "strip-v1" to "strip-v2" after a real incident: three commits changed the text
+ * pipeline (sup/sub baseline-shift spans, a non-emitting block's separator rollback, negative
+ * text-indent clamping) that produces both the thumbnails AND the pagination they index, while
+ * [configHash] — derived from [RenderConfig] alone — stayed identical. A strip built by the old
+ * pipeline therefore survived the upgrade as "valid": same config hash, same book size and mtime,
+ * but its (fraction, spineIndex, pageIndex) entries and thumbnails described pagination that no
+ * longer existed. [parseStripIndex] already treats an unrecognised version as absent, so bumping
+ * this is the entire fix and needs no migration — strips are regenerable by design.
+ *
+ * The lesson: this constant must be bumped whenever the text pipeline changes pagination or glyph
+ * metrics, even when no [RenderConfig] field changed. [configHash] cannot see a renderer code
+ * change; only this version can.
+ *
+ * "strip-v3": expandSelfClosingTags stopped page anchors from eating the following footnote
+ * marker's sup span, so those markers now measure 0.75x — line breaks and pagination shift in
+ * every endnote-heavy book with print-edition page anchors.
+ */
+private const val INDEX_VERSION = "strip-v3"
 
 /** Flat text, no JSON dependency: a version line, a header line, then one line per entry. */
 fun StripIndex.serialize(): String = buildString {

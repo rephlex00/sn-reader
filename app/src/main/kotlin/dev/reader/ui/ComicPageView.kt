@@ -34,6 +34,10 @@ class ComicPageView(context: Context) : View(context) {
     var onTap: ((TapZone) -> Unit)? = null
     var epd: EpdRefresher = NoopRefresher
 
+    /** Incremented on every [fullRefresh] call — a test's only way to prove the chrome's "one clean
+     *  refresh on close" promise without a real e-ink panel, mirroring [PageView.fullRefreshCount]. */
+    internal var fullRefreshCount = 0
+
     fun show(bitmap: Bitmap?) {
         this.bitmap = bitmap
         if (bitmap != null) wholeImage.set(0, 0, bitmap.width, bitmap.height)
@@ -41,6 +45,7 @@ class ComicPageView(context: Context) : View(context) {
     }
 
     fun fullRefresh() {
+        fullRefreshCount++
         if (!epd.cleanRefresh()) invalidate()
     }
 

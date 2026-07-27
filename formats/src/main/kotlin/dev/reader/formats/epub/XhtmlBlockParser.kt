@@ -58,7 +58,7 @@ class XhtmlBlockParser {
         chapterPath: String,
         css: CssRules = CssRules.EMPTY,
         inferHeadings: Boolean = true,
-    ): List<Block> = parse(Jsoup.parse(xhtml), chapterPath, css, inferHeadings)
+    ): List<Block> = parse(Jsoup.parse(expandSelfClosingTags(xhtml)), chapterPath, css, inferHeadings)
 
     /**
      * Same as the `String` overload, but takes an already-parsed [Document] so a caller
@@ -515,6 +515,8 @@ class XhtmlBlockParser {
         "b", "strong" -> InlineStyle(bold = true)
         "i", "em", "cite", "dfn" -> InlineStyle(italic = true)
         "code", "kbd", "samp", "tt" -> InlineStyle(monospace = true)
+        "sup" -> InlineStyle(superscript = true)
+        "sub" -> InlineStyle(subscript = true)
         else -> null
     }
 
@@ -1027,3 +1029,40 @@ private class InlineBuilder {
         return if (end > start) StyleSpan(start, end, span.style) else null
     }
 }
+
+/** The HTML void elements, whose self-closing form the HTML parser already handles correctly. */
+private val VOID_ELEMENTS = setOf(
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+)
+
+/**
+ * Matches one self-closing tag: name, then attributes in which `>` may only appear inside
+ * a quoted value, then `/>`. `<?xml ...?>` and comments don't match (`?` and `!` aren't
+ * name characters); the name may carry a namespace prefix (`<epub:switch/>`).
+ */
+private val SELF_CLOSING_TAG = Regex("""<([A-Za-z][\w.:-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)/>""")
+
+/**
+ * Expands XML self-closing syntax on non-void elements — `<a id="page_70"/>` becomes
+ * `<a id="page_70"></a>` — before an HTML parse.
+ *
+ * EPUB chapters are XHTML, where any element may legally be written self-closed, but
+ * [org.jsoup.Jsoup.parse]'s HTML parser follows the HTML spec instead: on a non-void
+ * element the stray `/` is ignored, so `<a id="page_70"/>` (a print-edition page anchor)
+ * stays OPEN and swallows the text after it. The misnesting recovery that then runs at
+ * the next `<a>` start tag — which for an endnote-heavy book is the next footnote
+ * marker's own link — rebuilds that neighbourhood with the marker's digits *outside*
+ * their `<sup>`, silently stripping the superscript from exactly one marker per page
+ * anchor (device-observed as a full-size baseline footnote marker whose neighbours are
+ * all correct). Expanding the self-closing form is a semantic no-op for XHTML and
+ * removes the corruption vector while keeping the HTML parser's leniency for genuinely
+ * sloppy books. Void elements (`<br/>`, `<img/>`, ...) are left alone — their
+ * self-closing form already parses correctly.
+ */
+internal fun expandSelfClosingTags(xhtml: String): String =
+    SELF_CLOSING_TAG.replace(xhtml) { m ->
+        val tag = m.groupValues[1]
+        if (tag.lowercase() in VOID_ELEMENTS) m.value
+        else "<$tag${m.groupValues[2]}></$tag>"
+    }

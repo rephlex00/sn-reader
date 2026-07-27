@@ -80,7 +80,7 @@ class ZipResourceSource(file: File) : ResourceSource {
             )
         }
         val bytes = zip.getInputStream(entry).use { input -> readCapped(input, path) }
-        return bytes.toString(Charsets.UTF_8)
+        return decodeText(bytes)
     }
 
     override fun exists(path: String): Boolean = zip.getEntry(path) != null
@@ -119,4 +119,21 @@ internal fun readCapped(input: InputStream, path: String): ByteArray {
         buffer.write(chunk, 0, read)
     }
     return buffer.toByteArray()
+}
+
+/**
+ * Decodes an entry's bytes to text, honouring a byte-order mark. EPUB permits UTF-16, and decoding
+ * one as UTF-8 produces mojibake — which rejects the whole book when the entry is container.xml or
+ * the OPF, and renders a chapter as garbage otherwise. A UTF-8 BOM is stripped rather than left as
+ * a leading zero-width character, which an XML parser rejects as content before the declaration.
+ * No BOM means UTF-8, the format's default and the overwhelmingly common case.
+ */
+internal fun decodeText(bytes: ByteArray): String = when {
+    bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte() ->
+        String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+    bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() ->
+        String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+    bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() ->
+        String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+    else -> bytes.toString(Charsets.UTF_8)
 }

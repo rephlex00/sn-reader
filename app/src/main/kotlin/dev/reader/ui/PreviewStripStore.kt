@@ -36,6 +36,13 @@ import java.security.MessageDigest
  */
 class PreviewStripStore(private val context: Context) {
 
+    /** Test-only hook: invoked synchronously on [Dispatchers.Default] from inside [generate], once
+     *  per call that actually does real work (never on the already-valid no-op path), right after
+     *  this call's own stale directory has been reset. A test can block here (e.g. on a
+     *  `CountDownLatch`) to hold a real generation open at a known point, deterministically, rather
+     *  than racing it against other code on wall-clock timing. Not used in production. */
+    internal var onGenerateStartedForTest: (() -> Unit)? = null
+
     private val root: File get() = File(context.filesDir, "previews")
 
     private fun bookDir(bookFile: File): File = File(root, sha256Hex(bookFile.absolutePath))
@@ -64,8 +71,10 @@ class PreviewStripStore(private val context: Context) {
 
     /**
      * The whole generation job. Runs on [Dispatchers.Default] (CPU-bound layout + compress), checks
-     * cancellation between pages, and deletes any stale sibling strips (old configs) for this book
-     * on success. Cancellation at ANY point is safe: the index is the last thing written.
+     * cancellation between pages, and deletes any stale sibling dirs for this book — both when this
+     * call produces a fresh strip and when it finds a valid one already sitting there (see the
+     * no-op branch's KDoc for why the latter is safe). Cancellation at ANY point is safe: the index
+     * is the last thing written.
      *
      * [onChapterDone] is invoked once per spine index that produced at least one thumbnail, in
      * ascending order, as the plan (already sorted by spine then page) moves off that chapter — and
@@ -78,9 +87,35 @@ class PreviewStripStore(private val context: Context) {
         config: RenderConfig,
         onChapterDone: (spineIndex: Int) -> Unit = {},
     ) = withContext(Dispatchers.Default) {
+        // A strip that is already valid for this exact (book, config) is the finished product of
+        // this very job — regenerating it is a whole-book pagination plus ~120 bitmap renders for a
+        // result byte-identical to what is on disk. The deleteRecursively below made that worse than
+        // wasteful: it destroyed the valid strip first, so a toggle flipped off and back on paid
+        // full price to arrive where it started.
+        //
+        // The sibling sweep still runs on this no-op path (unlike a first version of this fix, which
+        // skipped it). At most one VALID strip can exist in a book's dir at any moment — [stripFor]'s
+        // caller-visible contract plus the sweep at the bottom of this function, run on every
+        // completed generation, guarantee it: whichever config finishes last deletes every other
+        // config's dir. So the siblings sitting next to a HIT are never another config's live strip
+        // (that scenario is unreachable — see the fix-pass report) — they can only be index-less
+        // partial dirs left behind by generations that were cancelled before writing their index.
+        // Nothing else ever collects that garbage for the book currently open: [evictOverBudget]
+        // only runs after a completed generation and explicitly skips the book being read. Stepping
+        // a setting up N times and back leaves N such partial dirs sitting on disk indefinitely
+        // without this sweep.
+        if (stripFor(bookFile, config) != null) {
+            sweepStaleSiblings(bookFile, keep = stripDir(bookFile, config))
+            return@withContext
+        }
         val dir = stripDir(bookFile, config)
         dir.deleteRecursively()
         dir.mkdirs()
+        // Test-only synchronous checkpoint, fired once real work has begun (see its KDoc): lets a
+        // test pause a real generation mid-flight deterministically instead of racing it against
+        // other code on wall-clock timing, which resolves before this point often enough to be
+        // flaky (see PreviewStripStoreTest's own note on this exact hazard).
+        onGenerateStartedForTest?.invoke()
 
         val measurer = AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(context))
         EpubDocument.open(bookFile, measurer).use { doc ->
@@ -143,7 +178,13 @@ class PreviewStripStore(private val context: Context) {
         }
 
         // This config's strip is now the book's only valid one; siblings are stale configs.
-        bookDir(bookFile).listFiles()?.forEach { if (it.isDirectory && it != dir) it.deleteRecursively() }
+        sweepStaleSiblings(bookFile, keep = dir)
+    }
+
+    /** Deletes every dir under this book's dir except [keep] — see [generate]'s KDoc for why this
+     *  is safe to run both after a fresh generation and on the already-valid no-op path. */
+    private fun sweepStaleSiblings(bookFile: File, keep: File) {
+        bookDir(bookFile).listFiles()?.forEach { if (it.isDirectory && it != keep) it.deleteRecursively() }
     }
 
     /**

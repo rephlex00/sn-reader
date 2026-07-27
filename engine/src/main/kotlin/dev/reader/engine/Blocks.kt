@@ -13,13 +13,20 @@ package dev.reader.engine
  * (as a ratio, see below), [underline]/[strikethrough] from text-decoration,
  * [letterSpacingEm] from letter-spacing, and [grayLevel] from color. A field the publisher
  * left unspecified stays null. Whether a resolved value is actually rendered is decided at
- * render time by the publisher-styling toggle, not here.
+ * render time by the publisher-styling toggle, not here — except [superscript]/[subscript],
+ * which come from tag semantics (`<sup>`/`<sub>`), not CSS, and are always honored: a raised,
+ * shrunk footnote marker is the reader's baseline rendering, not publisher decoration a
+ * reader might turn off (see the render-time comment where they're applied).
  *
  * @property sizeRatio font size **relative** to the reader's base size, never an absolute
  *   point size — a publisher size is resolved to a ratio against the document baseline so
  *   the reader's chosen text size still governs.
  * @property grayLevel 0f..1f luminance; the e-ink panel has no colour, so `color` maps to
  *   a gray level.
+ * @property superscript from a `<sup>` tag — null means the publisher specified nothing and
+ *   the reader's default (ordinary baseline) applies.
+ * @property subscript from a `<sub>` tag — null means the publisher specified nothing and
+ *   the reader's default (ordinary baseline) applies.
  */
 data class InlineStyle(
     val bold: Boolean? = null,
@@ -30,6 +37,8 @@ data class InlineStyle(
     val strikethrough: Boolean? = null,
     val letterSpacingEm: Float? = null,
     val grayLevel: Float? = null,
+    val superscript: Boolean? = null,
+    val subscript: Boolean? = null,
 )
 
 /**

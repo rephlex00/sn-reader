@@ -13,6 +13,7 @@ import com.google.common.truth.Truth.assertThat
 import dev.reader.R
 import dev.reader.ReaderApplication
 import dev.reader.data.BookEntity
+import dev.reader.data.BookmarkEntity
 import dev.reader.data.HighlightEntity
 import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
@@ -34,6 +35,9 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowToast
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -439,6 +443,33 @@ class ReaderActivityTest {
         // UI, so the restore must ride on the last callback Android guarantees, not on a close handler
         // the user can bypass by swiping the app away.
         assertThat(epd.fastModeHeld).isFalse()
+    }
+
+    @Test
+    fun `onResume re-enters fast mode when the overlay is still open`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        val epd = object : EpdRefresher {
+            override val available = true
+            var fastModeHeld = false
+            override fun cleanRefresh(): Boolean = true
+            override fun enterFastMode(): Boolean { fastModeHeld = true; return true }
+            override fun exitFastMode(): Boolean { fastModeHeld = false; return true }
+        }
+        pageViewOf(activity).epd = epd
+
+        activity.showOverlayForTest()
+        assertThat(epd.fastModeHeld).isTrue()
+
+        controller.pause()
+        // onPause unconditionally gives the mode back — confirmed by the test above.
+        assertThat(epd.fastModeHeld).isFalse()
+
+        controller.resume()
+
+        // A resume with the chrome still open must re-enter fast mode, or every chrome interaction
+        // until the overlay is closed and reopened would run on the slow, full-quality waveform.
+        assertThat(epd.fastModeHeld).isTrue()
     }
 
     @Test
@@ -972,6 +1003,34 @@ class ReaderActivityTest {
         assertThat(runBlocking { app.database.bookmarkDao().bookmarksFor(book.path) }).isEmpty()
     }
 
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a bookmark that cannot be located does not crash the open`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        runBlocking {
+            app.database.bookDao().upsertAll(listOf(dbBook(book.path)))
+            // spineIndex 999 is past the end of the spine: progressFor throws on it, exactly as a
+            // corrupt chapter does on its first lazy read.
+            app.database.bookmarkDao().insert(
+                BookmarkEntity(
+                    bookPath = book.path, spineIndex = 999, charOffset = 0,
+                    progressFraction = 0.42f, createdAtMs = 0L,
+                ),
+            )
+        }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        idleUntil { scrubberTextOf(controller.get()).isNotEmpty() }
+
+        // The reader opened rather than dying, and the unlocatable bookmark fell back to its
+        // stored fraction rather than being dropped.
+        assertThat(controller.get().isFinishing).isFalse()
+        idleUntil { scrubberBookmarkFractionsOf(controller.get()).isNotEmpty() }
+        assertThat(scrubberBookmarkFractionsOf(controller.get())).containsExactly(0.42f)
+    }
+
     // -- Highlights: gesture state machine, chapter cache, panel ------------------------------
 
     @Test
@@ -1251,6 +1310,23 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `toggling the progress bar on also draws the chapter-end tick`() {
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY) // show the overlay
+
+        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick() // off
+        assertThat(pageViewOf(activity).chapterEndForTest).isNull()
+
+        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick() // back on
+
+        // showPage always passes both arguments to setProgress; the toggle used to default
+        // chapterEndFraction to null, leaving the "pages left in chapter" tick missing until the
+        // next page turn recomputed it.
+        assertThat(pageViewOf(activity).chapterEndForTest).isNotNull()
+    }
+
+    @Test
     fun `the progress fraction increases across a forward page turn`() {
         // Guards against an implementation that hardcodes pageIndex = 0 into the bookProgress(...)
         // call in showPage — that would still pass the "on by default, in [0,1]" test above but
@@ -1382,12 +1458,13 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `a commit killed before it resolves still leaves a durable coarse position`() {
+    fun `a commit killed before it resolves writes a durable coarse position, ahead of the repair`() {
         // The commit coroutine rides lifecycleScope: a lift flushed by onPause and immediately
         // followed by teardown (fast double-Back, swipe-away) cancels it before showPage/persist
         // run. The synchronous down-payment in onScrubCommitted — (committed chapter, offset 0)
-        // through the app-scoped writer — is what keeps that death from silently reverting the
-        // navigation: reopening lands at the committed chapter's start, not back at the origin.
+        // through the app-scoped writer — fires FIRST, so a genuine process death right then still
+        // reopens at the committed chapter's start rather than reverting silently. This test proves
+        // that ordering directly, before cancelling.
         val app = RuntimeEnvironment.getApplication() as ReaderApplication
         val book = tocEpub(tempFolder.newFile("book.epub"))
         runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
@@ -1400,17 +1477,160 @@ class ReaderActivityTest {
 
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
-        // Lift-off at 0.9 of the book: a different chapter, so the down-payment fires. The commit
-        // coroutine is suspended at its off-main pagination when the invoke returns — cancel it
-        // there, exactly where a teardown's lifecycleScope cancellation would land.
+        // Lift-off at 0.9 of the book: a different chapter, so the down-payment fires. Check it
+        // BEFORE cancelling anything — this is the synchronous write, unaffected by the repair.
         scrubber.onScrubCommit?.invoke(0.9f, null)
+
+        // Snapshot the row INSIDE the wait predicate: nothing has cancelled the commit coroutine
+        // yet, so it free-runs concurrently with this wait, and a second, separate DB read taken
+        // after idleUntil returns would race it resolving (and overwriting this row) during any
+        // further looper idling. The down-payment write beating full resolution is only guaranteed
+        // at this exact instant, not afterward.
+        var downPayment: BookEntity? = null
+        idleUntil {
+            downPayment = rowFor(app, book.path)
+            downPayment != null && downPayment!!.spineIndex != originChapter
+        }
+        assertThat(downPayment!!.spineIndex).isGreaterThan(originChapter)
+        assertThat(downPayment!!.charOffset).isEqualTo(0)
+        // The page itself never moved — the coroutine hadn't reached showPage when this was taken.
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(originChapter)
+
+        // Cancel now, after the assertions above, purely so the coroutine does not free-run past
+        // the end of this test and bleed into the next one.
+        activity.cancelScrubJobForTest()
+        idleUntil { activity.scrubIdleForTest }
+    }
+
+    @Test
+    fun `a commit cancelled before it resolves repairs the down-payment back to the origin`() {
+        // Continuation of the test above: the commit coroutine is still suspended at its off-main
+        // pagination — cancel it there, exactly where a teardown's lifecycleScope cancellation
+        // would land. The process is NOT actually dying (this is a coroutine cancel, not a real
+        // kill), so it survives to run the coroutine's `finally`, which now repairs the down-payment
+        // it just wrote back to the origin — the reader's screen never left, so that is the only
+        // truthful stored value. persistPosition launches into the app-scoped writer, so the repair
+        // still commits even though this coroutine is being cancelled.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val origin = activity.currentTopOffsetForTest()!!
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        idleUntil { rowFor(app, book.path)!!.spineIndex != origin.spineIndex } // down-payment landed
         activity.cancelScrubJobForTest()
 
-        idleUntil { rowFor(app, book.path)!!.spineIndex != originChapter }
-        assertThat(rowFor(app, book.path)!!.spineIndex).isGreaterThan(originChapter)
-        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(0)
+        idleUntil { activity.scrubIdleForTest }
+        idleUntil { rowFor(app, book.path)!!.spineIndex == origin.spineIndex }
+
+        assertThat(rowFor(app, book.path)!!.spineIndex).isEqualTo(origin.spineIndex)
+        assertThat(rowFor(app, book.path)!!.charOffset).isEqualTo(origin.charOffset)
         // The page itself never moved — the coroutine died before showPage.
-        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(originChapter)
+        assertThat(activity.currentStateForTest.spineIndex).isEqualTo(origin.spineIndex)
+    }
+
+    @Test
+    fun `a commit followed by an activity teardown leaves the committed chapter stored, not the origin`() {
+        // The down-payment's own comment states the reason it exists: a lift followed within the
+        // grace by a fast teardown (double-Back, swipe-away; onPause flushes the grace straight into
+        // this call) cancels the commit coroutine via lifecycleScope before showPage/persist ever
+        // run. Unlike the coroutine-cancel tests above (a second touch on the track — the reader
+        // stays in the book), this IS the teardown case: "lift-off is a commitment, not a draft," so
+        // the down-payment must stand, not repair back to the origin the reader is leaving behind.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+        val originChapter = activity.currentStateForTest.spineIndex
+
+        activity.showOverlayForTest()
+        val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
+        scrubber.onScrubCommit?.invoke(0.9f, null)
+        idleUntil { rowFor(app, book.path)!!.spineIndex != originChapter } // down-payment landed
+
+        // Teardown while the pagination is still in flight — onDestroy cancels lifecycleScope,
+        // landing the coroutine's `finally` exactly where a real double-Back/swipe-away would.
+        controller.pause().stop().destroy()
+        idleUntil { activity.scrubIdleForTest }
+
+        val stored = rowFor(app, book.path)!!
+        assertThat(stored.spineIndex).isGreaterThan(originChapter)
+        assertThat(stored.charOffset).isEqualTo(0)
+    }
+
+    @Test
+    fun `a scrub commit cancelled before it resolves restores the position it left`() {
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        val before = activity.currentTopOffsetForTest()!!
+        activity.showOverlayForTest()
+
+        // Lift-off on a distant chapter writes the down-payment, then the commit is cancelled
+        // before its pagination can refine it — exactly what a second touch on the track does.
+        activity.commitScrubForTest(fraction = 0.9f)
+        idleUntil { rowFor(app, book.path)!!.spineIndex != before.spineIndex } // down-payment landed
+        activity.cancelScrubJobForTest()
+        idleUntil { activity.scrubIdleForTest }
+        idleUntil { rowFor(app, book.path)!!.spineIndex == before.spineIndex }
+
+        // The stored row must describe where the reader actually is, not the chapter the
+        // cancelled commit was aiming at.
+        val stored = rowFor(app, book.path)!!
+        assertThat(stored.spineIndex).isEqualTo(before.spineIndex)
+        assertThat(stored.charOffset).isEqualTo(before.charOffset)
+    }
+
+    @Test
+    fun `a scrub commit that resolves back to the origin repairs the down-payment instead of leaving it`() {
+        // The OTHER unresolved path: a commit that isn't cancelled at all, but whose target turns
+        // out to equal origin. A snapped commit onto an empty chapter (1) walks forward past another
+        // empty chapter (2) — see emptyMidChaptersEpub — landing on chapter 3's first page, which is
+        // exactly where the reader already is. The no-op branch never calls showPage, so nothing
+        // refines the (1, 0) down-payment unless the repair does.
+        val app = RuntimeEnvironment.getApplication() as ReaderApplication
+        val book = emptyMidChaptersEpub(tempFolder.newFile("book.epub"))
+        runBlocking { app.database.bookDao().upsertAll(listOf(dbBook(book.path))) }
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { rowFor(app, book.path)?.lastOpenedAtMs != null }
+
+        // Put the reader on chapter 3 first, so there is somewhere for the walk below to land back on.
+        activity.showOverlayForTest()
+        activity.commitScrubForTest(fraction = 1f, snappedChapter = 3)
+        idleUntil { activity.scrubIdleForTest }
+        assertThat(activity.currentStateForTest).isEqualTo(ReadingState(3, 0))
+        val origin = activity.currentTopOffsetForTest()!!
+
+        // Snap onto the empty chapter 1. Down-payment (1, 0) fires on the spine-index gate alone,
+        // before the walk below ever runs.
+        activity.commitScrubForTest(fraction = 0.3f, snappedChapter = 1)
+        idleUntil { rowFor(app, book.path)!!.spineIndex == 1 } // down-payment landed
+        idleUntil { activity.scrubIdleForTest }
+        idleUntil { rowFor(app, book.path)!!.spineIndex == origin.spineIndex }
+
+        val stored = rowFor(app, book.path)!!
+        assertThat(stored.spineIndex).isEqualTo(origin.spineIndex)
+        assertThat(stored.charOffset).isEqualTo(origin.charOffset)
+        // The page itself never moved — target == origin means showPage never ran.
+        assertThat(activity.currentStateForTest).isEqualTo(ReadingState(3, 0))
     }
 
     @Test
@@ -1577,6 +1797,42 @@ class ReaderActivityTest {
         assertThat(back.visibility).isEqualTo(View.GONE)
     }
 
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a jump back into an unreadable chapter reports instead of crashing`() {
+        val book = multiChapterEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        // Jump to chapter 1, arming ↩ with chapter 0 (the opening position) as its sole target.
+        activity.showOverlayForTest()
+        activity.commitScrubForTest(fraction = 0.3f, snappedChapter = 1)
+        idleUntil { activity.scrubIdleForTest }
+        activity.hideOverlayForTest() // page turns below must turn pages, not just dismiss the chrome
+
+        // Page forward past chapters 2, 3 and 4: EpubDocument's chapter cache holds only three
+        // chapters at once, so reading this far evicts chapter 0's pagination — it has not been
+        // touched again since the reader opened there. Regular page turns never touch the jump
+        // stack, so ↩ still points at chapter 0 afterward.
+        repeat(20) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
+
+        // The book is replaced with bytes that cannot be paginated while the reader holds it open;
+        // the jump back re-reads a chapter that is no longer there.
+        book.writeText("not a zip any more")
+        ShadowToast.reset() // assert THIS error, not a leftover from the setup above
+        activity.backJumpForTest()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertThat(activity.isFinishing).isFalse()
+        // Load-bearing: without this the test passes whenever the setup stops evicting chapter 0
+        // (a change to the cache capacity, the prefetch rule, or per-chapter page counts), never
+        // entering the guarded catch at all — exactly how this test's first draft was useless.
+        // Asserting the surfaced error proves the guard actually fired.
+        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("That section couldn't be opened.")
+    }
+
     // -- Task 4: the floating preview window --------------------------------------------------
 
     @Test
@@ -1601,6 +1857,8 @@ class ReaderActivityTest {
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
+        // The blit is decoded off-main now (Task 8); give it a chance to land before asserting.
+        idleUntil { preview.visibility == View.VISIBLE }
         assertThat(preview.visibility).isEqualTo(View.VISIBLE)
 
         scrubber.onScrubCommit?.invoke(0.5f, null)
@@ -1634,6 +1892,8 @@ class ReaderActivityTest {
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.9f, null)
+        // The blit is decoded off-main now (Task 8); give it a chance to land before committing.
+        idleUntil { preview.visibility == View.VISIBLE }
         assertThat(preview.visibility).isEqualTo(View.VISIBLE)
 
         scrubber.onScrubCommit?.invoke(0.9f, null)
@@ -1665,6 +1925,12 @@ class ReaderActivityTest {
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
+        // The blit is decoded off-main now (Task 8); wait for it to actually land — and assert it
+        // did — before cancelling, or the GONE assertion below would trivially hold from the
+        // window's initial state without the cancel path having done anything at all.
+        idleUntil { preview.visibility == View.VISIBLE }
+        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+
         scrubber.onScrubCancel?.invoke()
 
         assertThat(preview.visibility).isEqualTo(View.GONE)
@@ -1738,6 +2004,8 @@ class ReaderActivityTest {
         // Confirm the strip is live before the settings change: a drag shows the window.
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
+        // The blit is decoded off-main now (Task 8); give it a chance to land before asserting.
+        idleUntil { preview.visibility == View.VISIBLE }
         assertThat(preview.visibility).isEqualTo(View.VISIBLE)
         scrubber.onScrubCommit?.invoke(0.5f, null)
         idleUntil { activity.scrubIdleForTest }
@@ -1796,6 +2064,11 @@ class ReaderActivityTest {
 
             scrubber.onScrubStart?.invoke()
             scrubber.onScrubMove?.invoke(0.5f, null)
+            // The decode is off-main now (Task 8); wait for it to actually land — under the forced
+            // allowInvalidImageData(false) — before asserting, or the GONE/null assertions below
+            // would trivially hold from the window's initial state without the null-decode branch
+            // ever having run.
+            idleUntil { activity.previewDecodeIdleForTest }
 
             // The window stays hidden rather than showing a stale/mismatched bitmap, and nothing crashes.
             assertThat(preview.visibility).isEqualTo(View.GONE)
@@ -1803,11 +2076,42 @@ class ReaderActivityTest {
 
             // Moving again at the same fraction re-hits the same (still-missing) file without crashing —
             // the entry was marked attempted, so this is not an infinite decode retry, just idempotent.
+            // (No new decode is even scheduled — entry == shownPreviewEntry already — so there is
+            // nothing new to wait for here.)
             scrubber.onScrubMove?.invoke(0.5f, null)
             assertThat(preview.visibility).isEqualTo(View.GONE)
         } finally {
+            // Held until the forced decode above has actually landed (idleUntil, above) — restoring
+            // this JVM-wide static any earlier risks a leaked coroutine decoding a synthetic bitmap
+            // against a static this test has already reset, corrupting a later test in the same fork.
             org.robolectric.shadows.ShadowBitmapFactory.setAllowInvalidImageData(true)
         }
+    }
+
+    // -- Task 8: the scrub drag decodes previews off the main thread ------------------------------
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a scrub drag decodes previews off the main thread`() {
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        runBlocking {
+            PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, activity.configForTest!!)
+        }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+        activity.showOverlayForTest()
+
+        // The move returns before any decode has happened: the blit lands later, off-main.
+        activity.scrubMoveForTest(fraction = 0.5f)
+        assertThat(activity.previewBitmapShownForTest).isFalse()
+
+        idleUntil { activity.previewBitmapShownForTest }
+        assertThat(activity.previewBitmapShownForTest).isTrue()
     }
 
     // -- Task 4 (scrubber v2.1): snap fix, previews toggle, per-book delete ---------------------
@@ -1852,6 +2156,16 @@ class ReaderActivityTest {
         scrubber.onScrubMove?.invoke(0.5f, null)
 
         assertThat(preview.visibility).isEqualTo(View.GONE) // no window when previews off
+        // lifecycleScope runs on Main.immediate, so onScrubMoved's launch (if any were started)
+        // would have already run inline up to its IO hop by the time this call returns. A null job
+        // here is a hard, race-free proof that the early return fired and no decode was ever
+        // scheduled — not merely one that hasn't landed yet.
+        assertThat(activity.previewDecodeJobForTest).isNull()
+
+        // Previews are genuinely off — the early return in onScrubMoved never even schedules a
+        // decode — not merely a decode still in flight. Idling confirms nothing shows up later.
+        shadowOf(Looper.getMainLooper()).idle()
+        assertThat(preview.visibility).isEqualTo(View.GONE)
     }
 
     @Test
@@ -1956,6 +2270,264 @@ class ReaderActivityTest {
         idleUntil { activity.stripGenerationsScheduledForTest == 2 }
     }
 
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a settings change back to a config with a strip on disk schedules no generation`() {
+        // The motivating case: toggling justify off and on again nets back to the original
+        // RenderConfig. Note this does NOT use toggleProgressBar as a trigger — that toggle is
+        // documented (see its KDoc) to deliberately bypass applySettingsChange entirely, so it
+        // would exercise nothing here. toggle_justify is a real Aa-sheet control that always goes
+        // through applyTypography -> applySettingsChange, same as the reported bug.
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { activity.stripGenerationsScheduledForTest == 1 }
+
+        // Generate + load a strip for the book's ACTUAL initial config, exactly as a real reader
+        // would have one sitting on disk from a previous open.
+        runBlocking {
+            PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, activity.configForTest!!)
+        }
+        activity.loadPreviewStripForTest()
+        idleUntil { activity.previewStripLoadedForTest }
+
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        // First toggle: justified flips away from the strip's config — a genuine miss, correctly
+        // scheduling generation (mocked to a count in TestableReaderActivity).
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        idleUntil { activity.stripGenerationsScheduledForTest == 2 }
+        assertThat(activity.previewStripLoadedForTest).isFalse()
+
+        // Second toggle: back to the exact config the strip on disk was generated for.
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+
+        // The still-valid strip is reloaded from disk, not thrown away and rebuilt. The reload's
+        // disk read now runs on Dispatchers.IO (see the fix-pass report's Finding 2), so it no
+        // longer resolves synchronously within performClick() and needs a real wait.
+        idleUntil { activity.previewStripLoadedForTest }
+        assertThat(activity.stripGenerationsScheduledForTest).isEqualTo(2)
+    }
+
+    // -- Fix pass Finding 1: a disk-reload hit must cancel the generation already in flight --------
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a settings change that reloads a strip cancels a generation already running for the abandoned config`() {
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { activity.stripGenerationsScheduledForTest == 1 }
+
+        // A real strip on disk for the book's ORIGINAL config — what the second toggle below
+        // should reload.
+        val originalConfig = activity.configForTest!!
+        runBlocking {
+            PreviewStripStore(RuntimeEnvironment.getApplication()).generate(book, originalConfig)
+        }
+
+        // First toggle: justified flips away from the strip's config — a genuine miss. Start a
+        // REAL generation for it (bypassing TestableReaderActivity's counting override), so there
+        // is an actual coroutine captured on this ABANDONED config once we flip back.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        val abandonedConfig = activity.configForTest!!
+        assertThat(abandonedConfig).isNotEqualTo(originalConfig)
+
+        // Hold the real generation open at a known point (past its own directory reset, before it
+        // touches the document) with a latch, rather than racing it against the settings-change
+        // click below on wall-clock timing — PreviewStripStoreTest found that exact race "resolves
+        // before generate's body starts often enough to be flaky."
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        activity.stripStoreForTest.onGenerateStartedForTest = {
+            started.countDown()
+            // Untimed here would hang the whole suite, not just this test, if the release below
+            // were ever missed — a timed wait fails loudly instead.
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue()
+        }
+        activity.scheduleRealStripGenerationForTest()
+        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue()
+        assertThat(activity.stripGenerationActiveForTest).isTrue()
+        // Captured by reference, not read again through the Activity field below: the field is not
+        // guaranteed to keep pointing at THIS job afterward (a later miss reassigns it to a fresh
+        // generation), so re-reading it after the click below would risk silently tracking a
+        // different job instead.
+        val abandonedJob = activity.stripGenerationJobForTest!!
+
+        // Second toggle: back to the exact config the strip on disk was generated for — a genuine
+        // hit — while the real generation above is still blocked mid-flight for the abandoned
+        // config.
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+
+        // Let the abandoned generation proceed to whatever completion cancellation allows, and wait
+        // for it to actually finish — one way or another — before checking the outcome. Without
+        // this wait, an unfixed hit branch (which resolves synchronously, with nothing async to
+        // wait on) would let this test's assertions run and pass BEFORE the still-uncancelled
+        // abandoned generation ever reaches its own damaging sibling sweep, proving nothing.
+        release.countDown()
+        idleUntil { abandonedJob.isCompleted }
+        // Let whatever is chained off that completion finish draining through the main looper —
+        // the fix's own join-then-reload coroutine, or the unfixed code's own previewStrip
+        // reassignment inside scheduleStripGeneration — before reading the final state. A fixed
+        // pump count races the cross-thread dispatch: abandonedJob.isCompleted above can flip on
+        // the Dispatchers.Default thread before the continuation that runs the reload is posted to
+        // the main looper, so a handful of back-to-back idle() calls with no sleep between them can
+        // all no-op and leave a runnable queued for the NEXT test to trip over. idleUntil polls the
+        // actual condition being asserted below, on the same wall-clock-deadline primitive already
+        // used everywhere else in this suite for a cross-dispatcher wait.
+        idleUntil { activity.previewStripConfigHashForTest != null }
+
+        // previewStrip must resolve to the CURRENT config (the one just reloaded), not the
+        // abandoned one the superseded generator was working on.
+        assertThat(activity.configForTest).isEqualTo(originalConfig)
+        assertThat(activity.previewStripConfigHashForTest).isEqualTo(configHash(originalConfig))
+        // And the strip actually reloaded must still be on disk — not deleted by the abandoned
+        // generator's sibling sweep.
+        assertThat(
+            PreviewStripStore(RuntimeEnvironment.getApplication()).stripFor(book, originalConfig)
+        ).isNotNull()
+    }
+
+    // -- Task 7: turning previews off cancels generation in flight -------------------------------
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `turning previews off cancels a generation in flight`() {
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        // Real generation (not TestableReaderActivity's counting override — see the seam's KDoc),
+        // so there is an actual coroutine on Dispatchers.Default for the toggle to cancel.
+        activity.scheduleRealStripGenerationForTest()
+        assertThat(activity.stripGenerationActiveForTest).isTrue()
+
+        // The real Aa-sheet control, so this exercises togglePreviews() itself, not just the pref.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.toggle_previews).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // This only proves cancel() was requested, not that the coroutine has stopped running —
+        // cancellation is cooperative, so CPU may still be executing on Dispatchers.Default here
+        // (see stripGenerationFinishedForTest's KDoc).
+        assertThat(activity.stripGenerationActiveForTest).isFalse()
+
+        // Wait for the real generation to actually stop before returning, or it can still be
+        // burning a Dispatchers.Default pool thread when the next test's idleUntil starts its own
+        // wall-clock deadline (see the fix-pass report's Finding 4: this is what caused an
+        // unrelated test to flake).
+        idleUntil { activity.stripGenerationFinishedForTest }
+    }
+
+    // -- Task 21: a failed or superseded generation must not leave stale readout/state ------------
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a failed generation restores the resting readout instead of leaving the transient progress text`() {
+        clearReaderPrefs()
+        val book = multiPageEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        val resting = scrubberTextOf(activity)
+
+        // Simulates the transient "preparing previews · N%" text a real per-chapter callback would
+        // have written onto the scrubber line, then corrupts the book's bytes so the EpubDocument.open
+        // called right after this hook (still inside generate()) throws — exercising the failure
+        // path, not the happy one.
+        activity.stripStoreForTest.onGenerateStartedForTest = {
+            activity.runOnUiThread {
+                activity.findViewById<TextView>(R.id.scrubber).text = "preparing previews · 40%"
+            }
+            book.writeBytes(ByteArray(16))
+        }
+
+        activity.scheduleRealStripGenerationForTest()
+        idleUntil { activity.stripGenerationFinishedForTest }
+
+        // The failure path used to just log and leave whatever transient text was last written
+        // sitting on the scrubber line until some later page turn happened to restore it.
+        assertThat(scrubberTextOf(activity)).isEqualTo(resting)
+    }
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp")
+    fun `a superseded generation's late callback does not repopulate generatedChapters`() {
+        // Strategy: let generation A run to genuine, real completion for its own config — including
+        // all three of its real onChapterDone posts — WITHOUT ever letting the main looper drain
+        // them (no idle() call happens until this test says so). Only once A's work is confirmed
+        // done (via a filesystem poll, which needs no main-thread pumping) does the test change the
+        // config and start a second, real generation B for the NEW config — which cancels A and
+        // bumps the token synchronously, before A's already-queued (now stale) posts ever run.
+        clearReaderPrefs()
+        val book = tocEpub(tempFolder.newFile("book.epub"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        val originalConfig = activity.configForTest!!
+
+        val hookCalls = AtomicInteger(0)
+        val releaseB = CountDownLatch(1)
+        val releaseBSuccess = AtomicBoolean(false)
+        activity.stripStoreForTest.onGenerateStartedForTest = {
+            // Call 1 (generation A) returns immediately: A runs to full, real completion. Call 2
+            // (generation B, for the new config below) is held so this test can inspect state after
+            // A's stale posts have drained but before B produces any of its own.
+            if (hookCalls.incrementAndGet() >= 2) {
+                releaseBSuccess.set(releaseB.await(5, TimeUnit.SECONDS))
+            }
+        }
+
+        // Generation A: real, unblocked, for the book's original config.
+        activity.scheduleRealStripGenerationForTest()
+
+        // Wait for A's own strip to actually land on disk — proof its generate() call (and all
+        // three of its onChapterDone posts) already ran, entirely on a background thread. This is a
+        // plain filesystem poll, not [idleUntil]: idling here would drain A's queued posts under
+        // its OWN still-current token, before this test ever gets a chance to make them stale.
+        waitWithoutIdling { PreviewStripStore(RuntimeEnvironment.getApplication()).stripFor(book, originalConfig) != null }
+
+        // Change the render config for real (a real Aa-sheet control), so the second generation
+        // below is a genuine cache miss rather than short-circuiting on A's just-written strip.
+        activity.findViewById<View>(R.id.settings_button).performClick()
+        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        val newConfig = activity.configForTest!!
+        assertThat(newConfig).isNotEqualTo(originalConfig)
+
+        // Generation B supersedes A. This synchronously clears generatedChapters and bumps the
+        // token, on this thread, before B's own coroutine — or A's already-queued, now-stale
+        // posts — ever run.
+        activity.scheduleRealStripGenerationForTest()
+
+        // B's onGenerateStartedForTest firing a second time can only happen after A's job has been
+        // joined (cancelAndJoin awaits it, resuming through queued main-thread posts) and B's own
+        // generate() call is reached. Because A's stale posts were queued on the main thread
+        // strictly earlier than the messages that drive B to this point, draining up to this
+        // condition also drains every one of A's stale posts first — the same causal ordering
+        // [idleUntil] relies on elsewhere in this file.
+        idleUntil { hookCalls.get() >= 2 }
+
+        // Untouched by A's three late, stale-token posts: the guard must have discarded them rather
+        // than letting them repopulate the set B's own (not-yet-run) generation had already cleared.
+        assertThat(activity.generatedChaptersForTest).isEmpty()
+
+        // Let B run for real to completion and confirm it lands its own, correct, complete set.
+        releaseB.countDown()
+        idleUntil { activity.stripGenerationFinishedForTest }
+
+        assertThat(activity.generatedChaptersForTest).isEqualTo(setOf(0, 1, 2))
+        assertThat(releaseBSuccess.get()).isTrue()
+    }
+
     // -- Harness --------------------------------------------------------------------------------
 
     /** Clears the reader_prefs store so a test starts from the shipped defaults; Robolectric reuses
@@ -1998,6 +2570,10 @@ class ReaderActivityTest {
         override fun scheduleStripGeneration() {
             stripGenerationsScheduledForTest++
         }
+
+        /** Starts a REAL generation (bypassing the counting override just above) so a test can
+         *  cancel an actual in-flight coroutine. Not called in production. */
+        fun scheduleRealStripGenerationForTest() = super.scheduleStripGeneration()
 
         override fun findFirstEpub(): File? {
             findFirstCalls++
@@ -2295,6 +2871,19 @@ class ReaderActivityTest {
             shadowOf(Looper.getMainLooper()).idle()
             Thread.sleep(20)
         }
+        check(condition()) { "condition never became true within ${timeoutMs}ms" }
+    }
+
+    /** Like [idleUntil], but deliberately never pumps the main looper — for waiting on a real
+     *  generation's background-thread side effect (e.g. a strip landing on disk) without draining
+     *  its queued `runOnUiThread` posts, which a test needs to stay queued until a config change
+     *  has made their token stale. */
+    private fun waitWithoutIdling(timeoutMs: Long = 5_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(5)
+        }
+        check(condition()) { "condition never became true within ${timeoutMs}ms" }
     }
 
     /**
@@ -2311,6 +2900,9 @@ class ReaderActivityTest {
 
     private fun scrubberTextOf(activity: ReaderActivity): String =
         activity.findViewById<TextView>(R.id.scrubber).text.toString()
+
+    private fun scrubberBookmarkFractionsOf(activity: ReaderActivity): List<Float> =
+        activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber).bookmarkFractionsForTest
 
     /** Dispatches a real single-pointer touch to a laid-out [ChapterScrubberView] — the grace-flush
      *  test needs the view's own gesture state machine (DOWN/UP), not the callback seams the other
@@ -2466,6 +3058,137 @@ class ReaderActivityTest {
             entry("OEBPS/ch1.xhtml", "<html><body><h1>One</h1>${chapterBody("One")}</body></html>")
             entry("OEBPS/ch2.xhtml", "<html><body><h1>Two</h1>${chapterBody("Two")}</body></html>")
             entry("OEBPS/ch3.xhtml", "<html><body><h1>Three</h1>${chapterBody("Three")}</body></html>")
+        }
+        return file
+    }
+
+    /**
+     * Four chapters, spine order 0..3: content, EMPTY, EMPTY, content. Chapters 1 and 2 have a
+     * blank `<body>`, which `EpubDocument.paginate` short-circuits to `pages = emptyList()` (no
+     * text blocks to measure) — a real zero-page chapter, not a mocked `pageCountFor`. Built for the
+     * no-op-commit repair test: a snapped commit onto chapter 1 walks [advance] forward through
+     * chapter 2 and lands on chapter 3's first page, exactly reproducing a commit that resolves back
+     * to wherever the reader already is.
+     */
+    private fun emptyMidChaptersEpub(file: File): File {
+        fun chapterBody(label: String) = buildString {
+            repeat(12) {
+                append("<p>$label paragraph $it with enough words to lay out into a line or two ")
+                append("on the test viewport so the chapter paginates to at least one page.</p>")
+            }
+        }
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            fun entry(path: String, content: String) {
+                zip.putNextEntry(ZipEntry(path))
+                zip.write(content.toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+            }
+            entry("mimetype", "application/epub+zip")
+            entry(
+                "META-INF/container.xml",
+                """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""",
+            )
+            entry(
+                "OEBPS/content.opf",
+                """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Empty Middle</dc:title></metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch0" href="ch0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch0"/>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+    <itemref idref="ch3"/>
+  </spine>
+</package>""",
+            )
+            entry(
+                "OEBPS/nav.xhtml",
+                """<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="ch0.xhtml">Zero</a></li>
+        <li><a href="ch3.xhtml">Three</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>""",
+            )
+            entry("OEBPS/ch0.xhtml", "<html><body><h1>Zero</h1>${chapterBody("Zero")}</body></html>")
+            entry("OEBPS/ch1.xhtml", "<html><body></body></html>")
+            entry("OEBPS/ch2.xhtml", "<html><body></body></html>")
+            entry("OEBPS/ch3.xhtml", "<html><body><h1>Three</h1>${chapterBody("Three")}</body></html>")
+        }
+        return file
+    }
+
+    /**
+     * Five real (non-empty) chapters — one more than [EpubDocument]'s chapter-cache capacity of
+     * three — so that reading forward through all of them evicts the chapter the reader opened at.
+     * No nav document: nothing here needs [EpubDocument.toc].
+     */
+    private fun multiChapterEpub(file: File): File {
+        fun chapterBody(label: String) = buildString {
+            repeat(12) {
+                append("<p>$label paragraph $it with enough words to lay out into a line or two ")
+                append("on the test viewport so the chapter paginates to at least one page.</p>")
+            }
+        }
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            fun entry(path: String, content: String) {
+                zip.putNextEntry(ZipEntry(path))
+                zip.write(content.toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+            }
+            entry("mimetype", "application/epub+zip")
+            entry(
+                "META-INF/container.xml",
+                """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""",
+            )
+            entry(
+                "OEBPS/content.opf",
+                """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Multi Chapter Book</dc:title></metadata>
+  <manifest>
+    <item id="ch0" href="ch0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch4" href="ch4.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch0"/>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+    <itemref idref="ch3"/>
+    <itemref idref="ch4"/>
+  </spine>
+</package>""",
+            )
+            entry("OEBPS/ch0.xhtml", "<html><body><h1>Zero</h1>${chapterBody("Zero")}</body></html>")
+            entry("OEBPS/ch1.xhtml", "<html><body><h1>One</h1>${chapterBody("One")}</body></html>")
+            entry("OEBPS/ch2.xhtml", "<html><body><h1>Two</h1>${chapterBody("Two")}</body></html>")
+            entry("OEBPS/ch3.xhtml", "<html><body><h1>Three</h1>${chapterBody("Three")}</body></html>")
+            entry("OEBPS/ch4.xhtml", "<html><body><h1>Four</h1>${chapterBody("Four")}</body></html>")
         }
         return file
     }

@@ -183,8 +183,10 @@ class EpubDocument private constructor(
         // Parsed once here and threaded through both cssFor (which mines <head>/<body>
         // for stylesheet references) and blockParser.parse (which walks <body> for
         // content) — a second Jsoup.parse of the same chapter would double the HTML
-        // parsing cost of every chapter load for no benefit.
-        val doc = Jsoup.parse(xhtml)
+        // parsing cost of every chapter load for no benefit. expandSelfClosingTags first:
+        // XHTML's self-closed non-void elements (`<a id="page_70"/>`) otherwise stay open
+        // under the HTML parse and swallow the following text — see its KDoc.
+        val doc = Jsoup.parse(expandSelfClosingTags(xhtml))
         val css = cssFor(doc, item.href)
         // The builder (and AndroidTextMeasurer) can't reach the zip — ResourceSource is
         // private to this class — so the image bytes are resolved HERE and carried on the
@@ -277,13 +279,44 @@ class EpubDocument private constructor(
             } catch (e: SecurityException) {
                 throw EpubException.NotAnEpub("Not a readable EPUB archive: ${e.message}")
             }
+            return open(source, measurer) { s -> EpubPackageParser().parse(s) }
+        }
+
+        /**
+         * The post-construction half of [open]: parses an already-open [source] into a package
+         * and TOC and wraps it in an [EpubDocument], guaranteeing [source] is closed on every
+         * failure path. Split out — with [source] and [parsePackage] both injectable — purely as
+         * a test seam: there is no reliable real-world EPUB that trips the generic
+         * `catch (e: Throwable)` below via a genuine parse failure (this codebase already
+         * hardens `readTextChecked`/`readBytesChecked` against `IOException`, hand-rolls
+         * `percentDecode` to avoid `URLDecoder`'s `IllegalArgumentException`, and has no
+         * unguarded `toInt`/`substring`/`first()`/`!!` in the package or TOC parsers). A test
+         * can make [parsePackage] throw an arbitrary [Throwable] and assert the catch's two
+         * guarantees structurally: [source] closes exactly once, and the exception is normalized
+         * to an [EpubException] — or, for one already typed, rethrown identity-preserved rather
+         * than rewrapped as [EpubException.Malformed].
+         */
+        internal fun open(
+            source: ResourceSource,
+            measurer: TextMeasurer,
+            parsePackage: (ResourceSource) -> EpubPackage,
+        ): EpubDocument {
             try {
-                val pkg = EpubPackageParser().parse(source)
+                val pkg = parsePackage(source)
                 val toc = EpubTocParser().parse(source, pkg)
                 return EpubDocument(source, pkg, measurer, toc)
             } catch (e: Throwable) {
+                // Every throw path above lands here, so the source is closed regardless of
+                // exception type. Unknown throwables are wrapped rather than rethrown raw: this
+                // function's contract is "throws EpubException", and every caller catches exactly
+                // that — a raw jsoup or zip-layer exception from a pathological archive would
+                // sail past all of them. Mirrors ComicDocument.open.
                 source.close()
-                throw e
+                throw when (e) {
+                    is EpubException -> e
+                    is java.util.concurrent.CancellationException -> e
+                    else -> EpubException.Malformed("The book could not be read: ${e.message}")
+                }
             }
         }
     }

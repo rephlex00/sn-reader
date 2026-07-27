@@ -174,6 +174,30 @@ class EpubPackageParserTest {
     }
 
     @Test
+    fun `opens when encryption xml declares no algorithms at all`() {
+        // A well-formed but vestigial <encryption/> with zero EncryptionMethod elements
+        // describes a book with zero encrypted entries — that is affirmatively benign,
+        // unlike the garbage/unparseable case above, which has no <encryption> element
+        // at all and must still fail closed.
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry(
+                "META-INF/encryption.xml",
+                """<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"/>""",
+            )
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>No Declared Encryption</dc:title></metadata>
+  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+        }
+        val pkg = source.use(parser::parse)
+
+        assertThat(pkg.metadata.title).isEqualTo("No Declared Encryption")
+    }
+
+    @Test
     fun `opens normally when encryption xml only records font obfuscation`() {
         val source = buildEpub(file()) {
             entry("META-INF/container.xml", CONTAINER_XML)
@@ -194,6 +218,150 @@ class EpubPackageParserTest {
         val pkg = source.use(parser::parse)
 
         assertThat(pkg.metadata.title).isEqualTo("Obfuscated Fonts")
+    }
+
+    // --- Security regression fixes: the "empty list opens" rule from the previous task
+    // interacted badly with the pre-existing `.filter { it.isNotEmpty() }` on Algorithm
+    // values, which silently turned "algorithm didn't survive attribute lookup" into
+    // "no evidence" (findings 1-4, security review of fix/audit-remediation). ---
+
+    @Test
+    fun `throws when an encryption method declares an empty algorithm`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+    <EncryptionMethod Algorithm=""/>
+    <CipherData><CipherReference URI="OEBPS/ch1.xhtml"/></CipherData>
+  </EncryptedData>
+</encryption>""")
+            entry("OEBPS/content.opf", "<package/>")
+        }
+        val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.DrmProtected::class.java)
+    }
+
+    @Test
+    fun `throws when an encryption method has no algorithm attribute at all`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+    <EncryptionMethod/>
+    <CipherData><CipherReference URI="OEBPS/ch1.xhtml"/></CipherData>
+  </EncryptedData>
+</encryption>""")
+            entry("OEBPS/content.opf", "<package/>")
+        }
+        val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.DrmProtected::class.java)
+    }
+
+    @Test
+    fun `throws when the algorithm attribute is namespace-prefixed`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+    <EncryptionMethod enc:Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc" xmlns:enc="urn:example:enc"/>
+    <CipherData><CipherReference URI="OEBPS/ch1.xhtml"/></CipherData>
+  </EncryptedData>
+</encryption>""")
+            entry("OEBPS/content.opf", "<package/>")
+        }
+        val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.DrmProtected::class.java)
+    }
+
+    @Test
+    fun `throws when encrypted data has no encryption method to vouch for it`() {
+        // EncryptionMethod is optional in XML Encryption — a producer can omit it and
+        // still mean "this entry is encrypted". Zero EncryptionMethod elements is only
+        // benign when there's also zero EncryptedData/CipherReference evidence.
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+    <CipherData><CipherReference URI="OEBPS/text/ch1.xhtml"/></CipherData>
+  </EncryptedData>
+</encryption>""")
+            entry("OEBPS/content.opf", "<package/>")
+        }
+        val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.DrmProtected::class.java)
+    }
+
+    @Test
+    fun `opens when the vestigial encryption element has neither encrypted data nor a method`() {
+        // The other side of the previous test's boundary: genuinely nothing declared.
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry(
+                "META-INF/encryption.xml",
+                """<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"/>""",
+            )
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Nothing Declared</dc:title></metadata>
+  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+        }
+        val pkg = source.use(parser::parse)
+
+        assertThat(pkg.metadata.title).isEqualTo("Nothing Declared")
+    }
+
+    @Test
+    fun `throws when the encryption element is nested instead of at the document root`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?><foo><bar><encryption/></bar></foo>""")
+            entry("OEBPS/content.opf", "<package/>")
+        }
+        val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.DrmProtected::class.java)
+    }
+
+    @Test
+    fun `opens when the root element's casing differs from the canonical spelling`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?><Encryption/>""")
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Cased Root</dc:title></metadata>
+  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+        }
+        val pkg = source.use(parser::parse)
+
+        assertThat(pkg.metadata.title).isEqualTo("Cased Root")
+    }
+
+    @Test
+    fun `throws when the encryption method's casing differs from the canonical spelling`() {
+        val source = buildEpub(file()) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("META-INF/encryption.xml", """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <encryptionmethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/>
+</encryption>""")
+            entry("OEBPS/content.opf", "<package/>")
+        }
+        val e = runCatching { source.use(parser::parse) }.exceptionOrNull()
+
+        assertThat(e).isInstanceOf(EpubException.DrmProtected::class.java)
     }
 
     @Test

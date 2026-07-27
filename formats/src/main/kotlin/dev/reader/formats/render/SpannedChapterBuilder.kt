@@ -17,6 +17,8 @@ import android.text.style.ImageSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StrikethroughSpan
+import android.text.style.SubscriptSpan
+import android.text.style.SuperscriptSpan
 import android.text.style.TypefaceSpan
 import android.text.style.UnderlineSpan
 import dev.reader.engine.Block
@@ -67,6 +69,13 @@ private const val SCENE_BREAK_MARK = "* * *"
 private val HEADING_SCALE = mapOf(1 to 1.6f, 2 to 1.4f, 3 to 1.25f, 4 to 1.15f, 5 to 1.1f, 6 to 1.05f)
 
 /**
+ * The conventional marker-to-body size ratio for a footnote/citation marker. SuperscriptSpan/
+ * SubscriptSpan only shift the baseline — they don't shrink the glyph — so every sup/sub run
+ * pairs one of those with a RelativeSizeSpan at this ratio.
+ */
+private const val SUP_SUB_SIZE_RATIO = 0.75f
+
+/**
  * The single character an [ImageSpan] is drawn over — the standard idiom is one placeholder
  * carrying the span, so the image occupies exactly one character like any other span run and
  * the page-break offset logic keeps working unchanged. U+FFFC OBJECT REPLACEMENT CHARACTER.
@@ -99,6 +108,10 @@ class SpannedChapterBuilder {
                 pendingBreak = true
                 continue
             }
+            // Where this block's contribution begins, separator included — the rollback point
+            // if it turns out to contribute nothing at all (see the check just below
+            // appendBlock).
+            val blockStart = sb.length
             if (sb.isNotEmpty()) sb.append(separatorBetween(prev, block))
             val start = sb.length
             // A body paragraph gets the reader's own first-line indent UNLESS it opens a
@@ -113,6 +126,21 @@ class SpannedChapterBuilder {
             if (isOpeningHeading) sb.append(BLOCK_SEPARATOR)
             val headingStart = sb.length
             appendBlock(sb, block, config, indentParagraph)
+            // The block contributed no text of its own: an image whose bytes are null or
+            // don't decode, or an empty heading. Roll the builder all the way back to
+            // blockStart — past the separator just committed for it, and, for an empty
+            // OPENING heading, past its prepended headroom too — so a broken block leaves no
+            // trace: no blank gap opens where a flowing single-newline join was intended, and
+            // a run of broken blocks doesn't stack one blank line per block. `prev`,
+            // `hasEmitted` and `pendingBreak` are all left untouched, so the next real block
+            // sees exactly the state it would have seen had this block never appeared.
+            // Compared against `headingStart`, not `start`: an empty opening heading still has
+            // sb.length > start (the prepended BLOCK_SEPARATOR occupies that gap), so comparing
+            // against `start` would miss it and treat the empty heading as having emitted.
+            if (sb.length == headingStart) {
+                sb.delete(blockStart, sb.length)
+                continue
+            }
             // Record the heading's own char range (past any opening-title headroom, from the
             // first heading character to sb.length) so AndroidMeasuredChapter can map it to the
             // heading's lines for the paginator's keep-heading rule. Only when the heading
@@ -392,6 +420,22 @@ class SpannedChapterBuilder {
             if (style.italic == true) set(AndroidStyleSpan(Typeface.ITALIC))
             if (style.monospace == true) set(TypefaceSpan("monospace"))
 
+            // A footnote/citation marker sitting inline at full size reads as part of the
+            // sentence (see "people.2 A year later") — that's a correctness problem, not
+            // publisher decoration a reader might disable, so sup/sub join the baseline
+            // emphasis above rather than the publisher-styling-gated block below.
+            // SuperscriptSpan/SubscriptSpan only shift the baseline; they do not shrink the
+            // text, so each is paired with a RelativeSizeSpan (0.75f, the conventional
+            // marker-to-body ratio) or the raised marker still reads full-size.
+            if (style.superscript == true) {
+                set(SuperscriptSpan())
+                set(RelativeSizeSpan(SUP_SUB_SIZE_RATIO))
+            }
+            if (style.subscript == true) {
+                set(SubscriptSpan())
+                set(RelativeSizeSpan(SUP_SUB_SIZE_RATIO))
+            }
+
             // The remaining publisher decoration only applies when styling is on; when off
             // these fields are ignored entirely, leaving today's emphasis-only rendering.
             if (config.publisherStyling) {
@@ -451,7 +495,12 @@ class SpannedChapterBuilder {
             }?.let { set(AlignmentSpan.Standard(it)) }
         }
         style.textIndentEm?.let { indent ->
-            set(LeadingMarginSpan.Standard((indent * config.textSizePx).roundToInt(), 0))
+            // Clamped at zero: a negative text-indent is half of the hanging-indent idiom
+            // (`padding-left: 1.5em; text-indent: -1.5em`), and this renderer deliberately ignores
+            // the padding that would compensate for it. Honouring the negative half alone draws the
+            // first line at negative x and clips its opening glyphs off the content box. The parsed
+            // model keeps the true value; only the drawn margin is clamped.
+            set(LeadingMarginSpan.Standard((indent.coerceAtLeast(0f) * config.textSizePx).roundToInt(), 0))
         }
         // lineHeightMultiplier: intentionally ignored — the reader's line spacing always wins.
         // marginTopEm / marginBottomEm: deferred — see KDoc.

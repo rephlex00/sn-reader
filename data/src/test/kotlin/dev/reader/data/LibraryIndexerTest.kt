@@ -646,4 +646,100 @@ class LibraryIndexerTest {
 
         assertThat(extractor.calls.map { File(it).name }).containsExactly("a.epub", "b.cbz", "c.cbr")
     }
+
+    @Test
+    fun `a root that has gone missing deletes nothing`(): Unit = runBlocking {
+        writeEpub("a.epub")
+        writeEpub("b.epub")
+        val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
+        indexer.sync()
+        assertThat(dao.getAllStats()).hasSize(2)
+
+        // The books folder is renamed away (or storage unmounted) between syncs. walkTopDown
+        // yields nothing for it and throws nothing — the rows must survive regardless.
+        val renamed = root.renameTo(File(root.parentFile, "Books-moved"))
+        assertThat(renamed).isTrue()
+        assertThat(root.exists()).isFalse()
+
+        val result = LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+        assertThat(result.removed).isEqualTo(0)
+        assertThat(dao.getAllStats()).hasSize(2)
+    }
+
+    @Test
+    fun `a book genuinely deleted from a live root is still removed`(): Unit = runBlocking {
+        val a = writeEpub("a.epub")
+        writeEpub("b.epub")
+        val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
+        indexer.sync()
+
+        a.delete()
+        val result = LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+        assertThat(result.removed).isEqualTo(1)
+        assertThat(dao.getAllStats().map { it.path }).containsExactly(File(root, "b.epub").path)
+    }
+
+    @Test
+    fun `replacing a book's bytes drops its annotations but keeps them across an mtime-only touch`(): Unit = runBlocking {
+        val file = writeEpub("a.epub", contents = "original")
+        LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+        db.bookmarkDao().insert(
+            BookmarkEntity(
+                bookPath = file.path, spineIndex = 3, charOffset = 120,
+                progressFraction = 0.3f, createdAtMs = 0L,
+            ),
+        )
+        db.highlightDao().insert(
+            HighlightEntity(
+                bookPath = file.path, spineIndex = 3, startOffset = 100, endOffset = 140,
+                text = "a phrase", progressFraction = 0.3f, createdAtMs = 0L,
+            ),
+        )
+
+        // An mtime-only touch is the SAME content: annotations must survive it.
+        file.setLastModified(file.lastModified() + 10_000)
+        LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+        assertThat(db.bookmarkDao().bookmarksFor(file.path)).hasSize(1)
+        assertThat(db.highlightDao().highlightsForBook(file.path)).hasSize(1)
+
+        // Different bytes: the offsets now point into content that no longer exists.
+        file.writeText("a genuinely different and longer edition of the book")
+        LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+        assertThat(db.bookmarkDao().bookmarksFor(file.path)).isEmpty()
+        assertThat(db.highlightDao().highlightsForBook(file.path)).isEmpty()
+        // The row itself survives, with its position reset — unchanged behavior.
+        assertThat(dao.getByPath(file.path)!!.spineIndex).isEqualTo(0)
+    }
+
+    @Test
+    fun `an unreadable subdirectory deletes nothing beneath it`(): Unit = runBlocking {
+        val sub = File(root, "sub").apply { mkdirs() }
+        File(sub, "a.epub").writeText("stub")
+        val indexer = LibraryIndexer(dao, listOf(root), FakeExtractor())
+        indexer.sync()
+        assertThat(dao.getAllStats()).hasSize(1)
+
+        // The root itself stays readable — only the subdirectory beneath it is locked down. This
+        // is the nested form of the same hazard: no SecurityException anywhere, listFiles() just
+        // returns null for that one directory (Android's usual shape for a revoked or
+        // half-revoked all-files grant, which surfaces as EACCES, not an exception).
+        sub.setReadable(false)
+        try {
+            // setReadable(false) silently no-ops when the test runs as a user (e.g. root) that
+            // can always read regardless of the bit. Skip rather than pass vacuously if the
+            // platform refused to honor it.
+            org.junit.Assume.assumeFalse(sub.canRead())
+
+            val result = LibraryIndexer(dao, listOf(root), FakeExtractor()).sync()
+
+            assertThat(result.removed).isEqualTo(0)
+            assertThat(dao.getAllStats()).hasSize(1)
+        } finally {
+            sub.setReadable(true)
+        }
+    }
 }

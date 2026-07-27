@@ -84,4 +84,18 @@ class ComicDocumentTest {
             assertThat(doc.readingDirectionRtl).isFalse()
         }
     }
+
+    @Test fun `lowercase comicinfo_xml is matched case-insensitively`() {
+        val f = tmp("lowercase")
+        buildCbz(f, mapOf(
+            "001.jpg" to PAGE_BYTES,
+            "comicinfo.xml" to ("<ComicInfo><Series>Naruto</Series><Number>25</Number>" +
+                "<Writer>Kishimoto</Writer><Manga>YesAndRightToLeft</Manga></ComicInfo>").toByteArray(),
+        ))
+        ComicDocument.open(f).use { doc ->
+            assertThat(doc.metadata.title).isEqualTo("Naruto #25")
+            assertThat(doc.metadata.author).isEqualTo("Kishimoto")
+            assertThat(doc.readingDirectionRtl).isTrue()
+        }
+    }
 }

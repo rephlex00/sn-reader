@@ -156,8 +156,39 @@ class ChapterScrubberView @JvmOverloads constructor(
     private var chapterStarts: List<Float> = emptyList()
     private var progress: Float = 0f
     private var bookmarkFractions: List<Float> = emptyList()
+
+    /** The bookmark fractions currently drawn — a test asserts glyph placement without a screenshot. */
+    internal val bookmarkFractionsForTest: List<Float> get() = bookmarkFractions
     private var generatedChapters: Set<Int> = emptySet()
-    private var previewsEnabled: Boolean = true
+    private var generationStateVisible: Boolean = true
+
+    // Pixel-space geometry, rebuilt only when the book, bookmarks, generation state, or size
+    // change — never on a thumb move. onDraw runs on every ACTION_MOVE, and rebuilding all of
+    // this per frame was the whole steady-state allocation cost of a drag. Cache key: the
+    // geometry below is in pixels, so it is only valid for the width and padding it was computed
+    // at — onSizeChanged covers a resize, but View.setPadding can shift left/right with no size
+    // change and therefore no callback.
+    private var cachedChapterXs: List<Float>? = null
+    private var cachedClusterRuns: List<List<Int>>? = null
+    private var cachedTrackSegments: List<TrackSegment>? = null
+    private var cachedBookmarkGlyphs: List<BookmarkGlyph>? = null
+    private var cachedWidth: Int = -1
+    private var cachedPaddingLeft: Int = -1
+    private var cachedPaddingRight: Int = -1
+
+    /** The cached pixel-space chapter positions — a test asserts they survive a thumb move. */
+    internal val chapterXsForTest: List<Float>? get() = cachedChapterXs
+
+    /** One Path, rewound per glyph rather than a fresh allocation per bookmark per frame. */
+    private val bookmarkPath = Path()
+
+    /** Drops the cached geometry so the next draw rebuilds it. */
+    private fun invalidateGeometry() {
+        cachedChapterXs = null
+        cachedClusterRuns = null
+        cachedTrackSegments = null
+        cachedBookmarkGlyphs = null
+    }
 
     /** True from ACTION_DOWN through the gesture's commit/cancel (including the PENDING_COMMIT
      *  grace window — see the gesture state machine below). Drives the thumb's size (the ONLY
@@ -216,6 +247,7 @@ class ChapterScrubberView @JvmOverloads constructor(
      * one whole-book fraction per chapter start, which becomes the tick marks.
      */
     fun setBook(chapterStartFractions: List<Float>, progress: Float) {
+        invalidateGeometry()
         this.chapterStarts = chapterStartFractions
         this.progress = progress.coerceIn(0f, 1f)
         invalidate()
@@ -226,6 +258,7 @@ class ChapterScrubberView @JvmOverloads constructor(
      *  physical distance on screen regardless of book length. Informational only: glyphs are not
      *  tap targets in v2; snap-to-tick and glyph-tap would fight over the same fat finger. */
     fun setBookmarks(fractions: List<Float>) {
+        invalidateGeometry()
         bookmarkFractions = fractions
         invalidate()
     }
@@ -239,15 +272,27 @@ class ChapterScrubberView @JvmOverloads constructor(
     /** The set of chapter indices whose preview thumbnails already exist — those track segments
      *  draw solid; the rest draw as pending dots, showing generation-in-progress. */
     fun setGeneratedChapters(generated: Set<Int>) {
+        invalidateGeometry()
         generatedChapters = generated
         invalidate()
     }
 
-    /** When previews are off, every segment draws solid — pending dots only mean something while a
-     *  preview strip is actually being built. */
-    fun setPreviewsEnabled(enabled: Boolean) {
-        previewsEnabled = enabled
+    /** Whether pending-generation state (the dashed/dotted track, the pending-dot ticks) can be
+     *  shown at all. When false, every segment draws solid regardless of [generatedChapters] —
+     *  for a caller with no generation phase (comics: every page always exists), there is no
+     *  pending state to show. When true, [generatedChapters] decides solid vs pending per chapter,
+     *  as it does for the EPUB reader's background strip generation. */
+    fun setGenerationStateVisible(visible: Boolean) {
+        invalidateGeometry()
+        generationStateVisible = visible
         invalidate()
+    }
+
+    // The geometry caches are all in pixel space (chapterXs, trackSegments' left/right), which
+    // depend on width/padding — a resize (including the first layout pass) must rebuild them.
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        invalidateGeometry()
     }
 
     // The track's ends sit at the view's own padding, not inset by the thumb radius: the XML gives
@@ -518,18 +563,32 @@ class ChapterScrubberView @JvmOverloads constructor(
         val left = paddingLeft.toFloat()
         val right = width - paddingRight.toFloat()
         if (right <= left) return
+
+        // Cache key: the geometry below is in pixels, so it is only valid for the width and
+        // padding it was computed at. onSizeChanged covers a resize, but View.setPadding can
+        // shift left/right with no size change and therefore no callback — three int compares
+        // per frame close that hole for good, and subsume onSizeChanged entirely.
+        if (cachedWidth != width || cachedPaddingLeft != paddingLeft || cachedPaddingRight != paddingRight) {
+            invalidateGeometry()
+            cachedWidth = width
+            cachedPaddingLeft = paddingLeft
+            cachedPaddingRight = paddingRight
+        }
+
         // Raised off height / 2f: the lower portion of the (taller, 88dp) view is inert
         // finger-buffer, so a thumb drifting down while dragging stays on glass, off the bezel.
         val centreY = height * 0.35f
 
-        // allSolid when previews are off OR every chapter is generated (a complete/absent strip):
-        val allSolid = !previewsEnabled ||
+        // allSolid when generation state is hidden OR every chapter is generated (a complete/absent strip):
+        val allSolid = !generationStateVisible ||
             (chapterStarts.isNotEmpty() && generatedChapters.size >= chapterStarts.size)
 
         // Track: a solid STEEL rounded-cap line reads as filled-in; a pending chapter draws as a
         // row of round dots instead — dots read as "loading", dashes read as "debug". The boundary
         // between them is crisp (no taper) because each segment draws independently, back to back.
-        for (seg in trackSegments(chapterStarts, generatedChapters, allSolid, left, right)) {
+        val segments = cachedTrackSegments
+            ?: trackSegments(chapterStarts, generatedChapters, allSolid, left, right).also { cachedTrackSegments = it }
+        for (seg in segments) {
             if (seg.solid) {
                 canvas.drawLine(seg.startX, centreY, seg.endX, centreY, trackPaint)
             } else {
@@ -540,13 +599,14 @@ class ChapterScrubberView @JvmOverloads constructor(
         // Chapter ticks draw over the track. Dense runs (front/back matter) collapse to one quiet
         // cluster mark — a drawing rule only, so the snap detent below still targets every true
         // chapter position even for a tick absorbed into a cluster (see clusteredTickMarks).
-        val chapterXs = chapterStarts.map { xFor(it) }
+        val chapterXs = cachedChapterXs ?: chapterStarts.map { xFor(it) }.also { cachedChapterXs = it }
         val snapIdx = if (dragging) currentSnapIndex else null
-        for (run in clusterRuns(chapterXs, tickClusterMinGapPx)) {
+        val runs = cachedClusterRuns ?: clusterRuns(chapterXs, tickClusterMinGapPx).also { cachedClusterRuns = it }
+        for (run in runs) {
             if (run.size == 1) {
                 val idx = run[0]
                 if (idx == snapIdx) continue // redrawn below as the tall ink detent instead
-                val pending = previewsEnabled && !allSolid && idx !in generatedChapters
+                val pending = generationStateVisible && !allSolid && idx !in generatedChapters
                 drawChapterTick(canvas, chapterXs[idx], centreY, if (pending) mistPaint else graphitePaint)
             } else {
                 val meanX = run.map { chapterXs[it] }.average().toFloat()
@@ -556,7 +616,9 @@ class ChapterScrubberView @JvmOverloads constructor(
 
         // Bookmarks hang above the ticks; near-coincident ones merge to one stacked glyph — a
         // second MIST ribbon offset behind the STEEL one, never a count badge.
-        for (glyph in bookmarkGlyphs(bookmarkFractions.map { xFor(it) }, bookmarkMergeMinGapPx)) {
+        val glyphs = cachedBookmarkGlyphs
+            ?: bookmarkGlyphs(bookmarkFractions.map { xFor(it) }, bookmarkMergeMinGapPx).also { cachedBookmarkGlyphs = it }
+        for (glyph in glyphs) {
             val topY = centreY - bookmarkTopAboveBaselinePx
             if (glyph.stacked) {
                 drawBookmarkGlyph(canvas, glyph.x - bookmarkStackOffsetPx, topY - bookmarkStackOffsetPx, mistPaint)
@@ -633,15 +695,14 @@ class ChapterScrubberView @JvmOverloads constructor(
         val halfWidth = bookmarkWidthPx / 2f
         val bottomY = topY + bookmarkHeightPx
         val notchY = bottomY - bookmarkNotchPx
-        val path = Path().apply {
-            moveTo(x - halfWidth, topY)
-            lineTo(x + halfWidth, topY)
-            lineTo(x + halfWidth, bottomY)
-            lineTo(x, notchY)
-            lineTo(x - halfWidth, bottomY)
-            close()
-        }
-        canvas.drawPath(path, paint)
+        bookmarkPath.rewind()
+        bookmarkPath.moveTo(x - halfWidth, topY)
+        bookmarkPath.lineTo(x + halfWidth, topY)
+        bookmarkPath.lineTo(x + halfWidth, bottomY)
+        bookmarkPath.lineTo(x, notchY)
+        bookmarkPath.lineTo(x - halfWidth, bottomY)
+        bookmarkPath.close()
+        canvas.drawPath(bookmarkPath, paint)
     }
 
     companion object {

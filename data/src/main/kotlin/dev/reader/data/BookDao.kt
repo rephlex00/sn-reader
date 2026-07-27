@@ -2,6 +2,7 @@ package dev.reader.data
 
 import androidx.room.Dao
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
@@ -114,6 +115,29 @@ interface BookDao {
      */
     @Query("UPDATE books SET rightToLeftOverride = :rightToLeftOverride WHERE path = :path")
     suspend fun updateRtlOverride(path: String, rightToLeftOverride: Boolean?)
+
+    /**
+     * Drops every annotation anchored to [bookPath]. Called by [LibraryIndexer] when a book's BYTES
+     * change: `spineIndex`/`charOffset`/`startOffset`/`endOffset` are coordinates into file content,
+     * so a replaced file makes every one of them meaningless. The row's own position is already
+     * reset for exactly this reason; without this its children would keep pointing into bytes that
+     * no longer exist, jumping to arbitrary places and washing the wrong text.
+     *
+     * Lives on [BookDao] rather than the annotation DAOs because the indexer owns this policy and
+     * holds only this DAO — and because both deletes must land together, which the `@Transaction`
+     * below guarantees. A whole-book DELETE goes through the FK cascade instead and never comes here.
+     */
+    @Transaction
+    suspend fun clearAnnotationsFor(bookPath: String) {
+        deleteBookmarksForBook(bookPath)
+        deleteHighlightsForBook(bookPath)
+    }
+
+    @Query("DELETE FROM bookmarks WHERE bookPath = :bookPath")
+    suspend fun deleteBookmarksForBook(bookPath: String)
+
+    @Query("DELETE FROM highlights WHERE bookPath = :bookPath")
+    suspend fun deleteHighlightsForBook(bookPath: String)
 
     @Query("SELECT * FROM books ORDER BY title COLLATE NOCASE ASC")
     fun observeAllByTitle(): Flow<List<BookEntity>>

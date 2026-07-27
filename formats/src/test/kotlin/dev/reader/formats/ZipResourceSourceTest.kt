@@ -122,4 +122,48 @@ class ZipResourceSourceTest {
             assertThat(src.entries()).containsExactly("b/2.txt", "a/1.txt", "ComicInfo.xml")
         }
     }
+
+    @Test
+    fun `a UTF-16 big-endian entry decodes by its BOM`() {
+        val bytes = "héllo".toByteArray(Charsets.UTF_16BE).let { byteArrayOf(0xFE.toByte(), 0xFF.toByte()) + it }
+        assertThat(decodeText(bytes)).isEqualTo("héllo")
+    }
+
+    @Test
+    fun `a UTF-16 little-endian entry decodes by its BOM`() {
+        val bytes = "héllo".toByteArray(Charsets.UTF_16LE).let { byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + it }
+        assertThat(decodeText(bytes)).isEqualTo("héllo")
+    }
+
+    @Test
+    fun `a UTF-8 BOM is stripped rather than becoming a leading zero-width character`() {
+        val bytes = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + "<?xml".toByteArray(Charsets.UTF_8)
+        assertThat(decodeText(bytes)).isEqualTo("<?xml")
+    }
+
+    @Test
+    fun `plain UTF-8 with no BOM is unchanged`() {
+        assertThat(decodeText("<?xml version=\"1.0\"?>".toByteArray(Charsets.UTF_8)))
+            .isEqualTo("<?xml version=\"1.0\"?>")
+    }
+
+    @Test
+    fun `readText decodes a UTF-16BE container_xml by its BOM through the real zip wiring`() {
+        // The decodeText tests above exercise the helper directly; this pins the wiring through
+        // ZipResourceSource.readText itself — the path a real BOM-marked container.xml or OPF
+        // actually takes — so a regression that stopped readText from calling decodeText at all
+        // would still be caught.
+        val content = "<?xml version=\"1.0\"?><container>héllo</container>"
+        val bytes = byteArrayOf(0xFE.toByte(), 0xFF.toByte()) + content.toByteArray(Charsets.UTF_16BE)
+        val file = temp.newFile("utf16.zip")
+        ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            zip.putNextEntry(ZipEntry("META-INF/container.xml"))
+            zip.write(bytes)
+            zip.closeEntry()
+        }
+
+        val text = ZipResourceSource(file).use { it.readText("META-INF/container.xml") }
+
+        assertThat(text).isEqualTo(content)
+    }
 }

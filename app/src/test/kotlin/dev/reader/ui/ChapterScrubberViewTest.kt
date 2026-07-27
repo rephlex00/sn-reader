@@ -1,6 +1,8 @@
 package dev.reader.ui
 
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
@@ -12,9 +14,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ChapterScrubberViewTest {
 
     // Attached to a real Activity window, not just laid out in isolation: the grace-window timer
@@ -655,5 +660,64 @@ class ChapterScrubberViewTest {
 
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
         assertThat(commits).isEqualTo(1)              // the timer was disarmed — no double commit
+    }
+
+    @Test
+    fun `drag geometry is computed once and reused across draws`() {
+        val view = ChapterScrubberView(RuntimeEnvironment.getApplication())
+        view.setBook(listOf(0f, 0.25f, 0.5f, 0.75f), progress = 0.1f)
+        view.setBookmarks(listOf(0.3f, 0.6f))
+        view.layout(0, 0, 1404, 165)
+
+        val canvas = Canvas(Bitmap.createBitmap(1404, 165, Bitmap.Config.ARGB_8888))
+        view.draw(canvas)
+        val first = view.chapterXsForTest
+
+        // A thumb move is the only thing a drag changes; the geometry must not be rebuilt.
+        view.setProgress(0.9f)
+        view.draw(canvas)
+
+        assertThat(view.chapterXsForTest).isSameInstanceAs(first)
+
+        // A real content change must rebuild it.
+        view.setBookmarks(listOf(0.4f))
+        view.draw(canvas)
+        assertThat(view.chapterXsForTest).isNotSameInstanceAs(first)
+    }
+
+    @Test
+    fun `geometry cache invalidates and recomputes on resize`() {
+        val view = ChapterScrubberView(RuntimeEnvironment.getApplication())
+        view.setBook(listOf(0f, 0.25f, 0.5f), progress = 0f)
+
+        // Lay out and draw at width 1404
+        view.layout(0, 0, 1404, 165)
+        val canvas1 = Canvas(Bitmap.createBitmap(1404, 165, Bitmap.Config.ARGB_8888))
+        view.draw(canvas1)
+        val firstXs = view.chapterXsForTest
+
+        assertThat(firstXs).isNotNull()
+        val firstValues = firstXs!!.toList()
+
+        // Re-lay out at narrower width 800
+        view.layout(0, 0, 800, 165)
+        val canvas2 = Canvas(Bitmap.createBitmap(800, 165, Bitmap.Config.ARGB_8888))
+        view.draw(canvas2)
+        val secondXs = view.chapterXsForTest
+
+        assertThat(secondXs).isNotNull()
+        val secondValues = secondXs!!.toList()
+
+        // Cache must be invalidated (different instance)
+        assertThat(secondXs).isNotSameInstanceAs(firstXs)
+
+        // X positions must actually differ due to width change
+        assertThat(secondValues).isNotEqualTo(firstValues)
+        // Narrower width should produce proportionally smaller x positions for mid-fractions
+        assertThat(secondValues[1]).isLessThan(firstValues[1])
+        assertThat(secondValues[2]).isLessThan(firstValues[2])
+        // Verify the scaling: 800/1404 ≈ 0.57
+        assertThat(secondValues[1]).isWithin(5f).of(firstValues[1] * (800f / 1404f))
+        assertThat(secondValues[2]).isWithin(5f).of(firstValues[2] * (800f / 1404f))
     }
 }

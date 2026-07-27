@@ -81,6 +81,48 @@ class SpannedChapterBuilderTest {
     }
 
     @Test
+    fun `a footnote marker's superscript is baseline emphasis, not gated on publisher styling`() {
+        // A footnote/citation marker rendered inline at full size reads as part of the
+        // sentence, not as a raised, smaller marker — that's a correctness bug, not
+        // publisher decoration a reader might disable. So, like bold/italic/monospace,
+        // sup/sub are honored regardless of config.publisherStyling.
+        val chapter = builder.build(
+            listOf(para("people.2 A year later", listOf(StyleSpan(7, 8, InlineStyle(superscript = true))))),
+            config.copy(publisherStyling = false),
+        )
+        val supSpans = chapter.text.getSpans(0, chapter.text.length, android.text.style.SuperscriptSpan::class.java)
+        val sizeSpans = chapter.text.getSpans(0, chapter.text.length, RelativeSizeSpan::class.java)
+
+        assertThat(supSpans).hasLength(1)
+        assertThat(chapter.text.getSpanStart(supSpans[0])).isEqualTo(7)
+        assertThat(chapter.text.getSpanEnd(supSpans[0])).isEqualTo(8)
+
+        assertThat(sizeSpans).hasLength(1)
+        assertThat(sizeSpans[0].sizeChange).isEqualTo(0.75f)
+        assertThat(chapter.text.getSpanStart(sizeSpans[0])).isEqualTo(7)
+        assertThat(chapter.text.getSpanEnd(sizeSpans[0])).isEqualTo(8)
+    }
+
+    @Test
+    fun `a footnote marker's subscript is baseline emphasis, not gated on publisher styling`() {
+        val chapter = builder.build(
+            listOf(para("H2O is water", listOf(StyleSpan(1, 2, InlineStyle(subscript = true))))),
+            config.copy(publisherStyling = false),
+        )
+        val subSpans = chapter.text.getSpans(0, chapter.text.length, android.text.style.SubscriptSpan::class.java)
+        val sizeSpans = chapter.text.getSpans(0, chapter.text.length, RelativeSizeSpan::class.java)
+
+        assertThat(subSpans).hasLength(1)
+        assertThat(chapter.text.getSpanStart(subSpans[0])).isEqualTo(1)
+        assertThat(chapter.text.getSpanEnd(subSpans[0])).isEqualTo(2)
+
+        assertThat(sizeSpans).hasLength(1)
+        assertThat(sizeSpans[0].sizeChange).isEqualTo(0.75f)
+        assertThat(chapter.text.getSpanStart(sizeSpans[0])).isEqualTo(1)
+        assertThat(chapter.text.getSpanEnd(sizeSpans[0])).isEqualTo(2)
+    }
+
+    @Test
     fun `offsets spans of later blocks by the preceding text`() {
         val chapter = builder.build(
             listOf(para("One."), para("A bold word.", listOf(StyleSpan(2, 6, InlineStyle(bold = true))))),
@@ -116,11 +158,9 @@ class SpannedChapterBuilderTest {
             config,
         )
 
-        // "One." + "\n\n" (image's separator; the image is not a paragraph) + "" (the
-        // image's null bytes append no text) + "\n" (both "One." and "Two." are flowing
-        // body paragraphs, so they still join with a single newline across the text-free
-        // image) = offset 7.
-        assertThat(chapter.breakOffsets).containsExactly(7)
+        // "One." + "\n" (flowing-paragraph join, the text-free image contributing nothing
+        // at all, separator included) = offset 5.
+        assertThat(chapter.breakOffsets).containsExactly(5)
         val offset = chapter.breakOffsets.single()
         assertThat(chapter.text.subSequence(offset, chapter.text.length).toString()).isEqualTo("Two.")
     }
@@ -548,6 +588,31 @@ class SpannedChapterBuilderTest {
         )
         assertThat(chapter.text.getSpans(0, chapter.text.length, ImageSpan::class.java)).isEmpty()
         assertThat(chapter.text.toString()).isEmpty()
+    }
+
+    @Test
+    fun `an image that emits nothing leaves no separator between the paragraphs around it`() {
+        val chapter = builder.build(
+            listOf(para("One."), Block.Image("img/missing.png", bytes = null), para("Two.")),
+            config,
+        )
+        // The broken image is not there at all: the two body paragraphs join as neighbours.
+        assertThat(chapter.text.toString()).isEqualTo("One.\nTwo.")
+    }
+
+    @Test
+    fun `a run of broken images does not stack blank lines`() {
+        val chapter = builder.build(
+            listOf(
+                para("One."),
+                Block.Image("img/missing1.png", bytes = null),
+                Block.Image("img/missing2.png", bytes = null),
+                Block.Image("img/missing3.png", bytes = null),
+                para("Two."),
+            ),
+            config,
+        )
+        assertThat(chapter.text.toString()).isEqualTo("One.\nTwo.")
     }
 
     @Test
