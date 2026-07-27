@@ -37,13 +37,15 @@ import org.robolectric.annotation.GraphicsMode
  * [SuperscriptSpan] (via a baseline-shifting `translate`, see `TextLine.handleRun`/`drawTextRun`
  * in AOSP) actually surface at draw time.
  *
- * Extensive investigation — driving the exact pipeline named above with a paragraph carrying 15
- * markers spread across three pages, recording every `drawTextRun` call's paint size — could not
- * reproduce the reported symptom: every marker on every page, first or not, drew at the shrunk
- * size on every attempt, including this one. This test is therefore NOT a red-then-green
- * regression test for a fix; there is no code change to pin. It is a permanent guard recording
- * exactly what was verified correct here, so a future change to the builder/measurer/paginator/
- * PageView draw path that broke this invariant would be caught.
+ * RESOLVED: the device symptom was never in this pipeline — which is exactly what this test's
+ * green reproductions said. The root cause sat one stage upstream, in the XHTML parse: jsoup's
+ * HTML parser leaves a self-closed page anchor (`<a id="page_70"/>`) OPEN, and the misnesting
+ * recovery at the next `<a>` start tag — the next footnote marker's own link — strips that
+ * marker's `<sup>` before any span is built. The page-boundary correlation was a coincidence of
+ * where those markers landed on the panel. See `expandSelfClosingTags` in :formats
+ * `XhtmlBlockParser.kt` and the regression tests beside it. This test remains as a guard on
+ * what it always verified: the builder/measurer/paginator/PageView draw path renders every sup
+ * marker shrunk, regardless of where page breaks fall.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)

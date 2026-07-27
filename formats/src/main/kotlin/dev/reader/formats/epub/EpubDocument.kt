@@ -183,8 +183,10 @@ class EpubDocument private constructor(
         // Parsed once here and threaded through both cssFor (which mines <head>/<body>
         // for stylesheet references) and blockParser.parse (which walks <body> for
         // content) — a second Jsoup.parse of the same chapter would double the HTML
-        // parsing cost of every chapter load for no benefit.
-        val doc = Jsoup.parse(xhtml)
+        // parsing cost of every chapter load for no benefit. expandSelfClosingTags first:
+        // XHTML's self-closed non-void elements (`<a id="page_70"/>`) otherwise stay open
+        // under the HTML parse and swallow the following text — see its KDoc.
+        val doc = Jsoup.parse(expandSelfClosingTags(xhtml))
         val css = cssFor(doc, item.href)
         // The builder (and AndroidTextMeasurer) can't reach the zip — ResourceSource is
         // private to this class — so the image bytes are resolved HERE and carried on the

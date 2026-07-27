@@ -57,6 +57,27 @@ class XhtmlBlockParserTest {
     }
 
     @Test
+    fun `a self-closing page anchor does not swallow the following footnote marker's sup`() {
+        // Print-edition page anchors (`<a id="page_70"/>`) are legal empty elements in
+        // XHTML, but `a` is not a void element in HTML, so an HTML parse leaves the
+        // anchor OPEN. It swallows the text after it, and the misnesting recovery that
+        // runs at the next `<a>` start tag — the next endnote marker's own link — leaves
+        // that marker's digits OUTSIDE its `<sup>`. Every marker after that one is fine,
+        // which is exactly the on-device symptom this pins: one full-size baseline marker
+        // per page anchor, all its neighbours correct.
+        val blocks = parse(
+            """<p>alpha <a id="page_70"/>beta.<sup><a href="e.html#n2" id="en2">2</a></sup>""" +
+                """ gamma.<sup><a href="e.html#n3" id="en3">3</a></sup> end</p>""",
+        )
+        val text = (blocks.single() as Block.Paragraph).text
+
+        assertThat(text.text).isEqualTo("alpha beta.2 gamma.3 end")
+        val supTexts = text.spans.filter { it.style.superscript == true }
+            .map { text.text.substring(it.start, it.end) }
+        assertThat(supTexts).containsExactly("2", "3")
+    }
+
+    @Test
     fun `nested emphasis produces overlapping spans`() {
         val blocks = parse("<p><b>bold <i>both</i></b></p>")
         val text = (blocks.single() as Block.Paragraph).text

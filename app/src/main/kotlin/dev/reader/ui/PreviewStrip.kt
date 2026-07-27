@@ -94,8 +94,12 @@ private fun sha256Hex(text: String): String {
  * The lesson: this constant must be bumped whenever the text pipeline changes pagination or glyph
  * metrics, even when no [RenderConfig] field changed. [configHash] cannot see a renderer code
  * change; only this version can.
+ *
+ * "strip-v3": expandSelfClosingTags stopped page anchors from eating the following footnote
+ * marker's sup span, so those markers now measure 0.75x — line breaks and pagination shift in
+ * every endnote-heavy book with print-edition page anchors.
  */
-private const val INDEX_VERSION = "strip-v2"
+private const val INDEX_VERSION = "strip-v3"
 
 /** Flat text, no JSON dependency: a version line, a header line, then one line per entry. */
 fun StripIndex.serialize(): String = buildString {

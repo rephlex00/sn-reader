@@ -3,6 +3,7 @@ package dev.reader.formats.epub
 import android.graphics.Typeface
 import android.text.Spanned
 import android.text.style.StyleSpan
+import android.text.style.SuperscriptSpan
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.RenderConfig
 import dev.reader.formats.ResourceSource
@@ -438,6 +439,38 @@ class EpubDocumentTest {
             val span = italicSpans.first()
             assertThat(text.subSequence(text.getSpanStart(span), text.getSpanEnd(span)).toString())
                 .isEqualTo("word")
+        }
+    }
+
+    @Test
+    fun `a self-closing page anchor does not strip the next endnote marker's superscript`() {
+        // Same corruption XhtmlBlockParserTest pins at the parser level, but through
+        // readBlocks' own Jsoup parse — the render path a real book actually takes.
+        val file = temp.newFile("anchors.epub")
+        buildEpub(file) {
+            entry("META-INF/container.xml", CONTAINER_XML)
+            entry("OEBPS/content.opf", """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Anchored</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>""")
+            entry(
+                "OEBPS/text/ch1.xhtml",
+                """<html><body><p>alpha <a id="page_70"/>beta.""" +
+                    """<sup><a href="e.html#n2" id="en2">2</a></sup> gamma.""" +
+                    """<sup><a href="e.html#n3" id="en3">3</a></sup> end</p></body></html>""",
+            )
+        }.close()
+
+        EpubDocument.open(file, measurer).use { doc ->
+            val text = (doc.chapter(0, config).measured as AndroidMeasuredChapter).layout.text as Spanned
+            val supTexts = text.getSpans(0, text.length, SuperscriptSpan::class.java)
+                .map { text.subSequence(text.getSpanStart(it), text.getSpanEnd(it)).toString() }
+
+            assertThat(supTexts).containsExactly("2", "3")
         }
     }
 
