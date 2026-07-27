@@ -1481,20 +1481,9 @@ class ReaderActivityTest {
         // BEFORE cancelling anything — this is the synchronous write, unaffected by the repair.
         scrubber.onScrubCommit?.invoke(0.9f, null)
 
-        // Wait WITHOUT pumping the main looper, which is what makes this observation deterministic
-        // rather than a race. The down-payment is written synchronously inside onScrubCommitted,
-        // before the commit coroutine is even launched, and it rides positionWriteScope
-        // (Dispatchers.IO.limitedParallelism(1)) — a real background thread — so it lands with no
-        // main-thread help at all. The refining coroutine rides lifecycleScope on the MAIN
-        // dispatcher, so under Robolectric's paused looper it cannot execute a single line until
-        // this test idles that looper. Not idling therefore freezes the refinement outright: the
-        // row can only ever hold the down-payment here.
-        //
-        // Idling instead (as this once did) let the coroutine free-run against the wait, and both
-        // the down-payment and the resolved write satisfy "spineIndex changed" — so on a slow or
-        // loaded machine the first row this predicate managed to read was already the RESOLVED one,
-        // and the offset-0 assertion below failed. That is a CI failure this test earned, not a
-        // fluke: it was asserting on a transient it had no way to pin.
+        // Not idling pins the commit at its pagination suspension, so the row read here can only
+        // be the down-payment — see [waitWithoutIdling]. Idling instead let the refined write win
+        // the race and the offset-0 assertion below read a real page offset.
         var downPayment: BookEntity? = null
         waitWithoutIdling {
             downPayment = rowFor(app, book.path)
@@ -1534,9 +1523,15 @@ class ReaderActivityTest {
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
         scrubber.onScrubCommit?.invoke(0.9f, null)
-        idleUntil { rowFor(app, book.path)!!.spineIndex != origin.spineIndex } // down-payment landed
+        // Not idling holds the commit at its pagination suspension — exactly where a teardown's
+        // cancellation lands — so the cancel below is guaranteed to catch it unresolved. Idling
+        // let it resolve first, and a resolved commit is correctly never repaired, so the repair
+        // wait below timed out. See [waitWithoutIdling].
+        waitWithoutIdling { rowFor(app, book.path)!!.spineIndex != origin.spineIndex }
         activity.cancelScrubJobForTest()
 
+        // Idling is wanted from here on: the cancelled coroutine's `finally` — and the repair it
+        // writes — can only run once the looper delivers its resumption.
         idleUntil { activity.scrubIdleForTest }
         idleUntil { rowFor(app, book.path)!!.spineIndex == origin.spineIndex }
 
@@ -1567,7 +1562,9 @@ class ReaderActivityTest {
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
         scrubber.onScrubCommit?.invoke(0.9f, null)
-        idleUntil { rowFor(app, book.path)!!.spineIndex != originChapter } // down-payment landed
+        // Not idling keeps the pagination genuinely in flight for the teardown below, and keeps
+        // the coarse down-payment from being refined first — see [waitWithoutIdling].
+        waitWithoutIdling { rowFor(app, book.path)!!.spineIndex != originChapter }
 
         // Teardown while the pagination is still in flight — onDestroy cancels lifecycleScope,
         // landing the coroutine's `finally` exactly where a real double-Back/swipe-away would.
@@ -1595,7 +1592,9 @@ class ReaderActivityTest {
         // Lift-off on a distant chapter writes the down-payment, then the commit is cancelled
         // before its pagination can refine it — exactly what a second touch on the track does.
         activity.commitScrubForTest(fraction = 0.9f)
-        idleUntil { rowFor(app, book.path)!!.spineIndex != before.spineIndex } // down-payment landed
+        // Not idling guarantees the cancel below lands on an unresolved commit — see
+        // [waitWithoutIdling].
+        waitWithoutIdling { rowFor(app, book.path)!!.spineIndex != before.spineIndex }
         activity.cancelScrubJobForTest()
         idleUntil { activity.scrubIdleForTest }
         idleUntil { rowFor(app, book.path)!!.spineIndex == before.spineIndex }
@@ -1632,7 +1631,10 @@ class ReaderActivityTest {
         // Snap onto the empty chapter 1. Down-payment (1, 0) fires on the spine-index gate alone,
         // before the walk below ever runs.
         activity.commitScrubForTest(fraction = 0.3f, snappedChapter = 1)
-        idleUntil { rowFor(app, book.path)!!.spineIndex == 1 } // down-payment landed
+        // The (1, 0) down-payment is a transient here — the repair overwrites it with the origin
+        // moments later — so it can only be observed with the commit held still. See
+        // [waitWithoutIdling].
+        waitWithoutIdling { rowFor(app, book.path)!!.spineIndex == 1 }
         idleUntil { activity.scrubIdleForTest }
         idleUntil { rowFor(app, book.path)!!.spineIndex == origin.spineIndex }
 
@@ -2884,10 +2886,30 @@ class ReaderActivityTest {
         check(condition()) { "condition never became true within ${timeoutMs}ms" }
     }
 
-    /** Like [idleUntil], but deliberately never pumps the main looper — for waiting on a real
-     *  generation's background-thread side effect (e.g. a strip landing on disk) without draining
-     *  its queued `runOnUiThread` posts, which a test needs to stay queued until a config change
-     *  has made their token stale. */
+    /**
+     * Like [idleUntil], but deliberately never pumps the main looper. Two uses, one principle:
+     * pumping the looper is what lets main-dispatched work advance, so NOT pumping pins that work
+     * exactly where it is while a background-thread side effect is waited on.
+     *
+     * 1. Waiting for a real generation's background side effect (e.g. a strip landing on disk)
+     *    without draining its queued `runOnUiThread` posts, which a test needs to stay queued
+     *    until a config change has made their token stale.
+     *
+     * 2. Waiting for a scrub commit's **down-payment** row. The down-payment rides
+     *    `positionWriteScope` (`Dispatchers.IO.limitedParallelism(1)`) — a real thread — so it
+     *    lands with no main-thread help at all. The commit coroutine that would overwrite it rides
+     *    `lifecycleScope`, i.e. `Dispatchers.Main.immediate`: its body runs inline as far as the
+     *    off-main pagination, then can only resume via a post back to Main, which Robolectric's
+     *    paused looper will not deliver until something idles it. So not idling holds the commit
+     *    at that pagination suspension — precisely where a teardown or a second touch would cancel
+     *    it — and guarantees the row still holds the down-payment when it is read.
+     *
+     * Using [idleUntil] for case 2 is a race, and it is the race that broke a release build: the
+     * commit is driven forward by the very wait meant to observe it standing still, so on a loaded
+     * machine it RESOLVES first. A resolved commit is correctly never repaired and its refined
+     * write replaces the coarse one — so the test then either reads the wrong offset or waits
+     * forever for a repair that will never come.
+     */
     private fun waitWithoutIdling(timeoutMs: Long = 5_000, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (!condition() && System.currentTimeMillis() < deadline) {
