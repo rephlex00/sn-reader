@@ -33,7 +33,7 @@ app uses **no measurable CPU at all**.
   drag, and **↩** to jump back — a progress bar at the foot of the page marks where the current
   chapter ends
 * **Comics too** — CBZ and zip-backed CBR, one page per screen with per-book reading direction for
-  manga, in the same library as your books
+  manga, in the same library as your books and with the same timeline, previews and bookmarks
 * **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for
   speed; menus repaint quickly too, without touching the page's own crisp refresh
 
@@ -48,7 +48,7 @@ archive does not open yet. No PDF.
 **2. Install it over USB.**
 
 ```
-adb install -r sn-reader-2026.07.4.apk
+adb install -r sn-reader-2026.07.5.apk
 ```
 
 Debug mode needs to be on first. It lives in the Supernote's own Settings under security and
@@ -192,6 +192,12 @@ follows the archive's `ComicInfo.xml`, and you can flip it per book for manga.
 
 Comics sit in the same library as your books, with the first page as the cover and the same
 progress badge. Your place is kept per comic, and bookmarks work by page.
+
+The reading chrome is the one you already know: a timeline along the bottom that you drag to move
+through the comic, a floating preview of the page you would land on, the page readout above it, **↩**
+to jump back after a scrub or a bookmark, and the same bookmarks panel. A comic has no chapters, so
+the track is one plain run rather than a ticked one, and previews are decoded as you drag instead of
+rendered ahead of time.
 
 Reader decides what a file really is by looking inside it, not by trusting the extension — so a
 comic named `.cbr` that was actually written as a zip opens without complaint. A **genuine RAR**

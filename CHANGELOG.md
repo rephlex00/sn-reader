@@ -4,6 +4,72 @@ Notable changes, newest first. Versions are `YYYY.MM.build` — the year and mon
 plus a counter within that month. Each release's APK is on the
 [Releases page](https://github.com/rephlex00/sn-reader/releases).
 
+## 2026.07.5
+
+Mostly a repair release, from an audit of the whole app: a library that could forget your books, a
+handful of readable books that refused to open, footnote markers set wrong, and a good deal of work
+the reader was doing when it should have been sitting still.
+
+### Comics get the reader's chrome
+
+A comic now carries the same reading furniture as a book, rather than a plainer version of it.
+
+* **A timeline you can drag**, with the page readout above it and a floating preview of the page
+  you would land on — the chapter scrubber, in the form a comic can use. A comic has no chapters,
+  so the track is one plain run rather than a ticked one, and previews are decoded as you drag
+  instead of rendered ahead of time.
+* **↩ to jump back** after a scrub or a bookmark jump, returning you to the page you left.
+* **The bookmarks panel** is now the reader's own panel, down to the rows and the ✕ that closes it.
+* The page still never repaints while you drag. As with a book, the comic is drawn once, when you
+  lift your finger.
+
+### Fixed
+
+* **A folder Reader could not read made it forget every book underneath it.** If a permission
+  lapsed, or a subfolder became unreadable for any reason, that scan came back looking like an
+  empty shelf — and Reader believed it, dropping those books from the library along with their
+  bookmarks and highlights. A scan that cannot be completed is now treated as incomplete rather
+  than as empty, and nothing is removed on the strength of it. This is the most serious thing in
+  this release.
+* **Footnote markers were set as ordinary text.** A marker sat full-size on the line, so a sentence
+  ending in one read as `people.2` instead of carrying a small raised numeral. Superscripts and
+  subscripts are now raised and set smaller, as they are in print. A second fault sat underneath
+  that one: in a book carrying print-edition page anchors — most non-fiction does — one marker
+  after every anchor was quietly losing its superscript before it ever reached the page.
+* **A bookmark Reader could not place crashed the book on open**, every time, with no way back into
+  it. A bookmark that cannot be located now falls back to its recorded position, and the rest of
+  the book opens normally.
+* **Books that refused to open as DRM-protected.** Some tools write an encryption file that
+  declares nothing at all, which describes a book with nothing encrypted in it. Reader was reading
+  that as DRM. Those books open now, while anything genuinely encrypted is still refused.
+* **Text that decoded as garbage.** A chapter stored as UTF-16, or with a byte-order mark in front
+  of it, was being read as if it were plain UTF-8. Reader now reads the mark and decodes
+  accordingly.
+* **Cancelling a scrub left you on the wrong page.** Backing out of a drag committed part of the
+  move it was supposed to abandon; you now end up exactly where you started.
+* **The chapter-end tick went missing** when you turned the progress bar on from the Aa sheet — it
+  only appeared after the next page turn.
+* **Hanging indents clipped** at the left margin in books that set a negative first-line indent.
+* **A stray separator** appeared where a block held an image or nothing at all.
+* **Replacing a book's file left its old highlights behind**, anchored to text that no longer
+  existed. They are cleared with the book's contents now.
+* Links and images resolve correctly when a book writes them as a bare `#fragment` or from the
+  archive root, and a comic's `ComicInfo.xml` is found whatever case its name is written in.
+
+### Smaller and quieter
+
+* **The APK is about a quarter of the size** — 9.9 MB down to 2.1 MB — with unused code and
+  resources stripped out of the release build. Nothing about the app changes; there is simply much
+  less of it to install.
+* **Page previews are no longer rebuilt needlessly.** A strip that is still valid is reused rather
+  than deleted and generated again, so reopening a book usually costs nothing at all.
+* **Work moved off the reading thread.** Preview images are decoded, and old strips cleared, in the
+  background instead of during a page turn.
+* **The scrubber stopped recomputing its own geometry on every frame** of a drag, and a cover that
+  has already failed to decode is not decoded again on every scroll past it.
+* Turning previews off in the Aa sheet now stops generation that is already under way, rather than
+  letting it finish unseen.
+
 ## 2026.07.4
 
 ### Comics
