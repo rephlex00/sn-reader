@@ -138,7 +138,11 @@ class PageView(context: Context) : View(context) {
     internal val runningFootSizePxForTest: Float get() = runningFootPaint.textSize
 
     private val runningFootPaint = TextPaint().apply {
-        color = context.getColor(R.color.reader_text_faint) // fainter than body text; matches the progress bar's restraint
+        // SLATE. This was MIST (#999), which the palette now reserves for things that carry no
+        // information you need — and the foot carries the page count. The palette has no lighter
+        // text value by design: no text lighter than SLATE, because on this panel a lighter grey at
+        // this size does not read as quieter, it reads as absent.
+        color = context.getColor(R.color.reader_text_secondary)
         // See [runningFootSizePx] for the size and why it is computed outside this block. Sizing
         // this freely is only safe because [bottomChromeHeightPx] is reserved out of the text area;
         // before that, a foot this size overdrew the last line at the narrow margin.

@@ -8,6 +8,7 @@ import dev.reader.R
 import dev.reader.data.BookDao
 import dev.reader.data.BookmarkDao
 import dev.reader.data.BookmarkEntity
+import dev.reader.engine.chapterTitleFor
 import dev.reader.formats.epub.EpubException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -34,11 +35,16 @@ internal class BookmarksPanel(
     // Notified every time this panel re-reads the book's bookmarks (open, add, remove) — the
     // scrubber's glyphs hang off the same read instead of a standing observer of their own.
     private val onBookmarksChanged: () -> Unit = {},
+    /** Reports an empty list up to [BackMatterPanel], which owns the shared empty state. */
+    private val onEmpty: (Boolean) -> Unit = {},
 ) {
 
     private val list: RecyclerView = overlay.findViewById(R.id.bookmarks_list)
-    private val empty: View = overlay.findViewById(R.id.bookmarks_empty)
     private val toggle: TextView = overlay.findViewById(R.id.bookmark_toggle)
+
+    /** Names the page the toggle above would act on. A toolbar pictogram could not say which page
+     *  it was about to mark; a cell with the page written under it can. */
+    private val toggleSubject: TextView = overlay.findViewById(R.id.bookmark_toggle_subject)
     private val adapter = BookmarkAdapter(onJump = ::jumpTo, onDelete = ::delete)
 
     init {
@@ -60,14 +66,30 @@ internal class BookmarksPanel(
             val marks = withContext(Dispatchers.IO) { bookmarks.bookmarksFor(path) }
             val rows = bookmarkRows(marks, reader.toc)
             adapter.submit(rows)
-            val isEmpty = rows.isEmpty()
-            empty.visibility = if (isEmpty) View.VISIBLE else View.GONE
-            list.visibility = if (isEmpty) View.GONE else View.VISIBLE
+            onEmpty(rows.isEmpty())
 
             val onThisPage = bookmarkOnCurrentPage(marks)
             toggle.setText(if (onThisPage != null) R.string.bookmark_remove else R.string.bookmark_add)
+            toggleSubject.text = currentPageSubject()
             onBookmarksChanged()
         }
+    }
+
+    /**
+     * "Chapter 17 · page 1 of 7" — what the cell above would act on, stated rather than implied.
+     *
+     * Blank before a page is drawn, which is the only state where naming a page would be a lie.
+     */
+    private fun currentPageSubject(): CharSequence {
+        if (reader.currentPage == null) return ""
+        val spineIndex = reader.currentState.spineIndex
+        val chapter = chapterTitleFor(reader.toc, spineIndex) ?: return ""
+        return toggle.context.getString(
+            R.string.bookmark_subject,
+            chapter,
+            reader.currentState.pageIndex + 1,
+            reader.pageCountFor(spineIndex).coerceAtLeast(1),
+        )
     }
 
     /** The bookmark on the page currently drawn, if any (range-based). Null before a page is shown. */

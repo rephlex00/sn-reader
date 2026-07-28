@@ -1,66 +1,80 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One grid cell: cover, title, author, and a status line (progress or the reason a book
-     is unreadable). No animation-bearing attributes — the grid's RecyclerView additionally
-     runs with itemAnimator = null (see LibraryActivity), since a plain layout alone doesn't
-     stop DefaultItemAnimator's cross-fade on data changes. -->
+<!-- One board on the shelf: a cover in a uniform trim, the book's title, its author.
+
+     The frame is the point. Scanned covers differ wildly in margin, value and aspect — some are
+     nearly white, some nearly black — and it is the identical 2dp INK trim around each that makes
+     them read as a set rather than as a directory listing of images. The mat behind is VEIL, so a
+     cover that has not decoded reads as empty rather than as broken.
+
+     Three columns, not five: at 300 dpi a board this size is a legible object, where five-up
+     reduced every cover to a thumbnail and every title to a truncated line. Ten books is a shelf.
+
+     No animation-bearing attributes — the grid's RecyclerView additionally runs with
+     itemAnimator = null (see LibraryActivity), since a plain layout alone doesn't stop
+     DefaultItemAnimator's cross-fade on data changes. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="8dp">
+    android:paddingHorizontal="@dimen/space_snug"
+    android:paddingBottom="@dimen/space_loose">
 
     <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="180dp"
-        android:layout_marginBottom="4dp">
+        android:layout_height="310dp"
+        android:background="@drawable/cover_trim">
 
         <ImageView
             android:id="@+id/cover"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="@color/reader_cover_placeholder"
             android:contentDescription="@null"
+            android:padding="@dimen/cell_border"
             android:scaleType="fitCenter" />
 
+        <!-- Graded so it holds on any board: INK ground, PAPER figure, and a PAPER outline that
+             separates it from a white cover the way the ground separates it from a dark one.
+             Bottom-right, 16dp in, tracked and tabular. A book you have not started carries no
+             chip at all — the absence is itself the signal, and it keeps the shelf quiet. -->
         <TextView
             android:id="@+id/progress_badge"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            style="@style/Text.Mark"
             android:layout_gravity="bottom|end"
-            android:layout_margin="6dp"
+            android:layout_margin="@dimen/space"
             android:background="@drawable/progress_badge"
-            android:paddingHorizontal="5dp"
-            android:paddingVertical="2dp"
-            android:textColor="@android:color/black"
-            android:textSize="12sp"
+            android:paddingHorizontal="@dimen/space_tight"
+            android:paddingVertical="@dimen/space_hair"
+            android:textColor="@color/paper"
+            android:fontFeatureSettings="tnum"
             android:visibility="gone" />
 
     </FrameLayout>
 
+    <!-- Set full, two lines. The caption is the book's short title; a subtitle lives on the board
+         rather than being truncated mid-word here. -->
     <TextView
         android:id="@+id/title"
+        style="@style/Text.Lead"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_snug"
         android:ellipsize="end"
-        android:maxLines="2"
-        android:textColor="@android:color/black"
-        android:textStyle="bold" />
+        android:maxLines="2" />
 
     <TextView
         android:id="@+id/author"
+        style="@style/Text.Sub"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_hair"
         android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@color/reader_text_secondary" />
+        android:maxLines="1" />
 
+    <!-- Why a book cannot be opened, when that is the case. Same voice as any other figure. -->
     <TextView
         android:id="@+id/status"
+        style="@style/Text.Figure"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_hair"
         android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@color/reader_text_secondary"
-        android:textSize="12sp" />
+        android:maxLines="1" />
 
 </LinearLayout>

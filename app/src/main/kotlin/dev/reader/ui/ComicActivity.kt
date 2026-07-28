@@ -60,7 +60,11 @@ open class ComicActivity : AppCompatActivity() {
     private lateinit var titleView: TextView
     private lateinit var readout: TextView
     private lateinit var directionButton: TextView
-    private lateinit var bookmarkButton: ImageView
+
+    /** "Mark this page" / "Remove this mark", at the head of the marks surface. A cell now, not a
+     *  toolbar glyph — so it can state which page it is about to act on. */
+    private lateinit var bookmarkButton: TextView
+    private lateinit var bookmarkSubject: TextView
 
     /** The bookmarks panel view (`comic_bookmarks_panel`): this Activity owns only its visibility —
      *  everything else (the list, the delete write, the empty state) belongs to [bookmarksPanel] —
@@ -167,7 +171,15 @@ open class ComicActivity : AppCompatActivity() {
         readout.typeface = ResourcesCompat.getFont(this, R.font.literata)
         readout.fontFeatureSettings = "tnum"
         directionButton = overlay.findViewById(R.id.comic_direction_button)
-        bookmarkButton = overlay.findViewById(R.id.comic_bookmark_button)
+        // The mark control moved off the toolbar and into the marks surface, where it is a
+        // sentence naming the page it would act on rather than a pictogram that could not.
+        bookmarkButton = overlay.findViewById(R.id.comic_bookmark_toggle)
+        bookmarkSubject = overlay.findViewById(R.id.comic_bookmark_subject)
+        overlay.findViewById<TextView>(R.id.comic_bookmarks_book).text = title
+        overlay.findViewById<SideheadView>(R.id.comic_marks_sidehead).apply {
+            label = getString(R.string.marks_sidehead)
+            form = SideheadView.Form.RULED
+        }
 
         chapterScrubber = overlay.findViewById(R.id.comic_scrubber)
         chapterScrubber.setGenerationStateVisible(false)
@@ -314,11 +326,12 @@ open class ComicActivity : AppCompatActivity() {
     }
 
     private fun updateBookmarkLabel() {
-        // The bookmark control is a glyph (comic_bookmark_button), not text, so the add/remove
-        // state lives in its content description for accessibility rather than in visible text.
+        // A cell that says what it will do, and a line under it naming the page it will do it to.
+        // The old glyph could carry neither, so the add/remove state lived in a content
+        // description no sighted reader ever saw.
         val bookmarked = bookmarks.any { it.spineIndex == currentPage }
-        bookmarkButton.contentDescription =
-            getString(if (bookmarked) R.string.bookmark_remove else R.string.bookmark_add)
+        bookmarkButton.setText(if (bookmarked) R.string.bookmark_remove else R.string.bookmark_add)
+        bookmarkSubject.text = getString(R.string.comic_page_readout, currentPage + 1, pageCount)
     }
 
     private fun onTap(zone: TapZone) {

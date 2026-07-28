@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The rule between two cells in a group, at the same weight as the group's own border so the whole
+  control reads as one ruled object rather than a row of separate boxes.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <size android:width="@dimen/cell_border" />
+    <solid android:color="@color/ink" />
+</shape>

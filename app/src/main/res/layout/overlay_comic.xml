@@ -1,166 +1,167 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The comic reader's chrome layer, mirroring overlay_reader.xml (the EPUB reader's overlay) so
-     the two readers share the same dimens, styles and type scale rather than approximations of
-     them: a monochrome layer drawn ABOVE the page (added after ComicPageView in the content
-     FrameLayout). The top bar holds Back, the book title, the bookmark toggle, the Bookmarks
-     panel opener and the reading-direction toggle; the foot holds a read-only "page X of Y"
-     readout, the ↩ jump-back ring and the chapter timeline.
+<!-- The comic reader's chrome, which is the reader's chrome with one word different.
 
-     Touch model: this root FrameLayout is NOT clickable, so it does not consume touches — only
-     its own controls do. A tap anywhere else on the overlay falls through to ComicPageView below,
-     whose onTap sees the overlay is up and dismisses it (one redraw) instead of turning a page.
-     Starts GONE; ComicActivity toggles visibility. No background on the root, so the page shows
-     through between the two opaque-white bars.
+     Same two rows, same EDGE rule, same foot, same dismiss in the same place — so a reader who has
+     learned the book surface has already learned this one. Three deliberate differences, each
+     following from what a comic actually is:
 
-     e-ink: solid white bars, black text, flat black divider lines. No ripple/selectableItemBackground
-     (it animates), no elevation/shadow (it ghosts), no animation of any kind. Large tap targets.
+       * The first destination reads MARKS, not CONTENTS. A comic has no chapters, and a three-cell
+         segment with one live cell is worse than no segment at all — so the back-matter surface
+         behind it offers marks alone and drops the segment row entirely (BackMatterPanel
+         .hasChapters = false).
+       * The running head carries the reading direction where a book carries its chapter. It is the
+         one fact about a comic that is not obvious from the page, and the one setting people flip
+         per book. Tapping it flips it.
+       * The page sits on a VEIL mat. A comic page fitted to this screen leaves letterboxing, and a
+         black surround would be a large ink flood on a reflective panel fighting the artwork it
+         frames. VEIL reads as a mat, which is what a printed comic gets.
 
-     Wiring (ChapterScrubberView, the ↩ ring, the preview): wired in ComicActivity — see the comic
-     chrome parity design doc. Reusing the EPUB reader's ChapterScrubberView unchanged is the
-     load-bearing decision; it is not touched by this layout, nor by ComicActivity's code. -->
+     Touch model, e-ink constraints and the scrubber's reuse are all as overlay_reader.xml: the root
+     is not clickable, so page-area taps fall through to ComicPageView, which dismisses the overlay.
+
+     The ChapterScrubberView is reused UNCHANGED — its trusted-lift gesture grammar took several
+     rounds of on-device debugging against this panel's firmware, and nothing here touches it. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/comic_overlay"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:visibility="gone">
 
-    <!-- Top bar: Back, book title, bookmark glyph, Bookmarks and the L→R/R→L direction toggle,
-         anchored to the top edge. -->
+    <!-- ===== Chrome, top ===== -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
-        android:background="@android:color/white"
+        android:background="@color/paper"
         android:orientation="vertical">
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="@dimen/chrome_row_height"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
 
             <TextView
                 android:id="@+id/comic_back"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                style="@style/Text.Mark"
+                android:layout_height="match_parent"
                 android:clickable="true"
                 android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:gravity="center"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="12dp"
+                android:gravity="center_vertical"
+                android:minWidth="@dimen/tap_target_min"
+                android:paddingEnd="@dimen/space"
                 android:text="@string/reader_back"
-                android:textColor="@android:color/black"
-                android:textSize="18sp"
-                android:textStyle="bold" />
+                android:textColor="@color/reader_text_primary" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <!-- Opens the marks surface. The bookmark pictogram is gone: marking the page you are
+                 on is the first row inside it, written as a sentence that can name the page it
+                 would act on — which a glyph in a toolbar never could. -->
+            <TextView
+                android:id="@+id/comic_bookmarks_button"
+                style="@style/Text.Mark"
+                android:layout_height="match_parent"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="@dimen/tap_target_min"
+                android:paddingStart="@dimen/space"
+                android:text="@string/segment_marks"
+                android:textColor="@color/reader_text_primary" />
+
+        </LinearLayout>
+
+        <!-- The running head: the comic on the left, its reading direction on the right, where a
+             book puts its chapter. Tapping the direction flips it for this comic. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/chrome_running_head_height"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
 
             <TextView
                 android:id="@+id/comic_title"
+                style="@style/Text.Sub"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:paddingHorizontal="@dimen/toolbar_button_padding_h"
-                android:paddingVertical="@dimen/toolbar_padding_v"
-                android:textColor="@android:color/black"
-                android:textSize="18sp" />
+                android:textStyle="italic" />
 
-            <!-- Toggles the bookmark on the current page (glyph only, like the reader's own
-                 ic_bookmark control); its content description carries the add/remove state for
-                 accessibility since the glyph itself does not change. -->
-            <ImageView
-                android:id="@+id/comic_bookmark_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:clickable="true"
-                android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="12dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_bookmark"
-                android:contentDescription="@string/bookmark_add" />
-
-            <!-- Opens the Bookmarks panel (ComicBookmarksPanel). Flat text control styled exactly
-                 like the reader's Contents/Highlights buttons — not a Material Button. -->
-            <TextView
-                android:id="@+id/comic_bookmarks_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:clickable="true"
-                android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:gravity="center"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="12dp"
-                android:text="@string/reader_bookmarks"
-                android:textColor="@android:color/black"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <!-- Reading-direction toggle (L→R / R→L, set in code). Flat text control styled
-                 exactly like Contents/Highlights — deliberately NOT a Material Button, which is
-                 what this layout replaces. -->
             <TextView
                 android:id="@+id/comic_direction_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                style="@style/Text.Mark"
+                android:layout_height="match_parent"
+                android:layout_marginStart="@dimen/space"
                 android:clickable="true"
                 android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:gravity="center"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="12dp"
-                android:textColor="@android:color/black"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical|end"
+                android:minWidth="@dimen/tap_target_min" />
 
         </LinearLayout>
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="@android:color/black" />
+            android:layout_height="@dimen/rule_edge"
+            android:background="@color/reader_rule" />
 
     </LinearLayout>
 
-    <!-- The scrubbing preview: on-demand decode of the page nearest the finger. Visible only
-         during a drag. A separate small view, so its repaints are its own region — the book page
-         underneath never repaints during a drag. Half screen: 374x499dp at the Nomad's 1.875
-         density = ~702x936px, matching overlay_reader.xml's scrub_preview exactly. -->
-    <ImageView
-        android:id="@+id/comic_preview"
-        android:layout_width="374dp"
-        android:layout_height="499dp"
+    <!-- The scrubbing preview, with the same reversed caption bar the book reader's has — page
+         figures rather than a chapter, because that is what a comic reader counts in. Decoded on
+         demand as the finger moves; the page underneath never repaints during a drag. -->
+    <LinearLayout
+        android:id="@+id/comic_preview_frame"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="140dp"
         android:background="@drawable/preview_window_border"
-        android:contentDescription="@null"
-        android:padding="2dp"
-        android:scaleType="fitCenter"
-        android:visibility="gone" />
+        android:orientation="vertical"
+        android:visibility="gone">
 
-    <!-- Bottom scrubber: read-only "page X of Y" readout above a full-width timeline, anchored to
-         the bottom edge. The ↩ jump back-stack control gets its own fixed seat at the head of the
-         readout row, in a FrameLayout alongside the readout rather than beside it in a horizontal
-         row, so the readout stays independently centered and ↩ appearing/disappearing never
-         reflows anything — same shape as overlay_reader.xml's foot. -->
+        <TextView
+            android:id="@+id/comic_preview_page"
+            style="@style/Text.Mark"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:background="@color/ink"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="@dimen/space"
+            android:textColor="@color/paper" />
+
+        <!-- Half screen: 374x499dp at the Nomad's 1.875 density = ~702x936px, matching the book
+             reader's preview exactly. -->
+        <ImageView
+            android:id="@+id/comic_preview"
+            android:layout_width="374dp"
+            android:layout_height="499dp"
+            android:contentDescription="@null"
+            android:scaleType="fitCenter" />
+
+    </LinearLayout>
+
+    <!-- ===== Chrome, foot =====
+         Identical to the book reader's, and deliberately so: the strip is the one element that
+         should feel the same everywhere. A comic has no chapters, so the track is one plain run
+         rather than a ticked one — set in ComicActivity, not here. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="@android:color/white"
+        android:background="@color/paper"
         android:orientation="vertical">
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="@android:color/black" />
+            android:layout_height="@dimen/rule_edge"
+            android:background="@color/reader_rule" />
 
         <FrameLayout
             android:layout_width="match_parent"
@@ -168,120 +169,135 @@
 
             <TextView
                 android:id="@+id/comic_readout"
+                style="@style/Text.Figure"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
                 android:gravity="center"
-                android:paddingHorizontal="16dp"
-                android:paddingTop="16dp"
-                android:textColor="@android:color/black"
-                android:textSize="16sp" />
+                android:paddingHorizontal="@dimen/margin_screen"
+                android:paddingTop="@dimen/space" />
 
-            <!-- Pops the jump back-stack (JumpStack<Int> — see ComicActivity). GONE whenever the
-                 stack is empty. Anchored to the track's own left cap, identical placement to
-                 overlay_reader.xml's scrubber_back. -->
             <TextView
                 android:id="@+id/comic_scrubber_back"
                 android:layout_width="64dp"
                 android:layout_height="64dp"
                 android:layout_gravity="start|center_vertical"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="@dimen/space_hair"
                 android:background="@drawable/return_seat"
                 android:clickable="true"
                 android:focusable="true"
                 android:gravity="center"
                 android:text="@string/scrubber_back"
-                android:textColor="#1A1A1A"
-                android:textSize="22sp"
+                android:textColor="@color/reader_text_primary"
+                android:textSize="@dimen/text_glyph"
                 android:visibility="gone" />
 
         </FrameLayout>
 
-        <!-- Reused UNCHANGED from the EPUB reader (see the design doc): the trusted-lift gesture
-             grammar here took several rounds of on-device debugging to get right. ComicActivity
-             calls setBook(emptyList(), ...)/setBookmarks/setGenerationStateVisible(false) and
-             hooks the onScrub* callbacks — see its onScrubStart/onScrubMoved/onScrubCommitted/
-             abandonScrub. -->
         <dev.reader.ui.ChapterScrubberView
             android:id="@+id/comic_scrubber"
             android:layout_width="match_parent"
-            android:layout_height="88dp"
-            android:paddingHorizontal="16dp" />
+            android:layout_height="@dimen/scrubber_strip_height"
+            android:paddingHorizontal="@dimen/margin_screen" />
 
     </LinearLayout>
 
-    <!-- The bookmarks panel: this book's saved pages (page N, tap to jump, ✕ to delete), restyled
-         to match the EPUB reader's bookmarks_panel — same header, rule, RecyclerView, empty state
-         and dimens/styles/drawables (item_bookmark.xml, PanelClose, bookmarks_empty). One
-         deliberate difference: no "Add/remove this page" toggle row, since that control is already
-         the glyph in the top bar (comic_bookmark_button) — duplicating it here would be two
-         controls for the same action. The ✕ here also fixes the panel's one real defect: with no
-         hardware Back, an empty panel with no in-panel dismiss forced exiting the whole reader.
-         Visibility-toggled like the top bar/foot; one e-ink redraw, no animation. clickable=true so
-         a tap on its own chrome is consumed, not fallen through to dismiss the overlay. -->
+    <!-- ===== Marks =====
+         The book reader's back-matter surface with only the Marks segment in it: same header, same
+         ‹ at the same margin, same "Mark this page" cell at the head of the list. Not a different
+         screen — a shorter header. -->
     <LinearLayout
         android:id="@+id/comic_bookmarks_panel"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@android:color/white"
+        android:background="@color/paper"
         android:clickable="true"
         android:focusable="true"
         android:orientation="vertical"
         android:visibility="gone">
 
-        <!-- Header row: title + a top-right ✕ that closes this panel (back to the reading chrome). -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="@dimen/header_height"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="@dimen/panel_header_padding_v"
-                android:text="@string/reader_bookmarks"
-                android:textColor="@android:color/black"
-                android:textSize="20sp"
-                android:textStyle="bold" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
 
             <TextView
                 android:id="@+id/comic_bookmarks_close"
-                style="@style/PanelClose"
-                android:contentDescription="@string/panel_close_bookmarks" />
+                style="@style/PanelDismiss"
+                android:contentDescription="@string/panel_close_contents" />
+
+            <TextView
+                style="@style/Text.Mark"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/segment_marks" />
+
+            <TextView
+                android:id="@+id/comic_bookmarks_book"
+                style="@style/Text.Sub"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textStyle="italic" />
 
         </LinearLayout>
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="@android:color/black" />
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/comic_bookmarks_list"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:scrollbars="vertical" />
+            android:layout_height="@dimen/rule_head"
+            android:layout_marginHorizontal="@dimen/margin_screen"
+            android:background="@color/reader_rule" />
 
         <LinearLayout
-            android:id="@+id/comic_bookmarks_empty"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:orientation="vertical"
-            android:gravity="top|center_horizontal"
-            android:paddingHorizontal="24dp"
-            android:paddingTop="48dp"
-            android:visibility="gone">
+            android:paddingHorizontal="@dimen/margin_screen"
+            android:paddingTop="@dimen/space_loose">
 
             <TextView
-                android:layout_width="wrap_content"
+                android:id="@+id/comic_bookmark_toggle"
+                style="@style/Cell.Action"
+                android:layout_width="match_parent"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/comic_bookmark_subject"
+                style="@style/Text.Figure"
+                android:layout_width="match_parent"
+                android:layout_marginTop="@dimen/space_tight"
+                android:gravity="center" />
+
+            <dev.reader.ui.SideheadView
+                android:id="@+id/comic_marks_sidehead"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/bookmarks_empty"
-                android:textColor="@color/reader_text_primary"
-                android:textSize="@dimen/text_body" />
+                android:layout_marginTop="@dimen/space_loose" />
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/comic_bookmarks_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_marginTop="@dimen/space_snug"
+                    android:scrollbars="vertical" />
+
+                <TextView
+                    android:id="@+id/comic_bookmarks_empty"
+                    style="@style/Text.Sub"
+                    android:layout_width="match_parent"
+                    android:layout_marginTop="@dimen/space_wide"
+                    android:text="@string/comic_marks_empty_hint"
+                    android:visibility="gone" />
+
+            </FrameLayout>
 
         </LinearLayout>
 

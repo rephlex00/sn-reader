@@ -1,30 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The app's whole palette. It is greys, because the display is greyscale: a hue here would only
-  ever be seen as the grey it collapses to, so the values ARE the design.
+  The app's whole palette: five greys and paper.
 
-  E-ink resolves roughly 16 levels, and light greys wash out badly at small sizes under reflected
-  light. That is why secondary text sits at 40% rather than the ~33% Android's darker_gray gives:
-  author and status lines were previously two different greys (darker_gray in the book rows,
-  #666666 in the highlight rows), and the lighter of the two was the least legible text in the app.
+  It is greys because the display is greyscale — a hue here would only ever be seen as the grey it
+  collapses to, so the values ARE the design.
+
+  The panel resolves roughly 16 levels, and those levels sit at multiples of 17 (0x11). A value
+  between two steps is dithered, and dither at text size under reflected light is what "washed out"
+  actually looks like. So every grey here IS a lattice step. If a value tempts you that is not one,
+  what you want is a different weight or a different size, not a different grey.
+
+  Three laws:
+    * No text lighter than SLATE.
+    * No stroke lighter than IRON.
+    * Nothing between two lattice steps.
 -->
 <resources>
-    <!-- Text -->
-    <color name="reader_text_primary">#FF000000</color>
-    <!-- Secondary: authors, status badges, list metadata. One value, everywhere. -->
-    <color name="reader_text_secondary">#FF666666</color>
-    <!-- Deliberately quieter than secondary: chrome that must not compete with the page itself. -->
-    <color name="reader_text_faint">#FF999999</color>
 
-    <!-- Surfaces -->
-    <color name="reader_surface">#FFFFFFFF</color>
-    <!-- Rules and dividers are full black: a hairline grey disappears on this panel. -->
-    <color name="reader_divider">#FF000000</color>
-    <!-- Stands in for a cover that has not decoded, light enough to read as "empty", not "broken". -->
-    <color name="reader_cover_placeholder">#FFDDDDDD</color>
+    <!-- ===== The lattice ===== -->
 
-    <!-- Reading surface. These three were tuned against the real panel; do not adjust by eye
-         on an LCD, where every one of them looks wrong in a different direction. -->
-    <color name="reader_progress_track">#FFCCCCCC</color>
-    <color name="reader_highlight_wash">#FFA8A8A8</color>
+    <!-- L0. Reading text, every rule, the fill of a chosen cell, reversed text's ground, the
+         scrubber thumb. Safe at any size, 11sp and 1dp strokes included. -->
+    <color name="ink">#FF000000</color>
+
+    <!-- L3. The label voice: letterspaced caps, running heads, chapter ticks, leader dots.
+         Safe to 13sp caps and 2dp strokes. -->
+    <color name="iron">#FF333333</color>
+
+    <!-- L6. Authors, percentages, counts, every secondary figure. The floor for text: 15sp,
+         not below. Already the app's hardware-tuned secondary value — kept. -->
+    <color name="slate">#FF666666</color>
+
+    <!-- L9. Disabled labels, and the pending run of the scrubber track. Never carries information
+         you need. Unsafe below 17sp / 3dp — which is the point. -->
+    <color name="mist">#FF999999</color>
+
+    <!-- L12. Fill only: the unread run of a progress band, the mat behind a cover or a comic page,
+         a highlight's ground. Never text, never a stroke, areas of 8dp+ only. -->
+    <color name="veil">#FFCCCCCC</color>
+
+    <!-- L15. The ground, and reversed text sitting on INK. There is no off-white anywhere. -->
+    <color name="paper">#FFFFFFFF</color>
+
+    <!-- ===== Duties =====
+         Named uses, so a layout says what a value is for rather than which grey it happens to be.
+         Every one resolves to a lattice step above; none introduces a new value. -->
+
+    <color name="reader_text_primary">@color/ink</color>
+    <color name="reader_text_label">@color/iron</color>
+    <color name="reader_text_secondary">@color/slate</color>
+    <color name="reader_text_disabled">@color/mist</color>
+    <color name="reader_surface">@color/paper</color>
+    <color name="reader_rule">@color/ink</color>
+
+    <!-- Fills. The cover mat stands in for artwork that has not decoded; the comic mat is the
+         letterbox around a fitted page — VEIL rather than black, because a large ink flood on a
+         reflective panel fights the artwork it surrounds. -->
+    <color name="reader_cover_mat">@color/veil</color>
+    <color name="reader_comic_mat">@color/veil</color>
+
+    <!-- The scrubber's pending run. MIST is legal here: a 3dp band carrying nothing the read run
+         does not already say. -->
+    <color name="reader_progress_track">@color/mist</color>
+
+    <!-- The pen's wash, and the ground behind a quoted note in the Notes list — one value in both
+         places, so the page and the list agree about what a highlight looks like.
+
+         NOTE: moved here from #A8A8A8, which was tuned by eye but sits between two lattice steps
+         and so dithers. Worth judging on the panel: VEIL is lighter, and if it reads too faint
+         under a highlight the answer is MIST (a real step), not a return to #A8A8A8. -->
+    <color name="reader_highlight_wash">@color/veil</color>
 </resources>

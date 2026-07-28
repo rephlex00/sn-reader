@@ -196,6 +196,14 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private lateinit var scrubPreview: ImageView
 
+    /** The window around [scrubPreview] — the framed preview plus its reversed caption bar naming
+     *  the chapter and page it shows. Visibility lives here, not on the ImageView: the caption is
+     *  part of the window, and previously the reader had to read the separate readout to know what
+     *  the bare thumbnail was of. */
+    private lateinit var scrubPreviewFrame: View
+    private lateinit var scrubPreviewChapter: TextView
+    private lateinit var scrubPreviewPage: TextView
+
     /** The open book's thumbnail strip, or null when none is generated yet (first open, generation
      *  still running, or generation failed). Loaded once per open, off the main thread. */
     private var previewStrip: StripIndex? = null
@@ -236,32 +244,28 @@ open class ReaderActivity : AppCompatActivity() {
     private lateinit var settings: SettingsSheet
 
     /**
-     * The Contents panel — a visibility-toggled, full-height list inside [overlay], opened by the
-     * Contents button. Like [settingsSheet] it holds no timer or animation: showing/hiding is one
-     * `visibility` flip. Its list is [tocList] (backed by [tocAdapter]); [tocEmpty] takes its place
-     * when the book has no usable TOC. Tapping an entry jumps via [jumpToToc].
+     * **Back matter** — the reader's other surface, holding chapters, marks and notes behind one
+     * segmented header. These were three separate panels with three toolbar entries, three headers
+     * and a dismiss that moved between them; they are all answers to "where am I in this book", so
+     * they are now one surface the reader learns once. See [BackMatterPanel].
+     *
+     * Like [settingsSheet] it holds no timer or animation: showing and hiding is one `visibility`
+     * flip. The three bodies below still own their own lists, adapters, jumps and database work —
+     * only the shell moved.
      */
-    private lateinit var tocPanel: View
+    private lateinit var backMatter: BackMatterPanel
+
+    /** Chapters. Tapping an entry jumps via the same restore machinery the open path uses. */
     private lateinit var toc: TocPanel
 
-    /**
-     * The Bookmarks panel — a visibility-toggled, full-height layer inside [overlay], opened by the
-     * Bookmarks ("Marks") button. This Activity owns only [bookmarksPanel]'s visibility; everything
-     * inside it (the list, the empty state, the add/remove toggle, and every database call) belongs
-     * to [BookmarksPanel]. Like [tocPanel] it is one `visibility` flip, no timer or animation.
-     */
-    private lateinit var bookmarksPanel: View
+    /** Marks. Owns its list, its "Mark this page" cell and every database call it makes. */
     private lateinit var bookmarks: BookmarksPanel
 
     /**
-     * The Highlights panel — a visibility-toggled, full-height layer inside [overlay], opened by the
-     * Highlights button. Same shape as [bookmarksPanel]: one `visibility` flip, no timer or animation.
-     * Unlike the bookmarks panel it has NO add/remove toggle — highlighting happens on the page with
-     * the pen (see [onStylusTap]/[onStylusDrag]/[commitHighlight]). [highlightsList] is backed by
-     * [highlightsAdapter]; [highlightsEmpty] takes its place when the book has no highlights yet. Its
-     * list is loaded once per open by [refreshHighlights] — never a standing observer.
+     * Notes. Unlike marks it has no add control — highlighting happens on the page with the pen
+     * (see [onStylusTap]/[onStylusDrag]/[commitHighlight]). Its list is loaded once per open,
+     * never by a standing observer.
      */
-    private lateinit var highlightsPanel: View
     private lateinit var highlights: HighlightsController
 
     private var document: EpubDocument? = null
@@ -391,10 +395,13 @@ open class ReaderActivity : AppCompatActivity() {
         scrubberBackView = overlay.findViewById(R.id.scrubber_back)
         scrubberBackView.setOnClickListener { onBackJump() }
         scrubPreview = overlay.findViewById(R.id.scrub_preview)
+        scrubPreviewFrame = overlay.findViewById(R.id.scrub_preview_frame)
+        scrubPreviewChapter = overlay.findViewById(R.id.scrub_preview_chapter)
+        scrubPreviewPage = overlay.findViewById(R.id.scrub_preview_page)
         // The trusted-lift grammar can leave a scrub ARMED (a light drag's lift is never obeyed —
         // the panel fabricates lifts for light contacts). Tapping the floating preview is the
         // explicit "go there": a no-op in every other state.
-        scrubPreview.setOnClickListener { chapterScrubber.commitArmed() }
+        scrubPreviewFrame.setOnClickListener { chapterScrubber.commitArmed() }
         chapterScrubber.onScrubStart = {
             // Cancel any still-running prior commit before starting a new drag. Without this, an
             // old commit's showPage() can land mid-drag (a repaint during a drag, forbidden) and then
@@ -407,30 +414,34 @@ open class ReaderActivity : AppCompatActivity() {
         chapterScrubber.onScrubCancel = { abandonScrub() }
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
         settings = SettingsSheet(overlay, settingsHost) { ReaderPrefs(this) }
-        tocPanel = overlay.findViewById(R.id.toc_panel)
-        toc = TocPanel(overlay, readerSurface)
-        bookmarksPanel = overlay.findViewById(R.id.bookmarks_panel)
+        // The three back-matter bodies report emptiness up to the shared empty state rather than
+        // each carrying one — see BackMatterPanel.onBodyEmpty.
+        toc = TocPanel(overlay, readerSurface) { empty ->
+            backMatter.onBodyEmpty(BackMatterPanel.Segment.CHAPTERS, empty)
+        }
         bookmarks = BookmarksPanel(
             overlay, readerSurface, lifecycleScope,
             database.bookmarkDao(), database.bookDao(),
             onBookmarksChanged = ::refreshScrubberBookmarks,
+            onEmpty = { empty -> backMatter.onBodyEmpty(BackMatterPanel.Segment.MARKS, empty) },
         )
-        highlightsPanel = overlay.findViewById(R.id.highlights_panel)
         highlights = HighlightsController(
             overlay, container, pageView, readerSurface, lifecycleScope,
             database.highlightDao(), database.bookDao(),
+            onEmpty = { empty -> backMatter.onBodyEmpty(BackMatterPanel.Segment.NOTES, empty) },
+        )
+        backMatter = BackMatterPanel(
+            overlay, toc, bookmarks, highlights,
+            prefs = { ReaderPrefs(this) },
+            bookKey = { intent.getStringExtra(EXTRA_BOOK_PATH).orEmpty() },
+            onDismiss = { backMatter.hide() },
         )
         overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
-        overlay.findViewById<View>(R.id.highlights_button).setOnClickListener { toggleHighlights() }
-        overlay.findViewById<View>(R.id.bookmarks_button).setOnClickListener { toggleBookmarks() }
-        overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleToc() }
+        overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleBackMatter() }
         overlay.findViewById<View>(R.id.settings_button).setOnClickListener { toggleSettings() }
-        // The device has no hardware Back, so each panel/sheet carries a top-right ✕ that peels it
-        // back to the reading toolbar — the same first step system Back takes. Closing a panel only
+        // The device has no hardware Back, so each surface carries its own ‹ at the screen margin,
+        // in the same place on both — the same first step system Back takes. Closing a surface only
         // hides that layer; the bare overlay stays up (tap the page to return to reading).
-        overlay.findViewById<View>(R.id.toc_close).setOnClickListener { tocPanel.visibility = View.GONE }
-        overlay.findViewById<View>(R.id.bookmarks_close).setOnClickListener { bookmarksPanel.visibility = View.GONE }
-        overlay.findViewById<View>(R.id.highlights_close).setOnClickListener { highlightsPanel.visibility = View.GONE }
         overlay.findViewById<View>(R.id.settings_close).setOnClickListener { settingsSheet.visibility = View.GONE }
         settings.wire()
         setContentView(container)
@@ -440,14 +451,10 @@ open class ReaderActivity : AppCompatActivity() {
         // shown: Back only closes it. Overlay hidden: Back leaves the book, flushing position first.
         onBackPressedDispatcher.addCallback(this) {
             when {
-                // The Bookmarks/TOC panels and the Aa sheet are layers inside the overlay: Back peels
-                // whichever is open off first, then the overlay, then the book — one thing per press.
-                // Only one panel is ever open at a time (opening any one closes the others), so the
-                // order among them is a formality; Highlights is checked first as the topmost-drawn
-                // layer (added last in the XML), then Bookmarks, then the TOC/Aa layers.
-                highlightsPanel.visibility == View.VISIBLE -> highlightsPanel.visibility = View.GONE
-                bookmarksPanel.visibility == View.VISIBLE -> bookmarksPanel.visibility = View.GONE
-                tocPanel.visibility == View.VISIBLE -> tocPanel.visibility = View.GONE
+                // Back matter and Type are layers inside the overlay: Back peels whichever is open
+                // off first, then the overlay, then the book — one thing per press. Only one is ever
+                // open at a time (opening either closes the other), so the order is a formality.
+                backMatter.isVisible -> backMatter.hide()
                 settingsSheet.visibility == View.VISIBLE -> settingsSheet.visibility = View.GONE
                 isOverlayVisible() -> hideOverlay()
                 else -> exitToLibrary()
@@ -571,7 +578,7 @@ open class ReaderActivity : AppCompatActivity() {
 
         override fun applyTypography(mutate: (ReaderPrefs) -> Unit) = applySettingsChange(mutate)
 
-        override fun stepTextSize(deltaPx: Float) = this@ReaderActivity.stepTextSize(deltaPx)
+        override fun applyTextSize(px: Float) = this@ReaderActivity.applyTextSize(px)
 
         override fun applyMarginPreset(presetPx: Int) = applyMargin(presetPx)
 
@@ -614,7 +621,7 @@ open class ReaderActivity : AppCompatActivity() {
                 // hazard scheduleStripGeneration's KDoc says the join exists to prevent.
                 stripGenerationJob?.cancel()
                 previewDecodeJob?.cancel()
-                scrubPreview.visibility = View.GONE
+                scrubPreviewFrame.visibility = View.GONE
                 scrubPreview.setImageDrawable(null)
                 shownPreviewEntry = null
             }
@@ -705,9 +712,7 @@ open class ReaderActivity : AppCompatActivity() {
         // and re-syncs the readout/thumb. A no-op when no scrub is in flight.
         abandonScrub()
         settingsSheet.visibility = View.GONE
-        tocPanel.visibility = View.GONE
-        bookmarksPanel.visibility = View.GONE
-        highlightsPanel.visibility = View.GONE
+        backMatter.hide()
         // Returning to the page ends any pen selection that was in progress when the chrome went up:
         // a bracket armed before then is stale, and its marker would otherwise still be sitting on
         // the page waiting for a second tap the reader has long since moved on from.
@@ -722,63 +727,31 @@ open class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** Opens or closes the Aa sheet — a visibility flip (one redraw). Opening first syncs its
-     * controls to the current [ReaderPrefs] so it always shows the live values. */
+    /** Opens or closes Type — a visibility flip (one redraw). Opening first syncs its cells to the
+     * current [ReaderPrefs] so it always shows the live values. */
     private fun toggleSettings() {
-        highlights.hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
+        highlights.hideDeleteChip() // a surface covers the page; the on-page chip must not float over it
         if (settingsSheet.visibility == View.VISIBLE) {
             settingsSheet.visibility = View.GONE
         } else {
-            tocPanel.visibility = View.GONE // one panel open at a time
-            bookmarksPanel.visibility = View.GONE
-            highlightsPanel.visibility = View.GONE
-            settings.loadFontPreviewsOnce() // before refresh(): sets each font option's preview face
+            backMatter.hide() // one surface open at a time
             settings.refresh()
             settingsSheet.visibility = View.VISIBLE
         }
     }
 
-    /** Opens or closes the Contents panel — a visibility flip (one redraw). Opening first rebuilds
-     * the list from the current [EpubDocument.toc] and current chapter, and closes the Aa sheet so
-     * only one panel is ever open. */
-    private fun toggleToc() {
-        highlights.hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
-        if (tocPanel.visibility == View.VISIBLE) {
-            tocPanel.visibility = View.GONE
+    /**
+     * Opens or closes back matter — a visibility flip (one redraw). Opening lands on whichever
+     * segment this book was left on and rebuilds that list; the reader chooses among chapters,
+     * marks and notes from inside the surface rather than from three toolbar entries.
+     */
+    private fun toggleBackMatter() {
+        highlights.hideDeleteChip() // a surface covers the page; the on-page chip must not float over it
+        if (backMatter.isVisible) {
+            backMatter.hide()
         } else {
-            settingsSheet.visibility = View.GONE // one panel open at a time
-            bookmarksPanel.visibility = View.GONE
-            highlightsPanel.visibility = View.GONE
-            toc.refresh()
-            tocPanel.visibility = View.VISIBLE
-        }
-    }
-
-    /** Opens/closes the Highlights panel — one panel open at a time (closes the Aa sheet, TOC, Marks). */
-    private fun toggleHighlights() {
-        highlights.hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
-        if (highlightsPanel.visibility == View.VISIBLE) {
-            highlightsPanel.visibility = View.GONE
-        } else {
-            settingsSheet.visibility = View.GONE
-            tocPanel.visibility = View.GONE
-            bookmarksPanel.visibility = View.GONE
-            highlightsPanel.visibility = View.VISIBLE
-            highlights.refresh()
-        }
-    }
-
-    /** Opens/closes the Bookmarks panel — one panel open at a time (closes the Aa sheet and TOC). */
-    private fun toggleBookmarks() {
-        highlights.hideDeleteChip() // a panel covers the page; the on-page chip must not float over it
-        if (bookmarksPanel.visibility == View.VISIBLE) {
-            bookmarksPanel.visibility = View.GONE
-        } else {
-            settingsSheet.visibility = View.GONE // one panel open at a time
-            tocPanel.visibility = View.GONE
-            highlightsPanel.visibility = View.GONE
-            bookmarksPanel.visibility = View.VISIBLE
-            bookmarks.refresh()
+            settingsSheet.visibility = View.GONE // one surface open at a time
+            backMatter.open()
         }
     }
 
@@ -827,9 +800,16 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Bumps the persisted text size by [deltaPx], clamped to the sane range, then re-paginates. A
      * tap already at the bound only refreshes the readout (no reflow to do). */
-    private fun stepTextSize(deltaPx: Float) {
+    /**
+     * Sets the text size to one of the five steps.
+     *
+     * Was a ±2px stepper with a "36px" readout. A tap that lands on the size already in use costs
+     * a refresh rather than a re-paginate — the cells are a direct choice now, so re-selecting the
+     * chosen one is a no-op the reader can perform freely.
+     */
+    private fun applyTextSize(px: Float) {
         val current = ReaderPrefs(this).textSizePx
-        val next = (current + deltaPx).coerceIn(TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX)
+        val next = px.coerceIn(TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX)
         if (next == current) {
             settings.refresh()
         } else {
@@ -1781,7 +1761,7 @@ open class ReaderActivity : AppCompatActivity() {
                 // A snapped chapter with no sampled opening (e.g. a zero-page image chapter never
                 // entered the plan): hide rather than leave a mismatched thumbnail from a moment ago.
                 scrubPreview.setImageDrawable(null)
-                scrubPreview.visibility = View.GONE
+                scrubPreviewFrame.visibility = View.GONE
                 shownPreviewEntry = null
             } else if (entry != shownPreviewEntry) {
                 shownPreviewEntry = entry            // mark attempted either way — no re-decode churn
@@ -1804,11 +1784,24 @@ open class ReaderActivity : AppCompatActivity() {
                     if (shownPreviewEntry != entry) return@launch
                     if (bmp != null) {
                         scrubPreview.setImageBitmap(bmp)
-                        scrubPreview.visibility = View.VISIBLE
+                        // The caption names what the window is showing. Without it the reader has
+                        // to look away to the readout to find out which page the thumbnail is —
+                        // two things that belong together, so they now sit together.
+                        //
+                        // The design asks for "page 3 of 12" here. It says percentage instead,
+                        // deliberately: a page count means paginating that chapter
+                        // (ReaderSurface.pageCountFor -> doc.chapter(...)), which is real work in
+                        // the middle of a gesture, and this reader does no work during a drag. The
+                        // fraction is already in hand from the scrub itself and costs nothing.
+                        scrubPreviewChapter.text =
+                            chapterTitleFor(document?.toc.orEmpty(), entry.spineIndex).orEmpty()
+                        scrubPreviewPage.text =
+                            getString(R.string.scrub_preview_position, (entry.fraction * 100).toInt())
+                        scrubPreviewFrame.visibility = View.VISIBLE
                     } else {
                         // A missing/corrupt thumbnail: hide rather than leave a wrong page showing.
                         scrubPreview.setImageDrawable(null)
-                        scrubPreview.visibility = View.GONE
+                        scrubPreviewFrame.visibility = View.GONE
                     }
                 }
             }
@@ -1940,7 +1933,7 @@ open class ReaderActivity : AppCompatActivity() {
                 // the bridge has done its job, take the preview down. A commit cancelled before reaching
                 // here (a new drag's race guard) leaves the window up on purpose — the new drag is
                 // already re-blitting it, and its own commit will take it down.
-                scrubPreview.visibility = View.GONE
+                scrubPreviewFrame.visibility = View.GONE
                 scrubPreview.setImageDrawable(null)
                 shownPreviewEntry = null
             } finally {
@@ -2002,7 +1995,7 @@ open class ReaderActivity : AppCompatActivity() {
         // rather than let it burn an IO thread to a result nobody will use.
         previewDecodeJob?.cancel()
         scrubOrigin = null
-        scrubPreview.visibility = View.GONE
+        scrubPreviewFrame.visibility = View.GONE
         scrubPreview.setImageDrawable(null)
         shownPreviewEntry = null
         // The origin page never left the screen during the drag, so there is NOTHING to repaint —
@@ -2110,7 +2103,7 @@ open class ReaderActivity : AppCompatActivity() {
 
     /** Whether the floating preview is currently showing a decoded page. */
     internal val previewBitmapShownForTest: Boolean
-        get() = scrubPreview.visibility == View.VISIBLE && scrubPreview.drawable != null
+        get() = scrubPreviewFrame.visibility == View.VISIBLE && scrubPreview.drawable != null
 
     /** True once the in-flight preview decode ([previewDecodeJob]) has actually finished (null
      *  counts as finished) — unlike polling [previewBitmapShownForTest], this is also true when the

@@ -19,10 +19,13 @@ import dev.reader.formats.epub.EpubException
 internal class TocPanel(
     overlay: View,
     private val reader: ReaderSurface,
+    /** Reports an empty list up to [BackMatterPanel], which owns the shared empty state. The panel
+     *  no longer carries its own: an empty list is not a different screen, and all three segments
+     *  share one so the header, the segment and the ‹ never move. */
+    private val onEmpty: (Boolean) -> Unit = {},
 ) {
 
     private val list: RecyclerView = overlay.findViewById(R.id.toc_list)
-    private val empty: View = overlay.findViewById(R.id.toc_empty)
     private val adapter = TocAdapter(::jumpTo)
 
     init {
@@ -46,9 +49,7 @@ internal class TocPanel(
             reader.chapterStartProgress(spineIndex)
         }
         adapter.submit(rows)
-        val isEmpty = rows.isEmpty()
-        empty.visibility = if (isEmpty) View.VISIBLE else View.GONE
-        list.visibility = if (isEmpty) View.GONE else View.VISIBLE
+        onEmpty(rows.isEmpty())
     }
 
     /**

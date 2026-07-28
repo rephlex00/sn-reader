@@ -3,38 +3,53 @@ package dev.reader.ui
 import android.content.Context
 import android.view.View
 import android.widget.TextView
-import androidx.core.content.res.ResourcesCompat
 import dev.reader.R
 
-// The Aa sheet's bounded value sets, kept beside the controls that offer them. Text size is a
-// stepper over [TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX] by TEXT_SIZE_STEP_PX; the margins are presets.
-// All chosen so the resulting RenderConfig stays valid on the device viewport — margins are
-// additionally clamped per-viewport, since a preset that fits in portrait need not fit in a
-// landscape spread once the gutter is taken out.
+// Type's bounded value sets, kept beside the controls that offer them.
+//
+// Text size used to be a stepper over [TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX] with a "36px" readout —
+// a developer's unit in the interface, and two taps plus two full redraws per adjustment. It is now
+// five steps drawn as the letters they produce, so a reader picks a size by looking at it. The min
+// and max survive because a pref stored by an older build can be any value in that range and still
+// has to be clamped and shown as the nearest step.
 internal const val TEXT_SIZE_MIN_PX = 24f
 internal const val TEXT_SIZE_MAX_PX = 56f
-internal const val TEXT_SIZE_STEP_PX = 2f
+
+/** The five steps, spanning the old stepper's range. The middle one is [ReaderPrefs]'s own default
+ *  (34px) on purpose: an untouched install must render exactly as it did before this control
+ *  existed AND fill the centre cell, rather than showing a size it is not set to. */
+internal val TEXT_SIZE_STEPS_PX = listOf(26f, 30f, 34f, 39f, 45f)
+
+/** The sizes the five Aa specimens are drawn at — the same progression, in sp, so the cell shows
+ *  the shape of the choice rather than describing it. */
+private val TEXT_SIZE_SPECIMEN_SP = listOf(13f, 16f, 20f, 25f, 31f)
+
 internal const val MARGIN_NARROW_PX = 40
 internal const val MARGIN_MEDIUM_PX = 72
 internal const val MARGIN_WIDE_PX = 120
 
+private val SPACING_STEPS = listOf(1.2f, 1.4f, 1.6f)
+private val MARGIN_STEPS = listOf(MARGIN_NARROW_PX, MARGIN_MEDIUM_PX, MARGIN_WIDE_PX)
+private val REFRESH_STEPS = listOf(3, 6, 10)
+private val FONT_FAMILIES = listOf("literata", "bitter", "atkinson")
+
 /**
- * What the Aa sheet asks the reader to do. Every method is an ACTION, never a widget: the sheet
- * knows which control was tapped, the reader knows what tapping it means.
+ * What Type asks the reader to do. Every method is an ACTION, never a widget: the surface knows
+ * which control was tapped, the reader knows what tapping it means.
  *
  * That split is the point. Changing typography has to re-paginate the current chapter and land the
  * reader on the same words (see `ReaderActivity.applySettingsChange`), which needs the open
- * document, the measured viewport and the reading position — none of which a sheet should hold. The
- * display-only switches, by contrast, must NOT re-paginate, and keeping both kinds behind one
- * interface is what stops a future control from quietly picking the wrong one.
+ * document, the measured viewport and the reading position — none of which this surface should
+ * hold. The display-only switches, by contrast, must NOT re-paginate, and keeping both kinds behind
+ * one interface is what stops a future control from quietly picking the wrong one.
  */
 internal interface SettingsHost {
 
     /** Writes a typography preference and re-paginates, preserving the reader's place. */
     fun applyTypography(mutate: (ReaderPrefs) -> Unit)
 
-    /** Steps the text size by [deltaPx], clamped to the supported range. */
-    fun stepTextSize(deltaPx: Float)
+    /** Sets the text size to one of [TEXT_SIZE_STEPS_PX], clamped to the supported range. */
+    fun applyTextSize(px: Float)
 
     /** Applies a margin preset, clamped to what the current viewport can take. */
     fun applyMarginPreset(presetPx: Int)
@@ -61,9 +76,9 @@ internal interface SettingsHost {
      *  a reader who deletes but leaves previews on gets a fresh strip on the next open. */
     fun deletePreviewsForCurrentBook()
 
-    /** For the Aa readout: `(chapters generated so far, total chapters)` while a strip is actively
-     *  generating for the open book, or null when there is nothing to report (previews off, a strip
-     *  already loaded, or no generation in flight). */
+    /** For the previews readout: `(chapters generated so far, total chapters)` while a strip is
+     *  actively generating for the open book, or null when there is nothing to report (previews
+     *  off, a strip already loaded, or no generation in flight). */
     fun previewGenerationProgress(): Pair<Int, Int>?
 
     /** Whether the delete-previews control should be reachable: a strip is generating right now,
@@ -75,16 +90,21 @@ internal interface SettingsHost {
 }
 
 /**
- * The Aa sheet: the panel of typography and display controls, and the code that keeps them showing
- * the live values.
+ * **Type** — the second of the reader's two surfaces: what the page looks like, as against where
+ * you are in the book.
  *
- * This is deliberately only view binding — wiring twenty controls and syncing twenty controls. It
- * decides nothing; every tap goes straight to [SettingsHost]. That was the bulk of what the Aa
- * feature contributed to [ReaderActivity], and it is the least interesting code there: mechanical,
- * repetitive, and in the way of the reading logic it sat between.
+ * Every control here is one [CellRowView]. A font picker, a margin preset, a page-turn mode and a
+ * plain boolean are the same shape, so the reader learns one control and then only reads which cell
+ * is filled. That replaced nine pill switches (another platform's language) and the "36px" readout
+ * in one move, and it is why this file is now mostly a table of value sets.
  *
- * Holds no state but [fontPreviewsLoaded]. Showing and hiding the sheet is [ReaderActivity]'s job,
- * a single `visibility` flip; it calls [refresh] on the way in.
+ * The controls are grouped under sideheads naming what each changes — the face, the page, this
+ * book, the screen, previews. Grouping is what turns nine switches into four decisions; sorting the
+ * same nine into a better order would not have.
+ *
+ * This is deliberately only view binding. It decides nothing; every tap goes straight to
+ * [SettingsHost]. Showing and hiding the surface is [ReaderActivity]'s job, a single `visibility`
+ * flip; it calls [refresh] on the way in.
  */
 internal class SettingsSheet(
     private val overlay: View,
@@ -94,128 +114,205 @@ internal class SettingsSheet(
 
     private val context: Context get() = overlay.context
 
-    /** Font previews are loaded once, on first open — see [loadFontPreviewsOnce]. */
-    private var fontPreviewsLoaded = false
-
     /**
-     * Wires every control to its action. Called once; the listeners hold no state and fire only on a
-     * deliberate tap, so they cost nothing at rest.
+     * Fills every cell group and wires it to its action. Called once: the listeners hold no state
+     * and fire only on a deliberate tap, so they cost nothing at rest.
+     *
+     * The font cells are drawn in the faces they select — a picker that previews its own options —
+     * which is why they are SPECIMEN rather than MARK.
      */
     fun wire() {
-        onClick(R.id.font_literata) { host.applyTypography { p -> p.fontFamily = "literata" } }
-        onClick(R.id.font_bitter) { host.applyTypography { p -> p.fontFamily = "bitter" } }
-        onClick(R.id.font_atkinson) { host.applyTypography { p -> p.fontFamily = "atkinson" } }
-        // The per-option preview typefaces are loaded lazily on first sheet-open, not here — see
-        // loadFontPreviewsOnce. Loading three font families synchronously at every book open (even
-        // for a reader who never touches the Aa sheet) would be cold-open work for nothing.
+        sidehead(R.id.type_head_face, R.string.type_head_face)
+        sidehead(R.id.type_head_page, R.string.type_head_page)
+        sidehead(R.id.type_head_book, R.string.type_head_book)
+        sidehead(R.id.type_head_screen, R.string.type_head_screen)
+        sidehead(R.id.type_head_previews, R.string.type_head_previews)
 
-        onClick(R.id.size_minus) { host.stepTextSize(-TEXT_SIZE_STEP_PX) }
-        onClick(R.id.size_plus) { host.stepTextSize(TEXT_SIZE_STEP_PX) }
+        cells(R.id.font_cells).apply {
+            setCells(
+                labels = listOf(
+                    context.getString(R.string.font_literata),
+                    context.getString(R.string.font_bitter),
+                    context.getString(R.string.font_atkinson),
+                ),
+                chosen = FONT_FAMILIES.indexOf(prefs().fontFamily).coerceAtLeast(0),
+                style = CellRowView.CellStyle.SPECIMEN,
+            )
+            onChoice = { index ->
+                host.applyTypography { p -> p.fontFamily = FONT_FAMILIES[index] }
+            }
+        }
 
-        onClick(R.id.spacing_12) { host.applyTypography { p -> p.lineSpacingMultiplier = 1.2f } }
-        onClick(R.id.spacing_14) { host.applyTypography { p -> p.lineSpacingMultiplier = 1.4f } }
-        onClick(R.id.spacing_16) { host.applyTypography { p -> p.lineSpacingMultiplier = 1.6f } }
+        cells(R.id.size_cells).apply {
+            setCells(
+                labels = TEXT_SIZE_STEPS_PX.map { context.getString(R.string.text_size_specimen) },
+                chosen = nearestSizeStep(prefs().textSizePx),
+                style = CellRowView.CellStyle.SPECIMEN,
+                specimenSizesSp = TEXT_SIZE_SPECIMEN_SP,
+            )
+            onChoice = { index -> host.applyTextSize(TEXT_SIZE_STEPS_PX[index]) }
+        }
 
-        onClick(R.id.margin_narrow) { host.applyMarginPreset(MARGIN_NARROW_PX) }
-        onClick(R.id.margin_medium) { host.applyMarginPreset(MARGIN_MEDIUM_PX) }
-        onClick(R.id.margin_wide) { host.applyMarginPreset(MARGIN_WIDE_PX) }
+        cells(R.id.spacing_cells).apply {
+            setCells(
+                labels = listOf(
+                    context.getString(R.string.spacing_tight),
+                    context.getString(R.string.spacing_normal),
+                    context.getString(R.string.spacing_open),
+                ),
+                chosen = SPACING_STEPS.indexOf(prefs().lineSpacingMultiplier).coerceAtLeast(0),
+            )
+            onChoice = { index ->
+                host.applyTypography { p -> p.lineSpacingMultiplier = SPACING_STEPS[index] }
+            }
+        }
 
-        onClick(R.id.toggle_justify) { host.applyTypography { p -> p.justified = !p.justified } }
-        onClick(R.id.toggle_hyphen) { host.applyTypography { p -> p.hyphenated = !p.hyphenated } }
-        onClick(R.id.toggle_publisher) { host.applyTypography { p -> p.publisherStyling = !p.publisherStyling } }
-        onClick(R.id.toggle_headings) { host.applyTypography { p -> p.inferHeadings = !p.inferHeadings } }
+        cells(R.id.margin_cells).apply {
+            setCells(
+                labels = listOf(
+                    context.getString(R.string.margin_narrow),
+                    context.getString(R.string.margin_medium),
+                    context.getString(R.string.margin_wide),
+                ),
+                chosen = MARGIN_STEPS.indexOf(prefs().marginPx).coerceAtLeast(0),
+            )
+            onChoice = { index -> host.applyMarginPreset(MARGIN_STEPS[index]) }
+        }
 
-        onClick(R.id.toggle_progress) { host.toggleProgressBar() }
-        onClick(R.id.toggle_rotation_lock) { host.toggleRotationLock() }
-        onClick(R.id.toggle_faster_turns) { host.toggleFasterTurns() }
-        onClick(R.id.refresh_freq_3) { host.applyRefreshFrequency(3) }
-        onClick(R.id.refresh_freq_6) { host.applyRefreshFrequency(6) }
-        onClick(R.id.refresh_freq_10) { host.applyRefreshFrequency(10) }
+        boolean(R.id.justify_cells, prefs().justified) {
+            host.applyTypography { p -> p.justified = !p.justified }
+        }
+        boolean(R.id.hyphen_cells, prefs().hyphenated) {
+            host.applyTypography { p -> p.hyphenated = !p.hyphenated }
+        }
+        boolean(R.id.publisher_cells, prefs().publisherStyling) {
+            host.applyTypography { p -> p.publisherStyling = !p.publisherStyling }
+        }
+        boolean(R.id.headings_cells, prefs().inferHeadings) {
+            host.applyTypography { p -> p.inferHeadings = !p.inferHeadings }
+        }
+        boolean(R.id.rotation_lock_cells, prefs().rotationLocked) { host.toggleRotationLock() }
+        boolean(R.id.progress_cells, prefs().showProgressBar) { host.toggleProgressBar() }
+        boolean(R.id.previews_cells, prefs().previewsEnabled) { host.togglePreviews() }
 
-        onClick(R.id.toggle_previews) { host.togglePreviews() }
-        onClick(R.id.previews_delete) { host.deletePreviewsForCurrentBook(); refresh() }
+        cells(R.id.turns_cells).apply {
+            setCells(
+                labels = listOf(
+                    context.getString(R.string.turns_clean),
+                    context.getString(R.string.turns_faster),
+                ),
+                chosen = if (prefs().fasterPageTurns) 1 else 0,
+            )
+            onChoice = { host.toggleFasterTurns() }
+        }
+
+        cells(R.id.refresh_freq_cells).apply {
+            setCells(
+                labels = REFRESH_STEPS.map { it.toString() },
+                chosen = REFRESH_STEPS.indexOf(prefs().fullRefreshEveryN).coerceAtLeast(0),
+            )
+            onChoice = { index -> host.applyRefreshFrequency(REFRESH_STEPS[index]) }
+        }
+
+        overlay.findViewById<View>(R.id.previews_delete).setOnClickListener {
+            host.deletePreviewsForCurrentBook()
+            refresh()
+        }
     }
 
     /**
-     * Syncs every control to the stored preferences: the selected option in each group gets a boxed
-     * outline, the size readout shows the current px, and each switch reflects its boolean. Pure
-     * View work, called whenever the sheet opens or a control changes something.
+     * Syncs every cell group to the stored preferences. Pure View work — it moves fills between
+     * cells and never touches the page — called whenever the surface opens or a control changes
+     * something.
      */
     fun refresh() {
         val p = prefs()
 
-        setSelected(R.id.font_literata, p.fontFamily == "literata")
-        setSelected(R.id.font_bitter, p.fontFamily == "bitter")
-        setSelected(R.id.font_atkinson, p.fontFamily == "atkinson")
+        cells(R.id.font_cells).choose(FONT_FAMILIES.indexOf(p.fontFamily).coerceAtLeast(0))
+        cells(R.id.size_cells).choose(nearestSizeStep(p.textSizePx))
+        cells(R.id.spacing_cells).choose(SPACING_STEPS.indexOf(p.lineSpacingMultiplier).coerceAtLeast(0))
+        cells(R.id.margin_cells).choose(MARGIN_STEPS.indexOf(p.marginPx).coerceAtLeast(0))
 
-        text(R.id.size_value).text = context.getString(R.string.text_size_value, p.textSizePx.toInt())
+        cells(R.id.justify_cells).choose(onOff(p.justified))
+        cells(R.id.hyphen_cells).choose(onOff(p.hyphenated))
+        cells(R.id.publisher_cells).choose(onOff(p.publisherStyling))
+        cells(R.id.headings_cells).choose(onOff(p.inferHeadings))
+        cells(R.id.rotation_lock_cells).choose(onOff(p.rotationLocked))
+        cells(R.id.progress_cells).choose(onOff(p.showProgressBar))
+        cells(R.id.previews_cells).choose(onOff(p.previewsEnabled))
 
-        setSelected(R.id.spacing_12, p.lineSpacingMultiplier == 1.2f)
-        setSelected(R.id.spacing_14, p.lineSpacingMultiplier == 1.4f)
-        setSelected(R.id.spacing_16, p.lineSpacingMultiplier == 1.6f)
+        cells(R.id.turns_cells).choose(if (p.fasterPageTurns) 1 else 0)
 
-        setSelected(R.id.margin_narrow, p.marginPx == MARGIN_NARROW_PX)
-        setSelected(R.id.margin_medium, p.marginPx == MARGIN_MEDIUM_PX)
-        setSelected(R.id.margin_wide, p.marginPx == MARGIN_WIDE_PX)
-
-        setToggle(R.id.toggle_justify_switch, p.justified)
-        setToggle(R.id.toggle_hyphen_switch, p.hyphenated)
-        setToggle(R.id.toggle_publisher_switch, p.publisherStyling)
-        setToggle(R.id.toggle_headings_switch, p.inferHeadings)
-        setToggle(R.id.toggle_progress_switch, p.showProgressBar)
-        setToggle(R.id.toggle_rotation_lock_switch, p.rotationLocked)
-
-        setToggle(R.id.toggle_faster_turns_switch, p.fasterPageTurns)
-        overlay.findViewById<View>(R.id.refresh_frequency_row).visibility =
-            if (p.fasterPageTurns) View.VISIBLE else View.GONE
-        setSelected(R.id.refresh_freq_3, p.fullRefreshEveryN == 3)
-        setSelected(R.id.refresh_freq_6, p.fullRefreshEveryN == 6)
-        setSelected(R.id.refresh_freq_10, p.fullRefreshEveryN == 10)
-
-        setToggle(R.id.toggle_previews_switch, p.previewsEnabled)
-        val progressRow = overlay.findViewById<View>(R.id.previews_status_row)
-        host.previewGenerationProgress()?.let { (generated, total) ->
-            text(R.id.previews_generating_text).text =
-                context.getString(R.string.previews_generating, generated, total)
-            progressRow.visibility = View.VISIBLE
-        } ?: run {
-            progressRow.visibility = View.GONE
+        // Disabled rather than hidden when page turns are clean: hiding a control teaches nothing,
+        // while a disabled one teaches the relationship. Enabling draws the border in and darkens
+        // the labels — one redraw, and nothing moves, so nothing ghosts.
+        cells(R.id.refresh_freq_cells).apply {
+            choose(REFRESH_STEPS.indexOf(p.fullRefreshEveryN).coerceAtLeast(0))
+            isEnabled = p.fasterPageTurns
         }
-        // Independent of progressRow above: reachable whenever there is something to delete, not
-        // only while generation is in flight — see hasPreviewsForCurrentBook.
-        overlay.findViewById<View>(R.id.previews_delete).visibility =
+        val flashEnabled = p.fasterPageTurns
+        text(R.id.refresh_freq_label).setTextColor(
+            context.getColor(if (flashEnabled) R.color.reader_text_primary else R.color.mist),
+        )
+        text(R.id.refresh_freq_note).setTextColor(
+            context.getColor(if (flashEnabled) R.color.reader_text_secondary else R.color.mist),
+        )
+
+        // The previews line carries live generation progress when there is any, and its resting
+        // description otherwise — one line doing both jobs rather than a row that appears and
+        // disappears underneath the control it describes.
+        text(R.id.previews_generating_text).text = host.previewGenerationProgress()
+            ?.let { (generated, total) ->
+                context.getString(R.string.previews_generating, generated, total)
+            }
+            ?: context.getString(R.string.setting_previews_note)
+
+        // Reachable whenever there is something to delete, not only while generation is in
+        // flight — see hasPreviewsForCurrentBook.
+        overlay.findViewById<View>(R.id.previews_delete_row).visibility =
             if (host.hasPreviewsForCurrentBook()) View.VISIBLE else View.GONE
     }
 
     /**
-     * Shows each font option in its own face, so the picker previews the fonts before selection.
-     * Deferred to first sheet-open and done once — loading three font families is real work that a
-     * reader who never opens the Aa sheet should not pay at every book open.
+     * The step whose size is closest to [px].
+     *
+     * A pref written by a build with the old ±2px stepper can hold any even value in
+     * [TEXT_SIZE_MIN_PX]..[TEXT_SIZE_MAX_PX], including several that are not steps. Snapping for
+     * *display* leaves that reader's page exactly as they set it while still filling one cell —
+     * their size only changes if they actually tap.
      */
-    fun loadFontPreviewsOnce() {
-        if (fontPreviewsLoaded) return
-        fontPreviewsLoaded = true
-        text(R.id.font_literata).typeface = ResourcesCompat.getFont(context, R.font.literata)
-        text(R.id.font_bitter).typeface = ResourcesCompat.getFont(context, R.font.bitter)
-        text(R.id.font_atkinson).typeface = ResourcesCompat.getFont(context, R.font.atkinson)
+    private fun nearestSizeStep(px: Float): Int {
+        val clamped = px.coerceIn(TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX)
+        return TEXT_SIZE_STEPS_PX.indices.minByOrNull { i ->
+            kotlin.math.abs(TEXT_SIZE_STEPS_PX[i] - clamped)
+        } ?: (TEXT_SIZE_STEPS_PX.size / 2)
     }
 
-    private fun onClick(id: Int, action: () -> Unit) =
-        overlay.findViewById<View>(id).setOnClickListener { action() }
+    /** Every boolean in the app is an ON / OFF pair in the same shape as every other choice. */
+    private fun boolean(id: Int, initial: Boolean, flip: () -> Unit) {
+        cells(id).apply {
+            setCells(
+                labels = listOf(
+                    context.getString(R.string.cell_on),
+                    context.getString(R.string.cell_off),
+                ),
+                chosen = onOff(initial),
+            )
+            onChoice = { flip() }
+        }
+    }
+
+    /** ON is the first cell, so a filled left-hand cell always reads as "this is on". */
+    private fun onOff(value: Boolean): Int = if (value) 0 else 1
+
+    private fun sidehead(id: Int, label: Int) {
+        overlay.findViewById<SideheadView>(id).apply {
+            this.label = context.getString(label)
+            form = SideheadView.Form.RULED
+        }
+    }
+
+    private fun cells(id: Int): CellRowView = overlay.findViewById(id)
 
     private fun text(id: Int): TextView = overlay.findViewById(id)
-
-    /**
-     * A boxed outline (not bold weight) marks the selection. It is typeface-independent, so it works
-     * with the font options that preview their own face without disturbing that face, and — crucially
-     * — it clears cleanly. The old `setTypeface(view.typeface, NORMAL)` could not strip bold back off
-     * a bundled font's already-bold instance, so de-selecting silently failed and every font
-     * eventually rendered as selected. `0` clears the background.
-     */
-    private fun setSelected(id: Int, selected: Boolean) =
-        text(id).setBackgroundResource(if (selected) R.drawable.aa_option_selected else 0)
-
-    private fun setToggle(switchId: Int, on: Boolean) {
-        overlay.findViewById<ToggleSwitchView>(switchId).checked = on
-    }
 }

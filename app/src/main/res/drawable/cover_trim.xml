@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The uniform trim every cover on the shelf gets: a 2dp INK frame on a VEIL mat.
+
+  The frame is what turns a set of scans that differ wildly in margin and value into a shelf. The
+  mat shows through where a cover's aspect does not fill the board, and stands in entirely for one
+  that has not decoded — light enough to read as "empty", never as "broken".
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/reader_cover_mat" />
+    <stroke
+        android:width="@dimen/cell_border"
+        android:color="@color/ink" />
+</shape>

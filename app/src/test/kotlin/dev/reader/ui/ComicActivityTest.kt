@@ -254,7 +254,7 @@ class ComicActivityTest {
         assertThat(a.findViewById<View>(R.id.comic_overlay)).isNotNull()
         assertThat(a.findViewById<View>(R.id.comic_back)).isNotNull()
         assertThat(a.findViewById<View>(R.id.comic_title)).isNotNull()
-        assertThat(a.findViewById<View>(R.id.comic_bookmark_button)).isNotNull()
+        assertThat(a.findViewById<View>(R.id.comic_bookmark_toggle)).isNotNull()
         assertThat(a.findViewById<View>(R.id.comic_bookmarks_button)).isNotNull()
         assertThat(a.findViewById<View>(R.id.comic_direction_button)).isNotNull()
         assertThat(a.findViewById<View>(R.id.comic_readout)).isNotNull()
