@@ -12,6 +12,30 @@
 
     <!-- Library -->
     <string name="library_title">Library</string>
+    <string name="library_search_hint">Search title or author</string>
+    <!-- The shelf's own count, the way a half-title page names what follows it. -->
+    <string name="library_count">%1$d books · %2$d started</string>
+    <string name="library_count_one">%1$d book · %2$d started</string>
+    <string name="library_found">%1$d found</string>
+    <string name="library_nothing_yet">Nothing found yet</string>
+
+    <!-- View, filter and sort, as cells. Short because eight of them share one row. -->
+    <string name="view_covers">Covers</string>
+    <string name="view_list">List</string>
+    <string name="folders_nested">Folders</string>
+    <string name="folders_flat">Flat</string>
+    <string name="filter_new">New</string>
+    <string name="filter_reading">Reading</string>
+    <string name="filter_done">Done</string>
+    <string name="sort_by">Sort by</string>
+    <string name="sort_added">Added</string>
+    <string name="sort_opened">Opened</string>
+    <string name="sort_title">Title</string>
+    <string name="sort_author">Author</string>
+
+    <!-- The list view's two sideheads: the two states a shelf actually has. -->
+    <string name="shelf_reading_now">Reading now</string>
+    <string name="shelf_not_started">Not started</string>
     <string name="menu_search">Search</string>
     <string name="menu_sort_by">Sort by</string>
     <string name="menu_sort_title">Title</string>

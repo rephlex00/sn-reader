@@ -275,7 +275,24 @@ open class BookGridAdapter(
         holder.author.text = author
         holder.author.visibility = if (author.isEmpty()) View.GONE else View.VISIBLE
         holder.size.text = humanReadableSize(book.sizeBytes)
-        holder.status.text = holder.itemView.context.getString(statusTextRes(book))
+        // The right column carries a figure, not a sentence. Every row reading "In progress" said
+        // nothing you could not already see, and it was not tabular, so a column of them did not
+        // line up. A started book shows how far in it is; an unstarted one reads NEW in tracked
+        // caps where the figure would be, so the column keeps one shape either way. Only an
+        // unreadable book still needs words.
+        holder.status.text = holder.itemView.context.let { context ->
+            when (statusOf(book)) {
+                // The same label the cover badge carries, so a book reads the same in both views.
+                BookStatus.IN_PROGRESS -> progressLabel(
+                    book.lastOpenedAtMs,
+                    book.spineIndex,
+                    book.charOffset,
+                    book.progressFraction,
+                ).orEmpty()
+                BookStatus.NOT_STARTED -> context.getString(R.string.filter_new).uppercase()
+                BookStatus.UNREADABLE -> context.getString(R.string.status_unreadable)
+            }
+        }
         holder.itemView.setOnClickListener { onBookClick(book) }
     }
 

@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The shelf's half-title and its controls.
+
+     This replaces an AppCompat Toolbar with a Roboto title, a magnifier and a three-dot overflow —
+     the single thing that made the library read as a different app from the reader it launches. It
+     is the first surface anyone sees, so it is the one that has to say what kind of app this is.
+
+     Two things change beyond the typeface. Everything the overflow hid is now visible and one tap
+     away: search is a bordered field with its purpose written in it, and view, filter and sort are
+     cells — the same shape as every choice in Type, so the reader learns one control for the whole
+     app. And the header states the shelf's own count, the way a printed half-title page names what
+     follows it.
+
+     e-ink: no ripple, no elevation, no animation. The rules do the separating. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/paper"
+    android:orientation="vertical"
+    android:paddingTop="@dimen/space_loose">
+
+    <!-- The half-title: where you are on the left, what is here on the right. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:baselineAligned="true"
+        android:orientation="horizontal"
+        android:paddingHorizontal="@dimen/margin_screen">
+
+        <TextView
+            android:id="@+id/library_title"
+            style="@style/Text.Mark"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/library_title" />
+
+        <TextView
+            android:id="@+id/library_count"
+            style="@style/Text.Figure"
+            android:layout_marginStart="@dimen/space" />
+
+    </LinearLayout>
+
+    <!-- EDGE: the half-title belongs to the shelf, not to the controls under it. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/rule_edge"
+        android:layout_marginTop="@dimen/space_snug"
+        android:layout_marginHorizontal="@dimen/margin_screen"
+        android:background="@color/reader_rule" />
+
+    <!-- Search, and how the shelf is drawn. The field says what it is for rather than hiding
+         behind a magnifier, and reports its result count in its own right-hand end — no separate
+         results banner, and no filtered-to-nothing state with no explanation. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="@dimen/margin_screen"
+        android:paddingTop="@dimen/space">
+
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="@dimen/cell_height"
+            android:layout_weight="1"
+            android:background="@drawable/cell_group">
+
+            <EditText
+                android:id="@+id/library_search"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:hint="@string/library_search_hint"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:maxLines="1"
+                android:paddingHorizontal="@dimen/cell_padding_h"
+                android:paddingEnd="96dp"
+                android:textColor="@color/reader_text_primary"
+                android:textColorHint="@color/reader_text_secondary"
+                android:textSize="@dimen/text_row" />
+
+            <TextView
+                android:id="@+id/library_found"
+                style="@style/Text.Mark"
+                android:layout_gravity="end|center_vertical"
+                android:layout_marginEnd="@dimen/cell_padding_h"
+                android:visibility="gone" />
+
+        </FrameLayout>
+
+        <dev.reader.ui.CellRowView
+            android:id="@+id/library_view_cells"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/cell_height"
+            android:layout_marginStart="@dimen/space_snug" />
+
+    </LinearLayout>
+
+    <!-- Which books, and how the folders are treated.
+
+         The drawn design put filter and sort on one row. It could: it showed three filters and
+         three sorts and knew nothing about flatten. This app has four, four and a flatten, and ten
+         cells across 749dp leaves each below the 88dp floor — on the panel the sort group simply
+         ran off the right edge and took the search field's width with it. Splitting the row is the
+         honest fix; compressing the cells past their floor would not have been. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="@dimen/margin_screen"
+        android:paddingTop="@dimen/space_snug">
+
+        <dev.reader.ui.CellRowView
+            android:id="@+id/library_filter_cells"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/cell_height" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <!-- Flatten. Not in the drawn design, which did not know about it — kept, and given the
+             same shape as everything else rather than left in an overflow nothing else uses. -->
+        <dev.reader.ui.CellRowView
+            android:id="@+id/library_flatten_cells"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/cell_height" />
+
+    </LinearLayout>
+
+    <!-- In what order. Labelled, unlike the rows above it: ALL / NEW / READING / DONE say what
+         they do, but ADDED and OPENED only mean anything once you know they are a sort. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="@dimen/margin_screen"
+        android:paddingTop="@dimen/space_snug">
+
+        <TextView
+            style="@style/Text.Mark"
+            android:text="@string/sort_by" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <dev.reader.ui.CellRowView
+            android:id="@+id/library_sort_cells"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/cell_height" />
+
+    </LinearLayout>
+
+    <!-- HEAD: everything below is the shelf itself. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/rule_head"
+        android:layout_marginTop="@dimen/space"
+        android:layout_marginHorizontal="@dimen/margin_screen"
+        android:background="@color/reader_rule" />
+
+</LinearLayout>

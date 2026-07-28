@@ -1,49 +1,65 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One book as a single full-width list row: title, optional author, size, and a status badge
-     (In progress / Not started / Unreadable: reason). No cover ImageView at all — list mode must
-     never touch the cover cache or launch a decode (see BookGridAdapter). No animation-bearing
-     attributes; the RecyclerView runs with itemAnimator = null (see LibraryActivity). -->
+<!-- One book as a full-width list row: its name on the left, its figure on the right.
+
+     The same name-left / figure-right structure the Contents page uses, so the shelf and the back
+     matter read as one set. No leader dots here: leaders are reserved for rows that point *to a
+     place* in a book, and a shelf row points at a whole book.
+
+     The second line earns its keep — author, size and status on one line rather than three — so a
+     row answers "which one was I in the middle of" without opening anything, and so the rows stay
+     scannable rather than becoming four-line blocks.
+
+     No cover ImageView at all: list mode must never touch the cover cache or launch a decode (see
+     BookGridAdapter). No animation-bearing attributes; the RecyclerView runs with
+     itemAnimator = null (see LibraryActivity). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:paddingHorizontal="16dp"
-    android:paddingVertical="12dp">
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:minHeight="@dimen/row_height_two_line"
+    android:orientation="horizontal"
+    android:paddingHorizontal="@dimen/margin_screen"
+    android:paddingVertical="@dimen/space_snug">
 
-    <TextView
-        android:id="@+id/title"
-        android:layout_width="match_parent"
+    <LinearLayout
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@android:color/black"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+        android:layout_weight="1"
+        android:orientation="vertical">
 
-    <TextView
-        android:id="@+id/author"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@color/reader_text_secondary"
-        android:textSize="13sp" />
+        <TextView
+            android:id="@+id/title"
+            style="@style/Text.Head"
+            android:layout_width="match_parent"
+            android:ellipsize="end"
+            android:maxLines="1" />
 
-    <TextView
-        android:id="@+id/size"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:maxLines="1"
-        android:textColor="@color/reader_text_secondary"
-        android:textSize="12sp" />
+        <TextView
+            android:id="@+id/author"
+            style="@style/Text.Sub"
+            android:layout_width="match_parent"
+            android:layout_marginTop="@dimen/space_hair"
+            android:ellipsize="end"
+            android:maxLines="1" />
 
+        <!-- Kept as its own line because it is the one thing here that is not about the book:
+             a size, or the reason a book cannot be opened. -->
+        <TextView
+            android:id="@+id/size"
+            style="@style/Text.Figure"
+            android:layout_width="match_parent"
+            android:maxLines="1" />
+
+    </LinearLayout>
+
+    <!-- The right-hand column: one tabular figure per row, whatever it says. A book you have not
+         started reads NEW where a percentage would be, so the column never changes shape. -->
     <TextView
         android:id="@+id/status"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        style="@style/Text.Figure"
+        android:layout_marginStart="@dimen/space"
         android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@color/reader_text_secondary"
-        android:textSize="12sp" />
+        android:maxLines="1" />
 
 </LinearLayout>

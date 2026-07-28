@@ -7,13 +7,13 @@ import android.view.Gravity
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
+import androidx.core.widget.doAfterTextChanged
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.SearchView
-import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -185,7 +185,19 @@ open class LibraryActivity : AppCompatActivity() {
      * navigates and the toggle handlers can read/flip their menu items' check state. `protected`:
      * [LibraryActivityNavigationTest] drives its menu items and reads its title.
      */
-    protected lateinit var toolbar: Toolbar
+    /**
+     * The shelf's header: half-title, count, search field, and the view / folders / filter / sort
+     * cells. Held as a field (not an `onCreate` local) so [render] can retitle it as the reader
+     * navigates and [syncHeaderCells] can move the fills.
+     */
+    private lateinit var header: View
+    private lateinit var libraryTitle: TextView
+    private lateinit var libraryCount: TextView
+    private lateinit var librarySearch: EditText
+
+    /** The search field's own right-hand end, reporting how many books the query matched. No
+     *  separate results banner, and no filtered-to-nothing state with nothing to explain it. */
+    private lateinit var libraryFound: TextView
 
     /**
      * The directory currently shown, an invariant-clamped path that is [rootPath][LibraryPrefs.rootPath]
@@ -277,41 +289,19 @@ open class LibraryActivity : AppCompatActivity() {
         adapter = BookGridAdapter(lifecycleScope, ::openBook, ::openFolder)
         recyclerView.adapter = adapter
 
-        toolbar = Toolbar(this).apply {
-            title = titleFor(currentFolder, lastRoot)
-            inflateMenu(R.menu.menu_library)
-            // Every checkableBehavior="single" group (sort, view mode, filter) and the standalone
-            // flatten toggle start unchecked on a freshly inflated menu (every rotation gets a new
-            // one), regardless of the persisted/current state. Restore all four marks here so the
-            // active choices stay visible after a restore, not just correct. statusFilter is
-            // transient (always ALL on a fresh Activity), but this still has to run: a rotation
-            // rebuilds the menu from scratch even mid-session.
-            menu.findItem(menuItemIdForSortOrder(currentSort))?.isChecked = true
-            menu.findItem(menuItemIdForViewMode(prefs.viewMode))?.isChecked = true
-            menu.findItem(R.id.action_flatten)?.isChecked = prefs.flatten
-            menu.findItem(menuItemIdForStatusFilter(statusFilter))?.isChecked = true
-            setOnMenuItemClickListener(::onMenuItemClicked)
-
-            // Title/author search: a live filter over latestBooks, not a new query. Collapsing the
-            // action view (the user tapping away, or the Back handler below) clears the query the
-            // same way an empty typed query would.
-            val searchItem = menu.findItem(R.id.action_search)
-            (searchItem.actionView as SearchView).setOnQueryTextListener(object : SearchView.OnQueryTextListener {
-                override fun onQueryTextSubmit(query: String?): Boolean = false
-                override fun onQueryTextChange(newText: String?): Boolean {
-                    searchQuery = newText.orEmpty()
-                    render()
-                    return true
-                }
-            })
-            searchItem.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
-                override fun onMenuItemActionExpand(item: MenuItem): Boolean = true
-                override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
-                    searchQuery = ""
-                    render()
-                    return true
-                }
-            })
+        // The shelf's own header, in the app's vocabulary: a half-title and its count, a search
+        // field that says what it is for, and cells for view / folders / filter / sort. It replaces
+        // an AppCompat Toolbar whose Roboto title, magnifier and three-dot overflow were the single
+        // thing making the library read as a different app from the reader it launches.
+        header = layoutInflater.inflate(R.layout.header_library, null)
+        libraryTitle = header.findViewById(R.id.library_title)
+        libraryCount = header.findViewById(R.id.library_count)
+        librarySearch = header.findViewById(R.id.library_search)
+        libraryFound = header.findViewById(R.id.library_found)
+        wireHeaderCells()
+        librarySearch.doAfterTextChanged { text ->
+            searchQuery = text?.toString().orEmpty()
+            render()
         }
 
         // System Back walks up the folder tree one level at a time, clamped to the root; only at
@@ -325,10 +315,10 @@ open class LibraryActivity : AppCompatActivity() {
             if (isFilterActive(searchQuery, statusFilter)) {
                 searchQuery = ""
                 statusFilter = StatusFilter.ALL
-                toolbar.menu.findItem(R.id.filter_all)?.isChecked = true
-                toolbar.menu.findItem(R.id.action_search)
-                    ?.takeIf { it.isActionViewExpanded }
-                    ?.collapseActionView() // also fires onMenuItemActionCollapse -> render(); harmless if redundant
+                // setText fires the watcher, which re-renders; clearing the field is what the
+                // reader sees, and it must not leave a query behind in a box that looks empty.
+                librarySearch.setText("")
+                syncHeaderCells()
                 render()
                 return@addCallback
             }
@@ -356,7 +346,7 @@ open class LibraryActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(emptyStateView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(recyclerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
@@ -440,57 +430,145 @@ open class LibraryActivity : AppCompatActivity() {
      * delegated to [onSortMenuItemClicked]; anything this menu doesn't own returns false so the
      * framework can fall back to its default handling.
      */
-    private fun onMenuItemClicked(item: MenuItem): Boolean {
-        when (item.itemId) {
+    /**
+     * The value sets behind the header's cells, in cell order. Kept beside the wiring that offers
+     * them so an index can never drift from the enum it selects.
+     *
+     * Filter and sort keep all four of their values, where the drawn design showed three of each:
+     * dropping "in progress" or "recently added" would be removing a feature to match a picture.
+     * The labels are short because eight cells share one row.
+     */
+    private val filterOptions =
+        listOf(StatusFilter.ALL, StatusFilter.NOT_STARTED, StatusFilter.IN_PROGRESS, StatusFilter.FINISHED)
+    private val sortOptions =
+        listOf(SortOrder.RECENTLY_ADDED, SortOrder.RECENTLY_OPENED, SortOrder.TITLE, SortOrder.AUTHOR)
+    private val viewOptions = listOf(ViewMode.TILES, ViewMode.LIST)
+
+    /** Fills the header's four cell groups and points each at its action. Called once. */
+    private fun wireHeaderCells() {
+        cells(R.id.library_view_cells).apply {
+            setCells(
+                labels = listOf(getString(R.string.view_covers), getString(R.string.view_list)),
+                chosen = viewOptions.indexOf(prefs.viewMode).coerceAtLeast(0),
+            )
+            onChoice = { index -> setViewMode(viewOptions[index]) }
+        }
+        cells(R.id.library_flatten_cells).apply {
+            setCells(
+                labels = listOf(getString(R.string.folders_nested), getString(R.string.folders_flat)),
+                chosen = if (prefs.flatten) 1 else 0,
+            )
+            onChoice = { index ->
+                prefs.flatten = index == 1
+                syncHeaderCells()
+                render()
+            }
+        }
+        cells(R.id.library_filter_cells).apply {
+            setCells(
+                labels = listOf(
+                    getString(R.string.filter_all),
+                    getString(R.string.filter_new),
+                    getString(R.string.filter_reading),
+                    getString(R.string.filter_done),
+                ),
+                chosen = filterOptions.indexOf(statusFilter).coerceAtLeast(0),
+            )
+            onChoice = { index ->
+                statusFilter = filterOptions[index]
+                syncHeaderCells()
+                render()
+            }
+        }
+        cells(R.id.library_sort_cells).apply {
+            setCells(
+                labels = listOf(
+                    getString(R.string.sort_added),
+                    getString(R.string.sort_opened),
+                    getString(R.string.sort_title),
+                    getString(R.string.sort_author),
+                ),
+                chosen = sortOptions.indexOf(currentSort).coerceAtLeast(0),
+            )
+            onChoice = { index -> setSortOrder(sortOptions[index]) }
+        }
+    }
+
+    /** Moves every fill to match the live state. Cheap: it repaints two cells per group. */
+    private fun syncHeaderCells() {
+        cells(R.id.library_view_cells).choose(viewOptions.indexOf(prefs.viewMode).coerceAtLeast(0))
+        cells(R.id.library_flatten_cells).choose(if (prefs.flatten) 1 else 0)
+        cells(R.id.library_filter_cells).choose(filterOptions.indexOf(statusFilter).coerceAtLeast(0))
+        cells(R.id.library_sort_cells).choose(sortOptions.indexOf(currentSort).coerceAtLeast(0))
+    }
+
+    private fun cells(id: Int): CellRowView = header.findViewById(id)
+
+    /**
+     * Performs a library action by its old menu id.
+     *
+     * The overflow menu it belonged to is gone — everything it hid is now a visible cell — but the
+     * *actions* are unchanged, and the ids remain the stable way to name one. This is the seam the
+     * library tests drive, so they keep asserting on behaviour rather than on which cell index
+     * happens to sit where.
+     */
+    protected fun selectMenuAction(itemId: Int): Boolean {
+        when (itemId) {
             R.id.action_settings -> {
                 startActivity(Intent(this, SettingsActivity::class.java))
                 return true
             }
             R.id.view_tiles -> {
-                setViewMode(ViewMode.TILES, item)
+                setViewMode(ViewMode.TILES)
                 return true
             }
             R.id.view_list -> {
-                setViewMode(ViewMode.LIST, item)
+                setViewMode(ViewMode.LIST)
                 return true
             }
             R.id.action_flatten -> {
-                val flatten = !prefs.flatten
-                prefs.flatten = flatten
-                item.isChecked = flatten
+                prefs.flatten = !prefs.flatten
+                syncHeaderCells()
                 render()
                 return true
             }
         }
-        val status = statusFilterForMenuItemId(item.itemId)
+        val status = statusFilterForMenuItemId(itemId)
         if (status != null) {
             statusFilter = status
-            item.isChecked = true // radio group: also unchecks the sibling
+            syncHeaderCells()
             render()
             return true
         }
-        return onSortMenuItemClicked(item)
+        val order = sortOrderForMenuItemId(itemId) ?: return false
+        setSortOrder(order)
+        return true
     }
 
-    private fun setViewMode(mode: ViewMode, item: MenuItem) {
-        item.isChecked = true // radio group: also unchecks the sibling
+    /** Types [query] into the search field, as a reader does — the watcher re-renders. */
+    protected fun setSearchQuery(query: String) {
+        librarySearch.setText(query)
+    }
+
+    /** The shelf's half-title: "Library" at the root, the folder's own name inside one. The seam
+     *  the library tests read, where they used to read the Toolbar's title. */
+    protected val headerTitle: String get() = libraryTitle.text.toString()
+
+    private fun setViewMode(mode: ViewMode) {
+        syncHeaderCells()
         if (mode == prefs.viewMode) return
         // Persist immediately (deferred apply(), no I/O on this callback) and re-render from the
         // held book list — a toggle must not wait for a new Room emission. render() hands the mode
         // to the adapter, which forces the one clean rebind a view-type switch needs.
         prefs.viewMode = mode
+        syncHeaderCells()
         render()
-    }
-
-    private fun onSortMenuItemClicked(item: MenuItem): Boolean {
-        val order = sortOrderForMenuItemId(item.itemId) ?: return false
-        setSortOrder(order)
-        return true
     }
 
     private fun setSortOrder(order: SortOrder) {
         if (order == currentSort) return
         currentSort = order
+        syncHeaderCells()
         // Persist immediately so the choice survives cold launch, not only this Activity instance.
         // The write is a deferred apply() (see LibraryPrefs); no I/O lands on this callback's thread.
         prefs.sortOrder = order
@@ -656,7 +734,22 @@ open class LibraryActivity : AppCompatActivity() {
         // imply the results are scoped to it. Fall back to the root title (titleFor(root, root),
         // i.e. "Library") for as long as the filter stays active; clearing it restores the folder
         // name via the same call on the next render().
-        toolbar.title = if (filterActive) titleFor(root, root) else titleFor(currentFolder, root)
+        libraryTitle.text = if (filterActive) titleFor(root, root) else titleFor(currentFolder, root)
+
+        // The half-title's count, and the search field's own result readout. The count names the
+        // whole shelf, not the filtered view — it says what you have, where "N found" says what
+        // the query matched, and conflating the two would leave a searching reader unable to see
+        // the size of the library they are searching.
+        val started = latestBooks.count { !it.unreadable && (it.progressFraction ?: 0f) > 0f }
+        libraryCount.text = when {
+            latestBooks.isEmpty() -> getString(R.string.library_nothing_yet)
+            latestBooks.size == 1 -> getString(R.string.library_count_one, latestBooks.size, started)
+            else -> getString(R.string.library_count, latestBooks.size, started)
+        }
+        val searching = searchQuery.isNotBlank()
+        libraryFound.text = if (searching) getString(R.string.library_found, rows.size) else ""
+        libraryFound.visibility = if (searching) View.VISIBLE else View.GONE
+
         if (filterActive && rows.isEmpty()) {
             emptyStateView.text = getString(R.string.library_empty_no_matches)
             emptyStateView.visibility = View.VISIBLE
