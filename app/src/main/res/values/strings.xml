@@ -36,22 +36,10 @@
     <!-- The list view's two sideheads: the two states a shelf actually has. -->
     <string name="shelf_reading_now">Reading now</string>
     <string name="shelf_not_started">Not started</string>
-    <string name="menu_search">Search</string>
-    <string name="menu_sort_by">Sort by</string>
-    <string name="menu_sort_title">Title</string>
-    <string name="menu_sort_author">Author</string>
-    <string name="menu_sort_recently_added">Recently added</string>
-    <string name="menu_sort_recently_opened">Recently opened</string>
-    <string name="menu_view">View</string>
-    <string name="menu_view_tiles">Tiles</string>
-    <string name="menu_view_list">List</string>
-    <string name="menu_flatten_folders">Flatten folders</string>
-    <string name="menu_filter">Filter</string>
     <string name="filter_all">All</string>
     <string name="filter_not_started">Not started</string>
     <string name="filter_in_progress">In progress</string>
     <string name="filter_finished">Finished</string>
-    <string name="menu_settings">Settings</string>
 
     <!-- Book status shown under a title -->
     <string name="status_in_progress">In progress</string>

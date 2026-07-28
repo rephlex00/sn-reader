@@ -3,8 +3,6 @@ package dev.reader.ui
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
-import android.view.Gravity
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
@@ -40,7 +38,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** [MenuItem.getItemId] -> the [SortOrder] it selects, or null for an item this menu doesn't own. */
+/**
+ * An action id -> the [SortOrder] it selects, or null for an id this mapping doesn't own.
+ *
+ * These were menu item ids. The overflow menu is gone — sort is four visible cells in the shelf's
+ * header now — but the ids survive in `values/ids.xml` as the stable way to *name* an action, which
+ * is what lets the library tests drive [LibraryActivity.selectMenuAction] by behaviour rather than
+ * by cell index.
+ */
 fun sortOrderForMenuItemId(itemId: Int): SortOrder? = when (itemId) {
     R.id.sort_title -> SortOrder.TITLE
     R.id.sort_author -> SortOrder.AUTHOR
@@ -50,10 +55,9 @@ fun sortOrderForMenuItemId(itemId: Int): SortOrder? = when (itemId) {
 }
 
 /**
- * The inverse of [sortOrderForMenuItemId]: which menu item's `checkable` state should reflect
- * [order] being the active sort. Used to restore the check-mark after a rotation rebuilds the
- * toolbar's menu from scratch (a fresh [MenuItem] is unchecked by default regardless of
- * [LibraryActivity.currentSort]).
+ * The inverse of [sortOrderForMenuItemId]: the action id naming [order]. Kept as the other half of
+ * a total mapping — a test that round-trips every enum through both directions is what proves
+ * neither has silently lost a case.
  */
 fun menuItemIdForSortOrder(order: SortOrder): Int = when (order) {
     SortOrder.TITLE -> R.id.sort_title
@@ -62,7 +66,7 @@ fun menuItemIdForSortOrder(order: SortOrder): Int = when (order) {
     SortOrder.RECENTLY_OPENED -> R.id.sort_recently_opened
 }
 
-/** [MenuItem.getItemId] -> the [StatusFilter] it selects, or null for an item this menu doesn't own. */
+/** An action id -> the [StatusFilter] it selects, or null for an id this mapping doesn't own. */
 fun statusFilterForMenuItemId(itemId: Int): StatusFilter? = when (itemId) {
     R.id.filter_all -> StatusFilter.ALL
     R.id.filter_not_started -> StatusFilter.NOT_STARTED
@@ -72,9 +76,8 @@ fun statusFilterForMenuItemId(itemId: Int): StatusFilter? = when (itemId) {
 }
 
 /**
- * The inverse of [statusFilterForMenuItemId]: which menu item's `checkable` state should reflect
- * [status] being the active filter. The mirror of [menuItemIdForSortOrder] for the filter group,
- * used the same way — to restore the check-mark after a rotation rebuilds the toolbar's menu.
+ * The inverse of [statusFilterForMenuItemId]: the action id naming [status]. The mirror of
+ * [menuItemIdForSortOrder] for the filter group, and total for the same reason.
  */
 fun menuItemIdForStatusFilter(status: StatusFilter): Int = when (status) {
     StatusFilter.ALL -> R.id.filter_all
@@ -83,12 +86,7 @@ fun menuItemIdForStatusFilter(status: StatusFilter): Int = when (status) {
     StatusFilter.FINISHED -> R.id.filter_finished
 }
 
-/**
- * Which view-mode menu item's `checkable` state should reflect [mode] being active. The mirror of
- * the click handling, used to restore the check-mark after a rotation rebuilds the toolbar's menu
- * (a fresh [MenuItem] is unchecked regardless of the persisted [ViewMode]) — exactly as
- * [menuItemIdForSortOrder] does for the sort group.
- */
+/** The action id naming [mode], as [menuItemIdForSortOrder] does for the sort group. */
 fun menuItemIdForViewMode(mode: ViewMode): Int = when (mode) {
     ViewMode.TILES -> R.id.view_tiles
     ViewMode.LIST -> R.id.view_list

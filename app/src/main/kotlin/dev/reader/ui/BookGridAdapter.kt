@@ -57,9 +57,13 @@ internal fun formatAuthor(raw: String?): String =
     raw?.trim { it.isWhitespace() || it == ';' || it == ',' }.orEmpty()
 
 /**
- * The badge shown for a book in **list** mode: the reading status from [statusOf], as a string
- * resource the caller resolves. Tiles keep [progressLabel]'s behavior instead (progress-if-opened,
- * nothing if never opened) — status text is a list-mode affordance only, per the brief.
+ * The reading status a book reports in **list** mode, as a string resource the caller resolves.
+ *
+ * Only an unreadable book actually renders through this now: a started book shows its percentage
+ * and an unstarted one reads NEW, so the right-hand column is a figure column rather than a
+ * sentence repeated down the page (see [bindBookRow]). The other two cases are kept because they
+ * are the honest answer to "what is this book's status", which is a question worth being able to
+ * ask; the row simply chooses not to phrase it that way.
  *
  * Returns a resource id rather than a string so this stays pure and testable without a Context,
  * which it can now do because no case interpolates anything: an unreadable book reports only that
