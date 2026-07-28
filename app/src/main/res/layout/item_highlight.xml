@@ -1,53 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One highlight row: a two-line body that fills the width (excerpt over chapter·%, tap to jump)
-     and a trailing ✕ (tap to delete). Monochrome, large tap targets, no ripple/animation. -->
+<!-- One note: the passage, set as the quotation it is, with its whole-book figure alongside.
+
+     The wash behind it is the same VEIL the pen leaves on the page, so the list and the page agree
+     about what a highlight looks like. VEIL is legal here and nowhere else in text: it is an area
+     *behind* INK, never a colour text is set in, and it is 8dp+ tall in every direction.
+
+     Long passages wrap freely — no truncation, no "…more". This is the only list in the app whose
+     rows are allowed to differ in height, because the content genuinely does.
+
+     The chapter is not repeated on every row: it is a sidehead above each group (see
+     HighlightAdapter), so the right column carries the figure alone.
+
+     No trailing ✕ — a note is removed by tapping it on the page, where you can see what you are
+     removing. Explained once at the foot of the list. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:baselineAligned="false"
+    android:clickable="true"
+    android:focusable="true"
     android:orientation="horizontal"
-    android:gravity="center_vertical">
+    android:paddingVertical="@dimen/space_snug">
 
-    <LinearLayout
-        android:id="@+id/highlight_body"
+    <TextView
+        android:id="@+id/highlight_excerpt"
+        style="@style/Text.Lead"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:orientation="vertical"
-        android:clickable="true"
-        android:focusable="true"
-        android:minHeight="48dp"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="10dp">
+        android:background="@color/reader_highlight_wash"
+        android:lineSpacingMultiplier="1.4"
+        android:textStyle="italic" />
 
-        <TextView
-            android:id="@+id/highlight_excerpt"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:maxLines="2"
-            android:ellipsize="end"
-            android:textColor="@android:color/black"
-            android:textSize="16sp" />
-
-        <TextView
-            android:id="@+id/highlight_meta"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="2dp"
-            android:textColor="@color/reader_text_secondary"
-            android:textSize="13sp" />
-    </LinearLayout>
-
-    <ImageView
-        android:id="@+id/highlight_delete"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:clickable="true"
-        android:focusable="true"
-        android:minWidth="48dp"
-        android:minHeight="48dp"
-        android:paddingHorizontal="16dp"
-        android:scaleType="fitCenter"
-        android:src="@drawable/ic_delete"
-        android:contentDescription="@string/highlight_delete" />
+    <TextView
+        android:id="@+id/highlight_meta"
+        style="@style/Text.Figure"
+        android:layout_marginStart="@dimen/space_loose"
+        android:paddingTop="@dimen/space_tight" />
 
 </LinearLayout>

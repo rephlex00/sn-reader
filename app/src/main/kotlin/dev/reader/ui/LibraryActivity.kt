@@ -12,6 +12,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
+import androidx.annotation.StringRes
 import androidx.core.widget.doAfterTextChanged
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
@@ -114,6 +115,23 @@ fun spanCountFor(widthPx: Int, columnWidthPx: Int): Int = (widthPx / columnWidth
  * density rather than a bug this pass is fixing.
  */
 private const val COLUMN_WIDTH_PX = 460
+
+/**
+ * The parts of the empty state that belong to first run alone: the kicker and its rule, the
+ * statement, the folder being scanned, the two controls, and the permission fact beneath them.
+ *
+ * A zero-match filter and the permission prompt are states inside a library that already exists, so
+ * they show the hint line by itself — a title page for either would overstate what has happened.
+ */
+private val FIRST_RUN_ONLY_IDS = listOf(
+    R.id.library_empty_kicker,
+    R.id.library_empty_rule,
+    R.id.library_empty_title,
+    R.id.library_empty_path,
+    R.id.library_empty_actions,
+    R.id.library_empty_foot_rule,
+    R.id.library_empty_foot,
+)
 
 /**
  * Parses a stored [SortOrder] name, falling back to [SortOrder.TITLE] for `null` (nothing stored
@@ -238,6 +256,14 @@ open class LibraryActivity : AppCompatActivity() {
      */
     protected lateinit var emptyStateView: TextView
 
+    /** The empty state's whole title-page block. [emptyStateView] is the hint line inside it, and
+     *  this is what is actually shown or hidden. */
+    private lateinit var libraryEmpty: View
+
+    /** Whether the empty state is on screen. The block's visibility, not the hint line's: the hint
+     *  is always visible *within* the block, so reading it would answer the wrong question. */
+    internal val emptyStateVisibility: Int get() = libraryEmpty.visibility
+
     /**
      * Debounces [openBook]. E-ink's delayed visual feedback makes double-taps routine — nothing
      * on screen changes for hundreds of milliseconds after the first tap, so users tap again —
@@ -299,6 +325,9 @@ open class LibraryActivity : AppCompatActivity() {
         librarySearch = header.findViewById(R.id.library_search)
         libraryFound = header.findViewById(R.id.library_found)
         wireHeaderCells()
+        header.findViewById<View>(R.id.library_settings).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
         librarySearch.doAfterTextChanged { text ->
             searchQuery = text?.toString().orEmpty()
             render()
@@ -338,16 +367,22 @@ open class LibraryActivity : AppCompatActivity() {
             }
         }
 
-        emptyStateView = TextView(this).apply {
-            gravity = Gravity.CENTER
-            setPadding(dp(24), dp(48), dp(24), dp(48))
+        // The shelf's empty state, set like a title page. One view serves all three of its roles —
+        // no books yet, a zero-match filter, and the permission prompt — with the parts that do not
+        // apply hidden; see showEmptyState.
+        libraryEmpty = layoutInflater.inflate(R.layout.library_empty, null).apply {
             visibility = View.GONE
         }
+        emptyStateView = libraryEmpty.findViewById(R.id.library_empty_hint)
+        libraryEmpty.findViewById<View>(R.id.library_empty_choose).setOnClickListener {
+            startActivity(Intent(this, DirectoryChooserActivity::class.java))
+        }
+        libraryEmpty.findViewById<View>(R.id.library_empty_rescan).setOnClickListener { runSync() }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(emptyStateView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(libraryEmpty, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(recyclerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         setContentView(root)
@@ -370,8 +405,7 @@ open class LibraryActivity : AppCompatActivity() {
             // blank grid here is indistinguishable from a broken app — say what's missing, and
             // persistently (not a Toast): the user may sit on this screen for a while before
             // acting.
-            emptyStateView.text = getString(R.string.library_permission_needed)
-            emptyStateView.visibility = View.VISIBLE
+            showEmptyState(R.string.library_permission_needed, firstRun = false)
             // The message says "tap here", so it has to be tappable. Naming the fix without
             // offering it is worse than saying nothing, especially on this ROM where the relevant
             // Settings screen is buried (see StorageAccess.requestAllFilesAccess's fallbacks).
@@ -751,11 +785,31 @@ open class LibraryActivity : AppCompatActivity() {
         libraryFound.visibility = if (searching) View.VISIBLE else View.GONE
 
         if (filterActive && rows.isEmpty()) {
-            emptyStateView.text = getString(R.string.library_empty_no_matches)
-            emptyStateView.visibility = View.VISIBLE
+            showEmptyState(R.string.library_empty_no_matches, firstRun = false)
+        } else if (!filterActive && rows.isEmpty() && latestBooks.isEmpty()) {
+            // Nothing filtered, nothing found: this is first run, not an error. It gets the whole
+            // title page — the statement, the folder that is actually being scanned, and the two
+            // controls that can do anything about it.
+            showEmptyState(R.string.library_empty_hint, firstRun = true)
         } else {
-            emptyStateView.visibility = View.GONE
+            libraryEmpty.visibility = View.GONE
         }
+    }
+
+    /**
+     * Shows the empty state with [hint] as its message.
+     *
+     * [firstRun] is the full title page — kicker, rule, statement, the real folder path, and the
+     * Choose-a-folder / Scan-again cells. Everything else (a zero-match filter, the permission
+     * prompt) is the hint line alone: those are states inside a library that exists, and dressing
+     * them as a title page would overstate them.
+     */
+    private fun showEmptyState(@StringRes hint: Int, firstRun: Boolean) {
+        emptyStateView.text = getString(hint)
+        libraryEmpty.visibility = View.VISIBLE
+        val firstRunOnly = if (firstRun) View.VISIBLE else View.GONE
+        for (id in FIRST_RUN_ONLY_IDS) libraryEmpty.findViewById<View>(id).visibility = firstRunOnly
+        libraryEmpty.findViewById<TextView>(R.id.library_empty_path).text = prefs.rootPath
     }
 
     /** "Library" at the root, otherwise the current folder's own name. */

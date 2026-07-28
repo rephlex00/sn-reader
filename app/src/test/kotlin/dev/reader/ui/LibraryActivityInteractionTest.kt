@@ -177,7 +177,11 @@ class LibraryActivityInteractionTest {
         controller.start().resume()
         idleUntil { syncCalls == 1 }
 
-        assertThat(activity.emptyStateVisibility).isEqualTo(View.GONE)
+        // The permission message is gone — but the shelf is still empty, and an empty shelf is a
+        // first-run screen rather than nothing. It now says so, and names the folder it scanned,
+        // instead of leaving a blank grid with no explanation.
+        assertThat(activity.emptyStateVisibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.emptyStateText).contains("Drop EPUB, CBZ or CBR files")
         assertThat(syncCalls).isEqualTo(1)
     }
 
@@ -343,7 +347,6 @@ class LibraryActivityInteractionTest {
         /** Drives the protected [openBook] — the adapter's tap callback — directly. */
         fun tap(book: BookEntity) = openBook(book)
 
-        val emptyStateVisibility: Int get() = emptyStateView.visibility
         val emptyStateText: String get() = emptyStateView.text.toString()
 
         val rows: List<LibraryRow> get() = adapter.currentList

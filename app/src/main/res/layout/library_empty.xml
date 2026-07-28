@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The shelf's empty state, set like a title page: a kicker, a rule, the statement, one
+     instruction, and the controls that get you out of it.
+
+     This is a first-run screen that had been pretending to be an error state — the first thing a
+     new sideloader sees. It states the actual folder, because "put files in the Document folder" is
+     the one instruction in this app that fails silently, and a path is the answer rather than
+     decoration. Two cells of equal weight, because choosing a folder and re-scanning are the only
+     two things that can help, and the second is what people need after they have already copied
+     files across.
+
+     Declarative, never apologetic. No illustration, no mascot, no "Oops".
+
+     The same view serves the app's other empty states — a zero-match filter, and the
+     permission-not-granted prompt — with the kicker, statement, path and cells hidden; see
+     LibraryActivity.showEmptyState. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingHorizontal="@dimen/margin_screen"
+    android:paddingTop="140dp">
+
+    <TextView
+        android:id="@+id/library_empty_kicker"
+        style="@style/Text.Mark"
+        android:text="@string/app_name" />
+
+    <View
+        android:id="@+id/library_empty_rule"
+        android:layout_width="56dp"
+        android:layout_height="@dimen/rule_head"
+        android:layout_marginTop="@dimen/space_loose"
+        android:layout_marginBottom="@dimen/space_loose"
+        android:background="@color/reader_rule" />
+
+    <TextView
+        android:id="@+id/library_empty_title"
+        style="@style/Text.Title"
+        android:gravity="center"
+        android:text="@string/library_empty_title" />
+
+    <!-- The hint. Also the whole of the message in the app's other two empty states, which is why
+         it keeps the id the rest of the Activity and its tests already know. -->
+    <TextView
+        android:id="@+id/library_empty_hint"
+        style="@style/Text.Sub"
+        android:layout_marginTop="@dimen/space"
+        android:gravity="center"
+        android:lineSpacingMultiplier="1.3"
+        android:maxWidth="420dp" />
+
+    <TextView
+        android:id="@+id/library_empty_path"
+        style="@style/Text.Row"
+        android:layout_marginTop="@dimen/space_loose"
+        android:gravity="center" />
+
+    <LinearLayout
+        android:id="@+id/library_empty_actions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_loose"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/library_empty_choose"
+            style="@style/Cell.Action"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingHorizontal="@dimen/space_loose"
+            android:text="@string/settings_change_folder" />
+
+        <TextView
+            android:id="@+id/library_empty_rescan"
+            style="@style/Cell.Action"
+            android:layout_marginStart="@dimen/space_snug"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingHorizontal="@dimen/space_loose"
+            android:text="@string/library_scan_again" />
+
+    </LinearLayout>
+
+    <!-- The permission fact: present for the person it is blocking, subordinate for everyone else.
+         Below a rule, not a dialog and not a banner, and it never polls to check. -->
+    <View
+        android:id="@+id/library_empty_foot_rule"
+        android:layout_width="420dp"
+        android:layout_height="@dimen/rule_section"
+        android:layout_marginTop="@dimen/space_section"
+        android:background="@color/reader_rule" />
+
+    <TextView
+        android:id="@+id/library_empty_foot"
+        style="@style/Text.Figure"
+        android:layout_marginTop="@dimen/space"
+        android:gravity="center"
+        android:lineSpacingMultiplier="1.3"
+        android:maxWidth="420dp"
+        android:text="@string/library_permission_fact" />
+
+</LinearLayout>

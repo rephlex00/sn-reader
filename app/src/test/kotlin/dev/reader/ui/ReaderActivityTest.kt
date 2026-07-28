@@ -1192,11 +1192,13 @@ class ReaderActivityTest {
         idleUntil { highlightsOf(path).size == 1 }
         activity.findViewById<View>(R.id.contents_button).performClick() // close
         activity.findViewById<View>(R.id.contents_button).performClick() // reopen + refresh
-        idleUntil { list.adapter!!.itemCount == 1 }
+        // Two adapter items for one note: the chapter sidehead above it, then the note itself.
+        // The chapter is said once per group now, rather than repeated on every row.
+        idleUntil { list.adapter!!.itemCount == 2 }
         assertThat(empty.visibility).isEqualTo(View.GONE)
 
         // Tapping the row jumps to its page and closes the chrome down to the page.
-        clickHighlightBody(activity, position = 0)
+        clickHighlightBody(activity, noteIndex = 0)
         idleUntil { overlayOf(activity).visibility == View.GONE }
         assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
         assertThat(panel.visibility).isEqualTo(View.GONE)
@@ -1204,8 +1206,8 @@ class ReaderActivityTest {
         // Reopen and delete via the row's ✕: the store empties and the empty state returns.
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         activity.findViewById<View>(R.id.contents_button).performClick()
-        idleUntil { list.adapter!!.itemCount == 1 }
-        clickHighlightDelete(activity, position = 0)
+        idleUntil { list.adapter!!.itemCount == 2 }
+        clickHighlightDelete(activity, noteIndex = 0)
         idleUntil { highlightsOf(path).isEmpty() }
         assertThat(highlightsOf(path)).isEmpty()
         idleUntil { empty.visibility == View.VISIBLE }
@@ -2747,29 +2749,41 @@ class ReaderActivityTest {
         return runBlocking { app.database.highlightDao().highlightsForBook(path) }
     }
 
-    /** Lays out the Highlights RecyclerView and clicks the tap-to-jump body of the row at [position]. */
-    private fun clickHighlightBody(activity: ReaderActivity, position: Int) {
-        layOutHighlightRow(activity, position).findViewById<View>(R.id.highlight_body).performClick()
+    /** Lays out the Notes RecyclerView and taps the row at [position] to jump to it. The whole row
+     *  is the target now — the inner tap-to-jump body went with the trailing ✕. */
+    private fun clickHighlightBody(activity: ReaderActivity, noteIndex: Int) {
+        layOutHighlightRow(activity, noteIndex).performClick()
     }
 
-    /** Lays out the Highlights RecyclerView and clicks the ✕ (delete) of the row at [position]. */
-    private fun clickHighlightDelete(activity: ReaderActivity, position: Int) {
-        layOutHighlightRow(activity, position).findViewById<View>(R.id.highlight_delete).performClick()
+    /** Long-presses the row at [position] to remove it. The trailing ✕ is gone: it sat a
+     *  finger's width from the panel's own dismiss, and a mis-tap destroyed a note with no undo. */
+    private fun clickHighlightDelete(activity: ReaderActivity, noteIndex: Int) {
+        layOutHighlightRow(activity, noteIndex).performLongClick()
     }
 
-    /** Measures/lays out the Highlights list (Robolectric does not on its own) and returns the row's
-     *  itemView, so a child click lands on a real holder. */
-    private fun layOutHighlightRow(activity: ReaderActivity, position: Int): View {
+    /**
+     * Measures/lays out the Notes list (Robolectric does not on its own) and returns the itemView of
+     * the [noteIndex]-th *note*.
+     *
+     * Adapter position is not note index: the list interleaves a chapter sidehead above each group,
+     * so position 0 is a head, not the first note. Counting note holders rather than positions keeps
+     * these tests indexing the thing they mean, whatever the grouping does.
+     */
+    private fun layOutHighlightRow(activity: ReaderActivity, noteIndex: Int): View {
         val list = activity.findViewById<RecyclerView>(R.id.highlights_list)
         list.measure(
             View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
         )
         list.layout(0, 0, 800, 600)
-        return (
-            list.findViewHolderForAdapterPosition(position)
-                ?: error("no highlight row at position $position after layout")
-            ).itemView
+        var seen = 0
+        for (position in 0 until (list.adapter?.itemCount ?: 0)) {
+            val holder = list.findViewHolderForAdapterPosition(position) ?: continue
+            if (holder !is HighlightAdapter.HighlightViewHolder) continue
+            if (seen == noteIndex) return holder.itemView
+            seen++
+        }
+        error("no note at index $noteIndex after layout")
     }
 
     /** A reader opened on a real multi-chapter book carrying a nav TOC, driven until its first page

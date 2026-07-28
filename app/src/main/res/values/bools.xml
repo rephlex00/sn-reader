@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Whether the panel is wider than it is tall. Read by ReaderActivity to fold the reader's two
+         chrome rows into one: 1872px of width fits the dismiss, the running head, the chapter and
+         both destinations on a single row, so landscape gets that second row back as page. -->
+    <bool name="chrome_single_row">false</bool>
+</resources>

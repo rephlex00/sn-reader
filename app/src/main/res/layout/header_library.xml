@@ -30,8 +30,6 @@
         <TextView
             android:id="@+id/library_title"
             style="@style/Text.Mark"
-            android:layout_width="0dp"
-            android:layout_weight="1"
             android:ellipsize="end"
             android:maxLines="1"
             android:text="@string/library_title" />
@@ -39,7 +37,26 @@
         <TextView
             android:id="@+id/library_count"
             style="@style/Text.Figure"
-            android:layout_marginStart="@dimen/space" />
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/space"
+            android:ellipsize="end"
+            android:maxLines="1" />
+
+        <!-- The way to the colophon. The overflow menu that used to hold it is gone, so it is a
+             word at the end of the half-title — the same grammar the reader's chrome uses, where
+             the dismiss sits left and the destinations sit right. -->
+        <TextView
+            android:id="@+id/library_settings"
+            style="@style/Text.Mark"
+            android:layout_marginStart="@dimen/space"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="@dimen/tap_target_min"
+            android:minHeight="@dimen/tap_target_min"
+            android:text="@string/settings_title"
+            android:textColor="@color/reader_text_primary" />
 
     </LinearLayout>
 

@@ -390,6 +390,7 @@ open class ReaderActivity : AppCompatActivity() {
         // after the overlay, so it draws above both the page and the chrome.
         titleView = overlay.findViewById(R.id.book_title)
         runningChapterView = overlay.findViewById(R.id.running_chapter)
+        applyChromeOrientation()
         scrubberView = overlay.findViewById(R.id.scrubber)
         // Literata + tabular numerals: the readout's digits (page counts, percentages) must not
         // shift width as they change, and the XML's default sans doesn't carry tabular figures.
@@ -812,6 +813,32 @@ open class ReaderActivity : AppCompatActivity() {
      * a refresh rather than a re-paginate — the cells are a direct choice now, so re-selecting the
      * chosen one is a no-op the reader can perform freely.
      */
+    /**
+     * Folds the reader's two chrome rows into one when the panel is wider than it is tall.
+     *
+     * 1872px fits the dismiss, the running head, the chapter and both destinations on a single 48dp
+     * row, so landscape gets the second row back as page. The running-head row's height is 0dp in
+     * `values-land`, and its two views have wide-mode twins in the destinations row; only one pair
+     * is ever visible, and [showPage] writes both so neither can go stale.
+     */
+    private fun applyChromeOrientation() {
+        val singleRow = resources.getBoolean(R.bool.chrome_single_row)
+        val wide = if (singleRow) View.VISIBLE else View.GONE
+        // The running-head row itself collapses. Set here rather than left to a values-land dimen:
+        // the layout's height was resolved once at inflate, and this Activity is never re-inflated
+        // across a rotation, so a qualified dimension alone would only ever apply to whichever
+        // orientation the reader happened to open in.
+        overlay.findViewById<View>(R.id.chrome_running_head).visibility =
+            if (singleRow) View.GONE else View.VISIBLE
+        overlay.findViewById<View>(R.id.book_title_wide).visibility = wide
+        overlay.findViewById<View>(R.id.running_chapter_wide).visibility = wide
+        overlay.findViewById<View>(R.id.chrome_wide_divider).visibility = wide
+        // The spacer pushes the destinations right in portrait; in landscape the running head's own
+        // weight does that job, and a second weighted view would halve it.
+        overlay.findViewById<View>(R.id.chrome_spacer).visibility =
+            if (singleRow) View.GONE else View.VISIBLE
+    }
+
     private fun applyTextSize(px: Float) {
         val current = ReaderPrefs(this).textSizePx
         val next = px.coerceIn(TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX)
@@ -948,6 +975,10 @@ open class ReaderActivity : AppCompatActivity() {
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        // The chrome folds to one row in landscape and back to two in portrait. This Activity
+        // declares configChanges for orientation (it re-paginates rather than reopening the book),
+        // so onCreate does not run again and this is the only place the chrome learns it rotated.
+        applyChromeOrientation()
         // Nothing is open yet. The open path measures the viewport for itself — and when it is
         // already in flight when this arrives, it has ALREADY measured, so it finishes against a
         // viewport that no longer exists. That case is caught after the open instead, by
@@ -1291,6 +1322,7 @@ open class ReaderActivity : AppCompatActivity() {
                 // Both surfaces name the book they belong to. On a device with four books half-read
                 // that matters more than a panel title repeating its own name back at you.
                 backMatter.setBookTitle(titleView.text.toString())
+                overlay.findViewById<TextView>(R.id.book_title_wide).text = titleView.text
                 overlay.findViewById<TextView>(R.id.type_book).text = titleView.text
 
                 // The stored position for this book, if it is in the library. getByPath is the only
@@ -1709,6 +1741,7 @@ open class ReaderActivity : AppCompatActivity() {
         // convention a printed page uses. Set on the same turn as the foot so the two never
         // disagree, and blank rather than stale when the TOC names nothing for this chapter.
         runningChapterView.text = chapterTitle.orEmpty()
+        overlay.findViewById<TextView>(R.id.running_chapter_wide).text = chapterTitle.orEmpty()
         pageView.setRunningFoot(
             chapterTitle,
             pageIndex + 1,

@@ -59,7 +59,43 @@
                 android:text="@string/reader_back"
                 android:textColor="@color/reader_text_primary" />
 
+            <!-- The running head, in landscape only. 1872px fits everything on one row, so the
+                 second row folds away and the book and chapter move up here — landscape gets that
+                 row back as page rather than paying for a layout it does not need. Both copies
+                 exist rather than one being reparented on rotation: reparenting a view mid-config-
+                 change is fiddly and this is four TextViews. ReaderActivity writes both and shows
+                 whichever the orientation calls for. -->
+            <TextView
+                android:id="@+id/book_title_wide"
+                style="@style/Text.Sub"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_marginStart="@dimen/space_loose"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textStyle="italic"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/running_chapter_wide"
+                style="@style/Text.Mark"
+                android:layout_marginEnd="@dimen/space_loose"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:visibility="gone" />
+
+            <!-- A 2dp divider separates the running head from the two destinations, so the row
+                 reads as "where you are | where you can go" rather than as one long run. -->
             <View
+                android:id="@+id/chrome_wide_divider"
+                android:layout_width="@dimen/rule_section"
+                android:layout_height="24dp"
+                android:layout_marginEnd="@dimen/space_loose"
+                android:background="@color/reader_rule"
+                android:visibility="gone" />
+
+            <View
+                android:id="@+id/chrome_spacer"
                 android:layout_width="0dp"
                 android:layout_height="1dp"
                 android:layout_weight="1" />

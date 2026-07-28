@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The portrait default for the one dimension landscape overrides on its own.
+
+  In portrait a panel simply fills the screen, so there is no cap; the value is larger than any
+  portrait width, which is how "no cap" is spelled for a max-width that must always exist.
+-->
+<resources>
+    <dimen name="panel_max_width">4000dp</dimen>
+</resources>

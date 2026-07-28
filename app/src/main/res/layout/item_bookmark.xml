@@ -1,37 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One bookmark row: a label that fills the width (tap to jump) and a trailing ✕ (tap to delete).
-     Monochrome, large tap targets, no ripple/animation. Black on white, e-ink-crisp. -->
+<!-- One mark: the chapter on the left, its whole-book figure on the right.
+
+     No leaders here. Leaders are the app's device for "this name points at that place in the book",
+     and they belong to Contents; a mark is a saved position, and the tabular right column carries
+     the figure on its own.
+
+     No trailing ✕ either. One on every row would put forty pictograms on a surface built to avoid
+     them, and it sat a finger's width from the panel's own dismiss — a mis-tap destroyed a mark
+     with no confirmation and no undo. Removal is a long press, explained once under the "Remove"
+     sidehead at the foot of the list.
+
+     e-ink: no ripple, no animation, whole row is the tap target. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:gravity="center_vertical">
+    android:baselineAligned="true"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="@dimen/row_height"
+    android:orientation="horizontal">
 
     <TextView
         android:id="@+id/bookmark_label"
+        style="@style/Text.Row"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:clickable="true"
-        android:focusable="true"
-        android:minHeight="48dp"
-        android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp"
-        android:textColor="@android:color/black"
-        android:textSize="16sp" />
+        android:ellipsize="end"
+        android:maxLines="1" />
 
-    <ImageView
-        android:id="@+id/bookmark_delete"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:clickable="true"
-        android:focusable="true"
-        android:minWidth="48dp"
-        android:minHeight="48dp"
-        android:paddingHorizontal="16dp"
-        android:scaleType="fitCenter"
-        android:src="@drawable/ic_delete"
-        android:contentDescription="@string/bookmark_delete" />
+    <TextView
+        android:id="@+id/bookmark_percent"
+        style="@style/Text.Figure"
+        android:layout_marginStart="@dimen/space" />
 
 </LinearLayout>

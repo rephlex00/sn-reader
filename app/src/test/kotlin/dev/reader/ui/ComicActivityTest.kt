@@ -637,7 +637,8 @@ class ComicActivityTest {
         // being left) exactly like a Contents/highlight jump does in the EPUB reader — this is the
         // parity gap ↩ existed to close.
         a.findViewById<View>(R.id.comic_bookmarks_button).performClick()
-        layOutBookmarkRow(a, 0).findViewById<View>(R.id.bookmark_label).performClick()
+        // The whole row is the tap target now, not just its label.
+        layOutBookmarkRow(a, 0).performClick()
         idleUntil { a.currentPageForTest == 5 }
         assertThat(a.currentPageForTest).isEqualTo(5)
         assertThat(backControl.visibility).isEqualTo(View.VISIBLE)
@@ -664,7 +665,8 @@ class ComicActivityTest {
 
         a.findViewById<View>(R.id.comic_bookmarks_button).performClick()
         assertThat(a.findViewById<View>(R.id.comic_bookmarks_list).visibility).isEqualTo(View.VISIBLE)
-        layOutBookmarkRow(a, 0).findViewById<View>(R.id.bookmark_delete).performClick()
+        // Removal is a long press now, not a trailing ✕ a stray tap could hit.
+        layOutBookmarkRow(a, 0).performLongClick()
 
         idleUntil { a.bookmarkedPagesForTest.isEmpty() }
         assertThat(a.bookmarkedPagesForTest).isEmpty()
