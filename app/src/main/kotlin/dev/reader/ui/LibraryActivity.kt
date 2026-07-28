@@ -762,7 +762,12 @@ open class LibraryActivity : AppCompatActivity() {
         } else {
             folderListing(latestBooks, root, currentFolder, prefs.flatten)
         }
-        adapter.render(rows, prefs.viewMode)
+        // The list view groups the shelf under its two states; the cover grid does not — a board
+        // already carries its own progress chip, so a second statement of the same thing there
+        // would be redundant.
+        val presented =
+            if (prefs.viewMode == ViewMode.LIST) withShelfSideheads(rows) else rows
+        adapter.render(presented, prefs.viewMode)
         // While a filter is active the grid is flat results across the whole library, not a
         // listing of currentFolder — showing the folder's name in the toolbar would misleadingly
         // imply the results are scoped to it. Fall back to the root title (titleFor(root, root),

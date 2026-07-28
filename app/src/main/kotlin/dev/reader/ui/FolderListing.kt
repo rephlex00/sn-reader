@@ -1,5 +1,6 @@
 package dev.reader.ui
 
+import dev.reader.R
 import dev.reader.data.BookEntity
 import java.io.File
 
@@ -17,6 +18,42 @@ sealed interface LibraryRow {
 
     /** A book whose parent directory is exactly the directory being listed. */
     data class Book(val entity: BookEntity) : LibraryRow
+
+    /**
+     * A sidehead naming what follows: "Reading now", "Not started".
+     *
+     * List mode only, and inserted by [withShelfSideheads] rather than by [folderListing] — the
+     * cover grid keeps a book's state on the board itself, in the progress chip, so a second
+     * statement of it there would be redundant.
+     */
+    data class Sidehead(val labelRes: Int) : LibraryRow
+}
+
+/**
+ * Splits [rows] into "Reading now" and "Not started", each under its own sidehead.
+ *
+ * Those are the two states a shelf actually has, and saying them lets a reader stop inferring the
+ * sort order from the rows themselves. Books keep the order they arrive in *within* each group, so
+ * whichever sort is active still decides what comes first.
+ *
+ * Returns [rows] untouched when a group would be empty or when there are folders in the listing:
+ * a heading over every row, or over one of two groups, states nothing, and folders belong to
+ * neither state. Pure.
+ */
+fun withShelfSideheads(rows: List<LibraryRow>): List<LibraryRow> {
+    if (rows.any { it is LibraryRow.Folder }) return rows
+    val books = rows.filterIsInstance<LibraryRow.Book>()
+    if (books.size != rows.size) return rows
+
+    val (started, fresh) = books.partition { statusOf(it.entity) == BookStatus.IN_PROGRESS }
+    if (started.isEmpty() || fresh.isEmpty()) return rows
+
+    return buildList {
+        add(LibraryRow.Sidehead(R.string.shelf_reading_now))
+        addAll(started)
+        add(LibraryRow.Sidehead(R.string.shelf_not_started))
+        addAll(fresh)
+    }
 }
 
 enum class BookStatus { IN_PROGRESS, NOT_STARTED, UNREADABLE }

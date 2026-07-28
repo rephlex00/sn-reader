@@ -211,6 +211,7 @@ open class BookGridAdapter(
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
         is LibraryRow.Book -> if (viewMode == ViewMode.TILES) VIEW_TYPE_BOOK_TILE else VIEW_TYPE_BOOK_ROW
         is LibraryRow.Folder -> if (viewMode == ViewMode.TILES) VIEW_TYPE_FOLDER_TILE else VIEW_TYPE_FOLDER_ROW
+        is LibraryRow.Sidehead -> VIEW_TYPE_SIDEHEAD
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -220,6 +221,7 @@ open class BookGridAdapter(
             VIEW_TYPE_FOLDER_TILE -> FolderViewHolder(inflater.inflate(R.layout.item_folder_tile, parent, false))
             VIEW_TYPE_BOOK_ROW -> BookRowViewHolder(inflater.inflate(R.layout.item_book_row, parent, false))
             VIEW_TYPE_FOLDER_ROW -> FolderViewHolder(inflater.inflate(R.layout.item_folder_row, parent, false))
+            VIEW_TYPE_SIDEHEAD -> SideheadViewHolder(inflater.inflate(R.layout.item_sidehead, parent, false))
             else -> error("Unknown view type $viewType")
         }
     }
@@ -235,6 +237,32 @@ open class BookGridAdapter(
                 is FolderViewHolder -> bindFolder(holder, row)
                 else -> error("Folder row bound to ${holder::class.simpleName}")
             }
+            is LibraryRow.Sidehead -> when (holder) {
+                is SideheadViewHolder -> holder.bind(row)
+                else -> error("Sidehead bound to ${holder::class.simpleName}")
+            }
+        }
+    }
+
+    /** "Reading now" / "Not started" — the two states a shelf has, said rather than inferred. */
+    class SideheadViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        private val sidehead = view as SideheadView
+
+        init {
+            // The shelf's rows carry the screen margin in their own padding, and this list's
+            // RecyclerView has none — so the sidehead has to bring its own or it starts at the
+            // screen edge. Set here rather than in item_sidehead.xml because the notes list reuses
+            // that layout inside an already-padded RecyclerView, where a margin would double it.
+            val margin = view.resources.getDimensionPixelSize(R.dimen.margin_screen)
+            (view.layoutParams as? ViewGroup.MarginLayoutParams)?.let {
+                it.marginStart = margin
+                it.marginEnd = margin
+            }
+        }
+
+        fun bind(row: LibraryRow.Sidehead) {
+            sidehead.label = itemView.context.getString(row.labelRes)
+            sidehead.form = SideheadView.Form.RULED
         }
     }
 
@@ -409,6 +437,7 @@ open class BookGridAdapter(
         const val VIEW_TYPE_FOLDER_TILE = 1
         const val VIEW_TYPE_BOOK_ROW = 2
         const val VIEW_TYPE_FOLDER_ROW = 3
+        const val VIEW_TYPE_SIDEHEAD = 4
 
         private val DIFF_CALLBACK = object : DiffUtil.ItemCallback<LibraryRow>() {
             override fun areItemsTheSame(oldItem: LibraryRow, newItem: LibraryRow): Boolean = when {
@@ -416,6 +445,11 @@ open class BookGridAdapter(
                     oldItem.entity.path == newItem.entity.path
                 oldItem is LibraryRow.Folder && newItem is LibraryRow.Folder ->
                     oldItem.path == newItem.path
+                // Two sideheads are the same row when they name the same section. Without this
+                // they always differ, and "Reading now" would be torn down and rebuilt on every
+                // emission — a redraw of a heading that did not change.
+                oldItem is LibraryRow.Sidehead && newItem is LibraryRow.Sidehead ->
+                    oldItem.labelRes == newItem.labelRes
                 else -> false
             }
 
