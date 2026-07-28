@@ -79,6 +79,9 @@ class CellRowView @JvmOverloads constructor(
                 text = label
                 gravity = Gravity.CENTER
                 includeFontPadding = false
+                // A cell label is one line by construction. If it will not fit, the group is too
+                // narrow and that is a layout to fix, not a word to break.
+                maxLines = 1
                 isClickable = true
                 minWidth = resources.getDimensionPixelSize(R.dimen.cell_min_width)
                 minHeight = resources.getDimensionPixelSize(R.dimen.cell_height)
@@ -113,8 +116,13 @@ class CellRowView @JvmOverloads constructor(
                 }
             }
 
+            // WRAP_CONTENT *with* a weight, never 0dp with a weight. A weighted child of width 0
+            // inside a wrap_content group is measured against a remaining space of zero, so every
+            // cell collapses to its minWidth and a label wider than that wraps: NORMAL became
+            // "NORM AL", FASTER became "FASTE R". Measuring the label first and then distributing
+            // the slack equally gives cells that are both equal and wide enough for their text.
             val params = if (equalWidths) {
-                LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT, 1f)
             } else {
                 LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT)
             }

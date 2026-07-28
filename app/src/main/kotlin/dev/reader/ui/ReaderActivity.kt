@@ -169,6 +169,10 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private lateinit var overlay: View
     private lateinit var titleView: TextView
+
+    /** The right-hand side of the running head: the chapter you are in, in tracked caps. Kept in
+     *  step with the page's own foot — see [showPage]. */
+    private lateinit var runningChapterView: TextView
     private lateinit var scrubberView: TextView
 
     /** The last text [setRestingReadout] wrote to [scrubberView] — the "page X of Y · N left in
@@ -385,6 +389,7 @@ open class ReaderActivity : AppCompatActivity() {
         // The on-page delete chip is added to this container too, by HighlightsController below —
         // after the overlay, so it draws above both the page and the chrome.
         titleView = overlay.findViewById(R.id.book_title)
+        runningChapterView = overlay.findViewById(R.id.running_chapter)
         scrubberView = overlay.findViewById(R.id.scrubber)
         // Literata + tabular numerals: the readout's digits (page counts, percentages) must not
         // shift width as they change, and the XML's default sans doesn't carry tabular figures.
@@ -1283,6 +1288,10 @@ open class ReaderActivity : AppCompatActivity() {
                 // the currently-unreachable case of a blank title slipping through.
                 titleView.text = doc.metadata.title.takeIf { it.isNotBlank() }
                     ?: File(file.path).nameWithoutExtension
+                // Both surfaces name the book they belong to. On a device with four books half-read
+                // that matters more than a panel title repeating its own name back at you.
+                backMatter.setBookTitle(titleView.text.toString())
+                overlay.findViewById<TextView>(R.id.type_book).text = titleView.text
 
                 // The stored position for this book, if it is in the library. getByPath is the only
                 // read on IO; resolveStart and every chapter() below stay on the main thread, as
@@ -1695,8 +1704,13 @@ open class ReaderActivity : AppCompatActivity() {
         )
         // Same once-per-turn readout as the progress bar and scrubber above — chapterTitleFor is the
         // same pure TOC lookup the bookmarks/highlights rows already use.
+        val chapterTitle = chapterTitleFor(doc.toc, next.spineIndex)
+        // The chrome's running head: book on the left, chapter on the right, the recto/verso
+        // convention a printed page uses. Set on the same turn as the foot so the two never
+        // disagree, and blank rather than stale when the TOC names nothing for this chapter.
+        runningChapterView.text = chapterTitle.orEmpty()
         pageView.setRunningFoot(
-            chapterTitleFor(doc.toc, next.spineIndex),
+            chapterTitle,
             pageIndex + 1,
             chapter.pages.size,
             // "pages 3–4 of 12" for a full spread; the singular form when the right column is blank,

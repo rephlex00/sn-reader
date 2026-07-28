@@ -104,12 +104,16 @@ fun spanCountFor(widthPx: Int, columnWidthPx: Int): Int = (widthPx / columnWidth
  * A grid cell's target width in raw pixels, used only by [spanCountFor] to compute the span count
  * from the recycler's measured width (also in raw pixels). This is **not** shared with
  * `item_book.xml`'s layout, which sizes its cover/text views with `match_parent`/dp and never
- * references this constant — an earlier version of this comment claimed otherwise. Because it's
- * px rather than dp, the column count this yields will vary with screen density in a way dp-based
- * layout wouldn't; left as-is since the value itself is a call for whoever owns the visual
- * density, not a bug this pass is fixing.
+ * references this constant.
+ *
+ * Raised from 260px, which put five columns on the Nomad's 1404px panel. At 300 dpi a board wants
+ * to be a legible object: five-up reduced every cover to a thumbnail and every title to a
+ * truncated line, which is what made the shelf read as a file browser. 460px gives three columns
+ * here, matching the board proportions `item_book.xml` is drawn for. Still px rather than dp, so
+ * the count varies with density — unchanged from before, and a call for whoever owns the visual
+ * density rather than a bug this pass is fixing.
  */
-private const val COLUMN_WIDTH_PX = 260
+private const val COLUMN_WIDTH_PX = 460
 
 /**
  * Parses a stored [SortOrder] name, falling back to [SortOrder.TITLE] for `null` (nothing stored
