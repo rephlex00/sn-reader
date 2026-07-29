@@ -52,7 +52,7 @@
             android:clickable="true"
             android:contentDescription="@string/library_find"
             android:focusable="true"
-            android:padding="@dimen/space_snug"
+            android:padding="@dimen/glyph_inset"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_search" />
 
@@ -64,114 +64,19 @@
             android:clickable="true"
             android:contentDescription="@string/settings_title"
             android:focusable="true"
-            android:padding="@dimen/space_snug"
+            android:padding="@dimen/glyph_inset"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_settings" />
 
     </LinearLayout>
 
-    <!-- EDGE: the half-title belongs to the shelf, not to whatever is folded out under it. -->
+    <!-- EDGE: the half-title belongs to the shelf below it. It runs to the boards' own outer
+         edge rather than the text margin — it is underlining the shelf, not the words. -->
     <View
         android:layout_width="match_parent"
         android:layout_height="@dimen/rule_edge"
         android:layout_marginTop="@dimen/space_tight"
-        android:layout_marginHorizontal="@dimen/margin_screen"
+        android:layout_marginHorizontal="@dimen/shelf_edge"
         android:background="@color/reader_rule" />
-
-    <!-- Everything below is revealed by the search mark and hidden again by it. -->
-    <LinearLayout
-        android:id="@+id/library_find_panel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:visibility="gone">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="@dimen/margin_screen"
-            android:paddingTop="@dimen/space">
-
-            <FrameLayout
-                android:layout_width="0dp"
-                android:layout_height="@dimen/cell_height"
-                android:layout_weight="1"
-                android:background="@drawable/cell_group">
-
-                <!-- No caret. A blinking cursor is an animation, and an animation on this panel is
-                     a partial refresh several times a second for as long as the field is focused —
-                     the one thing the whole app is built to avoid. The typed text is its own
-                     evidence that the field is live. -->
-                <EditText
-                    android:id="@+id/library_search"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:background="@null"
-                    android:cursorVisible="false"
-                    android:hint="@string/library_search_hint"
-                    android:imeOptions="actionSearch"
-                    android:inputType="text"
-                    android:maxLines="1"
-                    android:paddingHorizontal="@dimen/cell_padding_h"
-                    android:paddingEnd="96dp"
-                    android:textColor="@color/reader_text_primary"
-                    android:textColorHint="@color/reader_text_secondary"
-                    android:textSize="@dimen/text_row" />
-
-                <TextView
-                    android:id="@+id/library_found"
-                    style="@style/Text.Mark"
-                    android:layout_gravity="end|center_vertical"
-                    android:layout_marginEnd="@dimen/cell_padding_h"
-                    android:visibility="gone" />
-
-            </FrameLayout>
-
-            <dev.reader.ui.CellRowView
-                android:id="@+id/library_view_cells"
-                android:layout_width="wrap_content"
-                android:layout_height="@dimen/cell_height"
-                android:layout_marginStart="@dimen/space_snug" />
-
-        </LinearLayout>
-
-        <!-- Which books, and in what order. Three each, so both fit one row: the filter names the
-             three states a shelf has, and the sort needs no label of its own beside them. -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="@dimen/margin_screen"
-            android:paddingTop="@dimen/space_snug">
-
-            <dev.reader.ui.CellRowView
-                android:id="@+id/library_filter_cells"
-                android:layout_width="wrap_content"
-                android:layout_height="@dimen/cell_height" />
-
-            <View
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <dev.reader.ui.CellRowView
-                android:id="@+id/library_sort_cells"
-                android:layout_width="wrap_content"
-                android:layout_height="@dimen/cell_height" />
-
-        </LinearLayout>
-
-        <!-- HEAD: everything below is the shelf itself. -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/rule_head"
-            android:layout_marginTop="@dimen/space"
-            android:layout_marginHorizontal="@dimen/margin_screen"
-            android:background="@color/reader_rule" />
-
-    </LinearLayout>
 
 </LinearLayout>

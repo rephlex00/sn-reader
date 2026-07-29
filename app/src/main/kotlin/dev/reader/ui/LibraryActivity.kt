@@ -227,6 +227,11 @@ open class LibraryActivity : AppCompatActivity() {
      *  separate results banner, and no filtered-to-nothing state with nothing to explain it. */
     private lateinit var libraryFound: TextView
 
+    /** Search, filter, sort and view. It floats OVER the boards rather than sitting above them:
+     *  reaching for search must not re-lay-out the shelf underneath, or dismissing the panel would
+     *  put the reader somewhere the repagination moved them to rather than back where they were. */
+    private lateinit var findPanel: View
+
     /**
      * The directory currently shown, an invariant-clamped path that is [rootPath][LibraryPrefs.rootPath]
      * itself or somewhere beneath it (see [clampToRoot]). Initialized from `prefs.lastFolderPath`,
@@ -341,6 +346,9 @@ open class LibraryActivity : AppCompatActivity() {
         }
         adapter = BookGridAdapter(lifecycleScope, ::openBook, ::openFolder)
         recyclerView.adapter = adapter
+        // Inflated here rather than beside the header it belongs to: shelfFrame stacks it over the
+        // grid below, so it has to exist before that frame is built.
+        findPanel = layoutInflater.inflate(R.layout.library_find_panel, null)
         shelfFrame = FrameLayout(this).apply {
             addView(
                 recyclerView,
@@ -348,6 +356,15 @@ open class LibraryActivity : AppCompatActivity() {
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     Gravity.CENTER_VERTICAL,
+                ),
+            )
+            // Added after the grid, so it draws above it.
+            addView(
+                findPanel,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP,
                 ),
             )
         }
@@ -359,8 +376,8 @@ open class LibraryActivity : AppCompatActivity() {
         header = layoutInflater.inflate(R.layout.header_library, null)
         libraryTitle = header.findViewById(R.id.library_title)
         libraryCount = header.findViewById(R.id.library_count)
-        librarySearch = header.findViewById(R.id.library_search)
-        libraryFound = header.findViewById(R.id.library_found)
+        librarySearch = findPanel.findViewById(R.id.library_search)
+        libraryFound = findPanel.findViewById(R.id.library_found)
         wireHeaderCells()
         header.findViewById<View>(R.id.library_settings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -368,7 +385,6 @@ open class LibraryActivity : AppCompatActivity() {
         // Search, filter and sort are folded away until asked for: they are how you narrow a shelf,
         // not how you read one, and a reader who knows which book they want should see books rather
         // than the machinery for finding them.
-        val findPanel = header.findViewById<View>(R.id.library_find_panel)
         header.findViewById<View>(R.id.library_find).setOnClickListener {
             val opening = findPanel.visibility != View.VISIBLE
             findPanel.visibility = if (opening) View.VISIBLE else View.GONE
@@ -377,9 +393,6 @@ open class LibraryActivity : AppCompatActivity() {
                 // behind a hidden field would be a shelf that has silently lost most of itself.
                 librarySearch.setText("")
             }
-            // Revealing or hiding the controls changes how much room the shelf has, so the boards
-            // repaginate around them rather than keeping a page sized for the other state.
-            shelfPage = 0
             render()
         }
         librarySearch.doAfterTextChanged { text ->
@@ -589,7 +602,7 @@ open class LibraryActivity : AppCompatActivity() {
         cells(R.id.library_sort_cells).choose(sortOptions.indexOf(currentSort).coerceAtLeast(0))
     }
 
-    private fun cells(id: Int): CellRowView = header.findViewById(id)
+    private fun cells(id: Int): CellRowView = findPanel.findViewById(id)
 
     /**
      * Performs a library action by its old menu id.
