@@ -135,6 +135,7 @@
 
     <string name="type_head_face">The face</string>
     <string name="type_head_size">The size</string>
+    <string name="type_head_spacing">The spacing</string>
     <string name="type_head_page">The page</string>
     <string name="type_head_book">This book</string>
     <string name="type_head_screen">The screen</string>

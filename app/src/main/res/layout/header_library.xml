@@ -71,7 +71,12 @@
     </LinearLayout>
 
     <!-- EDGE: the half-title belongs to the shelf below it. It runs to the boards' own outer
-         edge rather than the text margin — it is underlining the shelf, not the words. -->
+         edge rather than the text margin — it is underlining the shelf, not the words.
+
+         Full rule_edge weight, DELIBERATELY not the reader chrome's 2dp: that lighter weight
+         exists because a 6dp bar directly against a page of prose read as something the text had
+         to look past (see rule_chrome). This rule bounds furniture against boards — covers that
+         are themselves heavy blacks — where 6dp holds its own without competing with anything. -->
     <View
         android:layout_width="match_parent"
         android:layout_height="@dimen/rule_edge"

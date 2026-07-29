@@ -288,9 +288,9 @@ class ReaderActivityTest {
     // -- Plan 4 Task 2: the reading overlay (the way out) --------------------------------------
 
     @Test
-    fun `scrubberText reads chapter-relative, one-based`() {
-        assertThat(scrubberText(0, 5)).isEqualTo("page 1 of 5 · 4 left in chapter")
-        assertThat(scrubberText(4, 5)).isEqualTo("page 5 of 5 · 0 left in chapter")
+    fun `scrubberText reads a one-based chapter page and the whole-book percent`() {
+        assertThat(scrubberText(0, 5, 12)).isEqualTo("page 1 of 5 · 12%")
+        assertThat(scrubberText(4, 5, 100)).isEqualTo("page 5 of 5 · 100%")
     }
 
     @Test
@@ -542,15 +542,14 @@ class ReaderActivityTest {
         // differently from testRenderConfig), read straight off the live readout.
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         val opened = scrubberTextOf(activity)
-        assertThat(opened).matches("""page 1 of \d+ · \d+ left in chapter""")
+        assertThat(opened).matches("""page 1 of \d+ · \d+%""")
         val y = Regex("""of (\d+)""").find(opened)!!.groupValues[1].toInt()
-        assertThat(opened).isEqualTo(scrubberText(0, y))
 
         // Hide, then turn a page (turns only happen while the overlay is hidden). The readout must
         // reflect the new page the next time the overlay opens.
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         pageViewOf(activity).onTap!!.invoke(TapZone.NEXT)
-        assertThat(scrubberTextOf(activity)).isEqualTo(scrubberText(1, y))
+        assertThat(scrubberTextOf(activity)).startsWith("page 2 of $y · ")
     }
 
     @Test
@@ -648,7 +647,7 @@ class ReaderActivityTest {
         assertThat(cellsOf(activity, R.id.size_cells).chosen()).isEqualTo(3)
         // The chapter re-paginated live without crashing; the reader is still on a valid page and the
         // sheet stayed open.
-        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+ left in chapter""")
+        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+%""")
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
     }
 
@@ -666,7 +665,7 @@ class ReaderActivityTest {
 
         assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).fontFamily).isEqualTo("bitter")
         // Re-paginated live without crashing; still on a valid page, sheet still open.
-        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+ left in chapter""")
+        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+%""")
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
     }
 
@@ -1245,7 +1244,7 @@ class ReaderActivityTest {
         // policy targets chapter 1 — the chapter the next boundary turn would cross into.
         val pages = pageCountOf(scrubberTextOf(activity))
         repeat(pages - 1) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
-        assertThat(scrubberTextOf(activity)).isEqualTo(scrubberText(pages - 1, pages))
+        assertThat(scrubberTextOf(activity)).startsWith("page $pages of $pages · ")
 
         // The background prefetch paginates chapter 1 off the main thread and publishes it; idle
         // until it lands as a cache hit — proving the wiring computes AND publishes the neighbour.

@@ -178,10 +178,13 @@
          No values-land twin, and that is not an oversight — a row is the same height in both
          orientations (landscape only makes it wider), so these were measured once and hold for
          both. Landscape simply has less page left over, which is the honest trade for a 749dp-tall
-         screen. -->
-    <dimen name="type_sheet_text">430dp</dimen>
-    <dimen name="type_sheet_page">510dp</dimen>
-    <dimen name="type_sheet_screen">540dp</dimen>
+         screen.
+
+         Each value is its tab's content plus ONE MODULE of air at the foot — measured as content
+         31/17/42dp of air respectively before this pass, i.e. three different feet on one sheet. -->
+    <dimen name="type_sheet_text">464dp</dimen>
+    <dimen name="type_sheet_page">520dp</dimen>
+    <dimen name="type_sheet_screen">524dp</dimen>
 
     <!-- The minimum any tappable thing may be. -->
     <dimen name="tap_target_min">48dp</dimen>

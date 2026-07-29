@@ -46,13 +46,14 @@
                 style="@style/ChromeGlyph.Back"
                 android:contentDescription="@string/action_back" />
 
-            <!-- The comic's title, in the seat the book's title holds — beside the way out. -->
+            <!-- The comic's title, in the seat the book's title holds — beside the way out. No
+                 start margin: the ‹ draws at the start of its box, whose empty remainder is the
+                 gap (see ChromeGlyph.Back). -->
             <TextView
                 android:id="@+id/comic_title"
                 style="@style/Text.Sub.BookTitle"
                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_marginStart="@dimen/space_snug"
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:textStyle="italic" />

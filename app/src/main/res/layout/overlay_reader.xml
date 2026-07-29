@@ -59,12 +59,13 @@
                 style="@style/ChromeGlyph.Back"
                 android:contentDescription="@string/action_back" />
 
+            <!-- No start margin: the ‹ draws at the START of its 48dp box (see ChromeGlyph.Back),
+                 so the box's own empty remainder is the gap between glyph and title. -->
             <TextView
                 android:id="@+id/book_title"
                 style="@style/Text.Sub.BookTitle"
                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_marginStart="@dimen/space_snug"
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:textStyle="italic" />
@@ -600,18 +601,21 @@
                         android:layout_height="@dimen/cell_height"
                         android:layout_marginTop="@dimen/space_snug" />
 
-                    <LinearLayout style="@style/TypeRow">
+                    <!-- The same sidehead grammar as the face and the size above — this tab's rows
+                         are all full-width specimens under sideheads, where PAGE and SCREEN are
+                         inline label + cells. One inline row here made TEXT the tab that mixed
+                         the two grammars. -->
+                    <dev.reader.ui.SideheadView
+                        android:id="@+id/type_head_spacing"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_loose" />
 
-                        <TextView
-                            style="@style/Text.Row.Label"
-                            android:text="@string/setting_line_spacing" />
-
-                        <dev.reader.ui.CellRowView
-                            android:id="@+id/spacing_cells"
-                            android:layout_width="wrap_content"
-                            android:layout_height="@dimen/cell_height" />
-
-                    </LinearLayout>
+                    <dev.reader.ui.CellRowView
+                        android:id="@+id/spacing_cells"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/cell_height"
+                        android:layout_marginTop="@dimen/space_snug" />
 
                 </LinearLayout>
 

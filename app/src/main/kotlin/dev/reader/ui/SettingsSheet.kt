@@ -139,6 +139,7 @@ internal class SettingsSheet(
     fun wire() {
         sidehead(R.id.type_head_face, R.string.type_head_face)
         sidehead(R.id.type_head_size, R.string.type_head_size)
+        sidehead(R.id.type_head_spacing, R.string.type_head_spacing)
         sidehead(R.id.type_head_book, R.string.type_head_book)
         sidehead(R.id.type_head_previews, R.string.type_head_previews)
 

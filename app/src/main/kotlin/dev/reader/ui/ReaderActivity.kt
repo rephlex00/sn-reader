@@ -55,16 +55,15 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /**
- * The overlay's read-only page readout, chapter-relative: `page X of Y · N left in chapter`, where
- * X is 1-based ([pageIndex] + 1), Y is [pageCount], and N is the pages remaining after this one.
- * A pure function of its two ints — the testable seam behind the scrubber, keeping the string out
- * of the View. [pageIndex] is 0-based and expected in `0 until pageCount`.
+ * The overlay's read-only page readout: `page X of Y · P%`, where X is 1-based ([pageIndex] + 1)
+ * and chapter-relative, Y is [pageCount], and P is the whole-book percentage. The old tail — "N
+ * left in chapter" — restated X of Y in different words; the book percentage says something the
+ * rest of the line does not (and matches the drag readout's `chapter · P%` shape). A pure function
+ * of its three ints — the testable seam behind the scrubber, keeping the string out of the View.
+ * [pageIndex] is 0-based and expected in `0 until pageCount`.
  */
-internal fun scrubberText(pageIndex: Int, pageCount: Int): String {
-    val page = pageIndex + 1
-    val left = pageCount - page
-    return "page $page of $pageCount · $left left in chapter"
-}
+internal fun scrubberText(pageIndex: Int, pageCount: Int, bookPercent: Int): String =
+    "page ${pageIndex + 1} of $pageCount · $bookPercent%"
 
 /**
  * One row of the Contents panel — the display projection of a [TocEntry] for [TocAdapter]. [depth]
@@ -1734,7 +1733,7 @@ open class ReaderActivity : AppCompatActivity() {
 
     /**
      * Sets [scrubberView]'s text AND remembers it as [restingReadout] — the resting page readout
-     * ("page X of Y · N left in chapter", or the no-text fallback), as opposed to a transient
+     * ("page X of Y · P%", or the no-text fallback), as opposed to a transient
      * readout (strip-generation progress, a drag position) that must eventually give the line back.
      * Every call site that sets the RESTING readout goes through this instead of writing
      * `scrubberView.text` directly, so scheduleStripGeneration knows what to restore once its own
@@ -1766,11 +1765,6 @@ open class ReaderActivity : AppCompatActivity() {
         // turn within a chapter costs no database read.
         highlights.onChapterShown(state.spineIndex)
 
-        // Keep the overlay's read-only readout current with the page just shown, so it is right the
-        // next time the overlay opens. Reuses the chapter already fetched above — no extra work, and
-        // page turns only happen while the overlay is hidden anyway.
-        setRestingReadout(scrubberText(pageIndex, chapter.pages.size))
-
         // Unchecked downcast through the TextMeasurer seam: MeasuredChapter itself stays
         // Android-free, but PageView needs the real StaticLayout to draw. Safe today because
         // this Activity is the only caller of EpubDocument.open, always with
@@ -1793,6 +1787,16 @@ open class ReaderActivity : AppCompatActivity() {
         // Persistence is independent of the display toggle — hiding the bar must not blank the
         // library's progress.
         currentBookProgress = bookProgress(chapterWeights, state.spineIndex, pageIndex, chapter.pages.size)
+        // Keep the overlay's read-only readout current with the page just shown, so it is right the
+        // next time the overlay opens. Sits AFTER currentBookProgress is computed — the readout's
+        // percentage must be the fraction of the page just drawn, not the one before it.
+        setRestingReadout(
+            scrubberText(
+                pageIndex,
+                chapter.pages.size,
+                (currentBookProgress.coerceIn(0f, 1f) * 100).roundToInt(),
+            ),
+        )
         // Ticks and thumb follow the page, so opening the overlay always shows the true position.
         // Skipped mid-scrub: the finger owns the thumb until it lifts. Placed after
         // currentBookProgress is (re)computed above — the scrubber must show the fraction of the
@@ -1814,11 +1818,21 @@ open class ReaderActivity : AppCompatActivity() {
         // Same once-per-turn readout as the progress bar and scrubber above — chapterTitleFor is the
         // same pure TOC lookup the bookmarks/highlights rows already use.
         val chapterTitle = chapterTitleFor(doc.toc, next.spineIndex)
-        // The chrome's running head: book on the left, chapter on the right, the recto/verso
-        // convention a printed page uses. Set on the same turn as the foot so the two never
-        // disagree, and blank rather than stale when the TOC names nothing for this chapter.
-        runningChapterView.text = chapterTitle.orEmpty()
-        overlay.findViewById<TextView>(R.id.running_chapter_wide).text = chapterTitle.orEmpty()
+        // The chrome's running head. Set on the same turn as the foot so the two never disagree,
+        // and blank rather than stale when the TOC names nothing for this chapter. On a chapter
+        // OPENER it stands down entirely — the page carries its own heading directly beneath the
+        // chrome, and the running head repeating it 40dp above was saying the same thing twice
+        // (print omits running heads on chapter openers for the same reason).
+        val headText = if (pageIndex == 0) "" else chapterTitle.orEmpty()
+        runningChapterView.text = headText
+        overlay.findViewById<TextView>(R.id.running_chapter_wide).text = headText
+        if (resources.getBoolean(R.bool.chrome_single_row)) {
+            // Landscape: the wide slot and its divider disappear with the text, rather than leave
+            // a divider floating beside nothing. applyChromeOrientation re-seats both on rotation.
+            val wide = if (headText.isEmpty()) View.GONE else View.VISIBLE
+            overlay.findViewById<View>(R.id.running_chapter_wide).visibility = wide
+            overlay.findViewById<View>(R.id.chrome_wide_divider).visibility = wide
+        }
         pageView.setRunningFoot(
             chapterTitle,
             pageIndex + 1,
