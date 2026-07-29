@@ -18,9 +18,9 @@
     android:paddingVertical="@dimen/space_tight"
     android:visibility="gone">
 
-    <TextView
+    <ImageView
         android:id="@+id/library_page_prev"
-        style="@style/PanelDismiss"
+        style="@style/Chevron"
         android:contentDescription="@string/action_back" />
 
     <TextView
@@ -30,9 +30,9 @@
         android:layout_weight="1"
         android:gravity="center" />
 
-    <TextView
+    <ImageView
         android:id="@+id/library_page_next"
-        style="@style/PanelDismiss.Forward"
+        style="@style/Chevron.Forward"
         android:contentDescription="@string/library_page_next" />
 
 </LinearLayout>

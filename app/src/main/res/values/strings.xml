@@ -36,8 +36,6 @@
          is a smear. -->
     <string name="library_page">%1$d of %2$d</string>
     <string name="library_page_next">Next page</string>
-    <!-- The mirror of ‹, and the only other glyph the shelf uses. -->
-    <string name="glyph_forward">›</string>
 
     <!-- The list view's two sideheads: the two states a shelf actually has. -->
     <string name="shelf_reading_now">Reading now</string>
@@ -72,7 +70,6 @@
          "Aa" opens Type. It is a specimen rather than a pictogram — the two letters are set in the
          face they change — which is why it can sit in a row of glyphs where the word "Type" could
          not, and why it needs no legend. The Type panel still titles itself with the word. -->
-    <string name="reader_back">‹</string>
     <string name="reader_contents">Contents</string>
     <string name="reader_type">Type</string>
     <string name="reader_type_glyph">Aa</string>

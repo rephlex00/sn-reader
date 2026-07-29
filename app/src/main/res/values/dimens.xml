@@ -102,24 +102,6 @@
     <!-- The tracking on every caps label. Android takes letterSpacing in ems. -->
     <item name="tracking_caps" format="float" type="dimen">0.20</item>
 
-    <!-- The single sanctioned glyph, and the jump-back mark. -->
-    <dimen name="text_glyph">24sp</dimen>
-
-    <!-- The same ‹, in the reader's chrome. Larger than a panel's, because a panel's dismiss sits
-         on a header it shares with one title, while this one sits on a bar over a full page of text
-         and is the only way out of the book. At label size it was a piece of punctuation. -->
-    <dimen name="text_glyph_chrome">36sp</dimen>
-
-    <!-- What that ‹ has to be lifted by to sit level with the words beside it.
-         The chevron is a SYMBOL, not a letter: it straddles the baseline on the math axis, so both
-         ways of placing text — baseline alignment and centring the font box — leave it low, and at
-         this size they land within a pixel of each other. Measured on the panel: the chevron's ink
-         spans y 50..77px where the title's cap-to-baseline spans y 40..62px, so its centre is 12px
-         (6.4dp) too low. There is no metric Android exposes that would derive this; a symbol's
-         optical centre is not in the font's vertical metrics.
-         This is a correction for ONE glyph at ONE size. Re-measure it if text_glyph_chrome moves. -->
-    <dimen name="chrome_glyph_lift">-7dp</dimen>
-
     <!-- The current-place mark: a block in the left margin, next to a bold row. Three signals
          mark "here", because greyscale has no fourth. -->
     <dimen name="place_mark_width">6dp</dimen>
@@ -204,7 +186,7 @@
            * A control at a screen edge REACHES THAT EDGE. Every one of these sits inside a row
              padded to margin_screen, so the outermost 32dp of glass — the exact strip a thumb
              lands on when you aim at a corner — was dead. The idiom that reclaims it, applied in
-             ChromeGlyph.Back, PanelDismiss and their trailing twins:
+             the Chevron style and the trailing words beside it:
 
                  layout_width  = tap_target_glyph_edge   (56 + 32)
                  layout_margin{Start,End} = -edge_reach  (pull the box out through the padding)
@@ -215,6 +197,23 @@
              the margin that was doing nothing. -->
     <dimen name="tap_target_glyph">56dp</dimen>
     <dimen name="edge_reach">32dp</dimen>
+
+    <!-- ===== The chevron =====
+
+         How tall the drawn ‹ / › mark is (ic_chevron_left). ONE size everywhere — the reader's way
+         out, every panel's dismiss, the shelf's page turn. The old system gave the reader's a
+         larger size than a panel's, but that was compensation for a weak glyph: a quotation mark at
+         label size "was a piece of punctuation". A drawn chevron is not punctuation at any size,
+         and the system's own rule — one mark, in one place, learned once — is worth more than the
+         emphasis. At 28dp the mark is 12.4 x 28dp, against the 8 x 14dp the old ‹ managed.
+
+         The two paddings place it inside the 88 x 56dp target (see "Reach" above). Vertical is the
+         slack halved. Inboard is what is left after the mark's box: 88 - 32 - 14. The 14dp is the
+         mark's own width rounded up, so paddingStart can be edge_reach exactly and the ink lands on
+         the screen margin — the same line CONTENTS ends on at the other end of the row. -->
+    <dimen name="chevron_mark">28dp</dimen>
+    <dimen name="chevron_pad_v">14dp</dimen>
+    <dimen name="chevron_pad_inboard">42dp</dimen>
     <!-- edge_reach negated. Its own value because XML cannot negate a dimension reference; the
          two must always be equal and opposite. -->
     <dimen name="edge_reach_pull">-32dp</dimen>

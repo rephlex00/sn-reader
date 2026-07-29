@@ -33,9 +33,9 @@
             android:orientation="horizontal"
             android:paddingHorizontal="@dimen/margin_screen">
 
-            <TextView
+            <ImageView
                 android:id="@+id/settings_back"
-                style="@style/PanelDismiss"
+                style="@style/Chevron"
                 android:contentDescription="@string/action_back" />
 
             <TextView

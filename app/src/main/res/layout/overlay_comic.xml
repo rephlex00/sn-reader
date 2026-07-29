@@ -41,14 +41,14 @@
             android:orientation="horizontal"
             android:paddingHorizontal="@dimen/margin_screen">
 
-            <TextView
+            <ImageView
                 android:id="@+id/comic_back"
-                style="@style/ChromeGlyph.Back"
+                style="@style/Chevron"
                 android:contentDescription="@string/action_back" />
 
             <!-- The comic's title, in the seat the book's title holds — beside the way out. No
-                 start margin: the ‹ draws at the start of its box, whose empty remainder is the
-                 gap (see ChromeGlyph.Back). -->
+                 start margin: the chevron's mark sits at the start of its box, whose empty
+                 remainder is the gap (see the Chevron style). -->
             <TextView
                 android:id="@+id/comic_title"
                 style="@style/Text.Sub.BookTitle"
@@ -222,9 +222,9 @@
             android:orientation="horizontal"
             android:paddingHorizontal="@dimen/margin_screen">
 
-            <TextView
+            <ImageView
                 android:id="@+id/comic_bookmarks_close"
-                style="@style/PanelDismiss"
+                style="@style/Chevron"
                 android:contentDescription="@string/panel_close_contents" />
 
             <TextView

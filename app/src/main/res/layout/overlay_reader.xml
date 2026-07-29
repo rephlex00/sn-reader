@@ -54,13 +54,13 @@
 
             <!-- Out of the book. The bare ‹ — the same mark every panel in the app dismisses with,
                  so it is learned once — at the size a control on the page's own bar needs. -->
-            <TextView
+            <ImageView
                 android:id="@+id/back"
-                style="@style/ChromeGlyph.Back"
+                style="@style/Chevron"
                 android:contentDescription="@string/action_back" />
 
-            <!-- No start margin: the ‹ draws at the START of its 48dp box (see ChromeGlyph.Back),
-                 so the box's own empty remainder is the gap between glyph and title. -->
+            <!-- No start margin: the chevron's mark sits at the START of its box (see the
+                 Chevron style), so the box's own empty remainder is the gap to the title. -->
             <TextView
                 android:id="@+id/book_title"
                 style="@style/Text.Sub.BookTitle"
@@ -316,9 +316,9 @@
             android:orientation="horizontal"
             android:paddingHorizontal="@dimen/margin_screen">
 
-            <TextView
+            <ImageView
                 android:id="@+id/back_matter_close"
-                style="@style/PanelDismiss"
+                style="@style/Chevron"
                 android:contentDescription="@string/panel_close_contents" />
 
             <View
@@ -529,9 +529,9 @@
             android:orientation="horizontal"
             android:paddingHorizontal="@dimen/margin_screen">
 
-            <TextView
+            <ImageView
                 android:id="@+id/settings_close"
-                style="@style/PanelDismiss"
+                style="@style/Chevron"
                 android:contentDescription="@string/panel_close_type" />
 
             <TextView

@@ -1756,7 +1756,7 @@ class ReaderActivityTest {
             View.MeasureSpec.makeMeasureSpec(1872, View.MeasureSpec.EXACTLY),
         )
         overlay.layout(0, 0, overlay.measuredWidth, overlay.measuredHeight)
-        val back = activity.findViewById<TextView>(R.id.back)
+        val back = activity.findViewById<ImageView>(R.id.back)
         val title = activity.findViewById<TextView>(R.id.book_title)
 
         assertThat(back.left).isEqualTo(0) // reaches the physical edge
