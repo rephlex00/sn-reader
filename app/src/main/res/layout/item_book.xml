@@ -33,32 +33,43 @@
         android:layout_width="match_parent"
         android:layout_height="@dimen/cover_box_height">
 
-        <!-- wrap_content on BOTH axes. Once the box caps the height, a match_parent width leaves a
-             tall cover letterboxed inside a full-width view — and the frame, which is the view's
-             background, gets drawn around the letterboxing rather than the artwork. Wrapping both
-             axes lets adjustViewBounds size the view to the image itself within the column and the
-             cap, so the frame hugs it on all four sides again. -->
-        <ImageView
-            android:id="@+id/cover"
+        <!-- The badge's anchor is this inner frame, which wraps the COVER — not the full-width
+             box. Covers are narrower than their column (aspect varies, the column doesn't), and a
+             badge anchored to the box corner hung past the artwork's edge into the gutter: the
+             one element in the app that broke its container. Anchored to the artwork's own bounds
+             it sits inside the cover on every board. -->
+        <FrameLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom|center_horizontal"
-            android:adjustViewBounds="true"
-            android:background="@drawable/cover_trim"
-            android:contentDescription="@null"
-            android:maxHeight="@dimen/cover_box_height"
-            android:padding="@dimen/cell_border"
-            android:scaleType="fitCenter" />
+            android:layout_gravity="bottom|center_horizontal">
 
-        <TextView
-            android:id="@+id/progress_badge"
-            style="@style/Text.Figure"
-            android:layout_gravity="bottom|end"
-            android:layout_margin="@dimen/space_tight"
-            android:background="@drawable/progress_badge"
-            android:paddingHorizontal="@dimen/space_hair"
-            android:textColor="@color/reader_text_primary"
-            android:visibility="gone" />
+            <!-- wrap_content on BOTH axes. Once the box caps the height, a match_parent width
+                 leaves a tall cover letterboxed inside a full-width view — and the frame, which is
+                 the view's background, gets drawn around the letterboxing rather than the artwork.
+                 Wrapping both axes lets adjustViewBounds size the view to the image itself within
+                 the column and the cap, so the frame hugs it on all four sides again. -->
+            <ImageView
+                android:id="@+id/cover"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:background="@drawable/cover_trim"
+                android:contentDescription="@null"
+                android:maxHeight="@dimen/cover_box_height"
+                android:padding="@dimen/cell_border"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/progress_badge"
+                style="@style/Text.Figure"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="@dimen/space_tight"
+                android:background="@drawable/progress_badge"
+                android:paddingHorizontal="@dimen/space_hair"
+                android:textColor="@color/reader_text_primary"
+                android:visibility="gone" />
+
+        </FrameLayout>
 
     </FrameLayout>
 
