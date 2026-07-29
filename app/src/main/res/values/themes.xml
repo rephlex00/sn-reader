@@ -139,10 +139,15 @@
         <item name="android:includeFontPadding">false</item>
     </style>
 
-    <!-- Out of the book. The one mark the app has already taught on every panel header. -->
+    <!-- Out of the book. The one mark the app has already taught on every panel header.
+         translationY, not padding: this view is baseline-aligned with the rest of the row, and
+         baseline alignment cancels padding exactly (padding moves the text up inside the view, the
+         view's reported baseline moves up with it, and the row puts the view back down by the same
+         amount). Only a transform moves the drawn glyph. See chrome_glyph_lift for the measurement. -->
     <style name="ChromeGlyph.Back">
         <item name="android:text">@string/reader_back</item>
         <item name="android:textSize">@dimen/text_glyph_chrome</item>
+        <item name="android:translationY">@dimen/chrome_glyph_lift</item>
     </style>
 
     <!-- Type. A specimen, not a pictogram: two letters set in the face the panel behind them
