@@ -12,8 +12,9 @@
      Bottom-aligning inside a fixed box puts every cover in a row on one line and starts every title
      at the same height, which is what makes a row scannable — and what a shelf looks like.
 
-     The title takes two lines whether it needs them or not, for the same reason: it is what keeps
-     the authors aligned across a row.
+     The title takes exactly one line, ellipsised — which is what keeps the authors aligned across a
+     row, and what buys the shelf its third row of books: at two lines a long title pushed its own
+     board taller than its neighbours and cost every row the height of a whole extra one.
 
      match_parent on the frame, not wrap_content: a wrap_content frame measures its match_parent
      child against zero available width, and the cover collapsed to well under its column.
@@ -32,9 +33,14 @@
         android:layout_width="match_parent"
         android:layout_height="@dimen/cover_box_height">
 
+        <!-- wrap_content on BOTH axes. Once the box caps the height, a match_parent width leaves a
+             tall cover letterboxed inside a full-width view — and the frame, which is the view's
+             background, gets drawn around the letterboxing rather than the artwork. Wrapping both
+             axes lets adjustViewBounds size the view to the image itself within the column and the
+             cap, so the frame hugs it on all four sides again. -->
         <ImageView
             android:id="@+id/cover"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|center_horizontal"
             android:adjustViewBounds="true"
@@ -58,12 +64,11 @@
 
     <TextView
         android:id="@+id/title"
-        style="@style/Text.Sub"
+        style="@style/Text.Board"
         android:layout_width="match_parent"
         android:layout_marginTop="@dimen/space_tight"
         android:ellipsize="end"
-        android:lines="2"
-        android:textColor="@color/reader_text_primary" />
+        android:lines="1" />
 
     <TextView
         android:id="@+id/author"

@@ -89,6 +89,13 @@
         <item name="android:textColor">@color/reader_text_primary</item>
     </style>
 
+    <!-- A board's title on the shelf. One line, ellipsised: a cover is already saying which book
+         this is, and letting a long title run to two lines cost the shelf a whole row of books. -->
+    <style name="Text.Board">
+        <item name="android:textSize">@dimen/text_board_title</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
     <!-- A cover caption in the grid, or a quoted note. -->
     <style name="Text.Lead">
         <item name="android:textSize">@dimen/text_lead</item>

@@ -119,12 +119,16 @@ private const val COLUMN_WIDTH_PX = 340
 /**
  * How many boards fill one page of the cover shelf.
  *
- * Four columns by two rows. The shelf paginates rather than scrolling — a scroll on this panel is a
- * smear held for as long as the finger moves, where a page turn is one clean redraw — so a page has
- * to hold a whole number of rows, and a row cut off at the bottom edge is exactly what pagination
- * exists to avoid.
+ * Four columns by three rows. The shelf paginates rather than scrolling — a scroll on this panel is
+ * a smear held for as long as the finger moves, where a page turn is one clean redraw — so a page
+ * has to hold a whole number of rows, and a row cut off at the bottom edge is exactly what
+ * pagination exists to avoid.
+ *
+ * The third row was bought back from the captions rather than by shrinking the covers alone: a
+ * one-line title, a smaller caption and less air under each board together freed the ~280dp a row
+ * costs. See `cover_box_height`, which is sized against exactly that budget.
  */
-private const val BOARDS_PER_PAGE = 8
+private const val BOARDS_PER_PAGE = 12
 
 /**
  * The parts of the empty state that belong to first run alone: the kicker and its rule, the

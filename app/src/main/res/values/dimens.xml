@@ -118,8 +118,20 @@
 
     <!-- The box a cover is bottom-aligned inside. Fixed, so every board in a row sits on the same
          line and the titles beneath them start at the same height — covers differ in aspect, and
-         letting each one set its own baseline left the row's captions stepping up and down. -->
-    <dimen name="cover_box_height">288dp</dimen>
+         letting each one set its own baseline left the row's captions stepping up and down.
+
+         Sized so three rows of four fill a page: at 210dp a board plus its one-line caption and the
+         gap under it comes to 278dp, and three of those is the 834dp the shelf has to give. -->
+    <dimen name="cover_box_height">210dp</dimen>
+
+    <!-- A board's caption. Smaller than a list row's, because a cover is already carrying the
+         book's identity and the words under it are only confirming it.
+
+         The author stays at the figure size rather than dropping with the title: SLATE's floor is
+         15sp — below that it washes out under reflected light, which is the whole reason the
+         palette has a floor — and an author set in a darker grey to go smaller would end up
+         louder than the title it sits under. -->
+    <dimen name="text_board_title">15sp</dimen>
 
     <!-- A cover's height is the artwork's own, within these bounds. The maximum is what makes two
          rows of boards fit a page exactly; the minimum stops a wide, short scan collapsing to a
@@ -127,7 +139,7 @@
 
 
     <!-- The air under each board. -->
-    <dimen name="board_gap">28dp</dimen>
+    <dimen name="board_gap">16dp</dimen>
 
     <!-- The minimum any tappable thing may be. -->
     <dimen name="tap_target_min">48dp</dimen>
