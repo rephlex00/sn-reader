@@ -76,6 +76,18 @@ class PageView(context: Context) : View(context) {
     /** Whitespace between the columns; unused when [secondPage] is null. Set by [show]. */
     private var columnGapPx = 0
 
+    /**
+     * The screen bands the chrome overlay currently covers, measured in from the view's top and
+     * bottom edges. Zero at rest. When non-zero, [visibleClip] tightens each column's clip so no
+     * PARTIALLY covered line draws at all — the overlay's rule then meets blank paper instead of a
+     * strip of half glyphs. Set via [setObscuredInsets].
+     */
+    private var obscuredTopPx = 0
+    private var obscuredBottomPx = 0
+
+    /** Test-visible readout of what [setObscuredInsets] last stored. */
+    internal val obscuredInsetsForTest: Pair<Int, Int> get() = obscuredTopPx to obscuredBottomPx
+
     /** Whole-book progress in `[0,1]`, or null to draw no bar. Set via [setProgress]. */
     internal var progress: Float? = null
         private set
@@ -279,6 +291,21 @@ class PageView(context: Context) : View(context) {
         invalidate()
     }
 
+    /**
+     * Sets the obscured bands — the heights of the overlay's top chrome and its bottom bar or Type
+     * sheet — and invalidates on change. (0, 0) restores the full page.
+     *
+     * This invalidates ITSELF, and must: the caller's clean-refresh path
+     * ([ReaderActivity.hideOverlay] → [fullRefresh]) skips [invalidate] when the hardware refresh
+     * succeeds, so a hardware flash without this redraw would flash the still-clipped frame.
+     */
+    fun setObscuredInsets(topPx: Int, bottomPx: Int) {
+        if (topPx == obscuredTopPx && bottomPx == obscuredBottomPx) return
+        obscuredTopPx = topPx
+        obscuredBottomPx = bottomPx
+        invalidate()
+    }
+
     /** Sets the current chapter's highlight spans (start, end-exclusive) to wash, and invalidates. */
     fun setHighlights(spans: List<Pair<Int, Int>>) {
         highlightSpans = spans
@@ -378,8 +405,9 @@ class PageView(context: Context) : View(context) {
      * the other axis: it keeps each column's text out of the gutter and out of its neighbour.
      */
     private fun drawColumn(canvas: Canvas, layout: Layout, page: Page, leftPx: Int) {
+        val (clipTop, clipBottom) = visibleClip(layout, page)
         canvas.save()
-        canvas.clipRect(leftPx, marginPx, leftPx + columnWidth(), pageClipBottom(layout, page))
+        canvas.clipRect(leftPx, clipTop, leftPx + columnWidth(), clipBottom)
         canvas.translate(leftPx.toFloat(), (marginPx - page.topPx).toFloat())
         drawHighlights(canvas, layout, page)
         layout.draw(canvas)
@@ -476,6 +504,36 @@ class PageView(context: Context) : View(context) {
      */
     internal fun pageClipBottom(layout: Layout, page: Page): Int =
         minOf(height - marginPx, marginPx + layout.getLineBottom(page.endLine) - page.topPx)
+
+    /**
+     * The (clipTop, clipBottom) [drawColumn] uses for [page], in screen space. With zero obscured
+     * insets this is exactly `(marginPx, pageClipBottom(layout, page))`. With insets, each edge
+     * tightens to the nearest LINE boundary inside the visible band — the first line wholly below
+     * the top inset, the last line wholly above the bottom inset — so a line the chrome partly
+     * covers is not drawn at all and its half-glyphs cannot peek out past the chrome's rule.
+     *
+     * One coupled function rather than two independent edges, because of the guard: if no line of
+     * this page fits wholly inside the band (a single image line taller than what the chrome
+     * leaves), BOTH edges revert to the raw clip together — a sliced tall image is better than a
+     * blank page. Per column, so in a spread one column may fall back while its neighbour clips.
+     */
+    internal fun visibleClip(layout: Layout, page: Page): Pair<Int, Int> {
+        val rawBottom = pageClipBottom(layout, page)
+        if (obscuredTopPx <= 0 && obscuredBottomPx <= 0) return marginPx to rawBottom
+
+        // Screen y of a layout line: marginPx + lineTop(n) - page.topPx (drawColumn's translate).
+        var top = -1
+        var bottom = -1
+        for (line in page.startLine..page.endLine) {
+            val lineTop = marginPx + layout.getLineTop(line) - page.topPx
+            val lineBottom = marginPx + layout.getLineBottom(line) - page.topPx
+            if (top < 0 && lineTop >= obscuredTopPx) top = lineTop
+            if (lineBottom <= height - obscuredBottomPx) bottom = lineBottom
+        }
+        // No line fits wholly inside the band: fall back to the raw clip, both edges together.
+        if (top < 0 || bottom < 0 || bottom <= top) return marginPx to rawBottom
+        return maxOf(top, marginPx) to minOf(bottom, rawBottom)
+    }
 
     private fun drawHighlights(canvas: Canvas, layout: Layout, page: Page) {
         for ((start, end) in highlightSpans) {

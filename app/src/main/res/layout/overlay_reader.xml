@@ -224,6 +224,7 @@
          and disappearing never reflows anything. The strip keeps its 88dp and its geometry: that
          was learned against this panel's firmware and only its greys are restated here. -->
     <LinearLayout
+        android:id="@+id/reader_chrome_bottom"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"

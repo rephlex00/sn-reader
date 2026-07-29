@@ -159,6 +159,162 @@ class PageViewTest {
         assertThat(view.pageClipBottom(layout, page)).isEqualTo(view.height - marginPx)
     }
 
+    /** A many-line page view for the obscured-inset clip tests: margin 30, view 400x600. */
+    private fun multiLinePageView(): Triple<PageView, StaticLayout, Page> {
+        val view = PageView(context)
+        val text = (1..60).joinToString(" ") { "word$it" }
+        val layout = StaticLayout.Builder
+            .obtain(text, 0, text.length, TextPaint().apply { textSize = 24f }, 180)
+            .build()
+        check(layout.lineCount > 8) { "need many lines so insets can slice mid-line" }
+        val marginPx = 30
+        val page = Page(
+            index = 0, startLine = 0, endLine = layout.lineCount - 1,
+            startOffset = 0, endOffset = text.length, topPx = layout.getLineTop(0),
+        )
+        view.show(layout, page, marginPx)
+        view.measure(
+            MeasureSpec.makeMeasureSpec(400, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(600, MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        return Triple(view, layout, page)
+    }
+
+    @Test
+    fun `with zero obscured insets the visible clip is exactly the resting clip`() {
+        val (view, layout, page) = multiLinePageView()
+
+        val (top, bottom) = view.visibleClip(layout, page)
+
+        assertThat(top).isEqualTo(30) // marginPx
+        assertThat(bottom).isEqualTo(view.pageClipBottom(layout, page))
+    }
+
+    @Test
+    fun `a top inset landing mid-line pushes the clip down to the next whole line`() {
+        // The defect this guards: the chrome's bottom rule lands mid-line and the line's lower half
+        // pokes out beneath it — a strip of half glyphs against the rule.
+        val (view, layout, page) = multiLinePageView()
+        val marginPx = 30
+        // An inset that slices line 1: strictly inside its (top, bottom) in screen space.
+        val line1Top = marginPx + layout.getLineTop(1) - page.topPx
+        val line1Bottom = marginPx + layout.getLineBottom(1) - page.topPx
+        val inset = (line1Top + line1Bottom) / 2
+        view.setObscuredInsets(inset, 0)
+
+        val (top, bottom) = view.visibleClip(layout, page)
+
+        // Clip starts at the first WHOLLY visible line (line 2) — the sliced line 1 draws not at all.
+        assertThat(top).isEqualTo(marginPx + layout.getLineTop(2) - page.topPx)
+        assertThat(top).isAtLeast(inset)
+        assertThat(bottom).isEqualTo(view.pageClipBottom(layout, page))
+    }
+
+    @Test
+    fun `a top inset landing exactly on a line top keeps that line`() {
+        val (view, layout, page) = multiLinePageView()
+        val marginPx = 30
+        val line2Top = marginPx + layout.getLineTop(2) - page.topPx
+        view.setObscuredInsets(line2Top, 0)
+
+        val (top, _) = view.visibleClip(layout, page)
+
+        assertThat(top).isEqualTo(line2Top) // >= not >: a line topping AT the inset is fully visible
+    }
+
+    @Test
+    fun `a bottom inset landing mid-line pulls the clip up to the last whole line`() {
+        val (view, layout, page) = multiLinePageView()
+        val marginPx = 30
+        // Pick a line near the bottom of the 600px view and slice it with the inset.
+        val sliced = (0 until layout.lineCount).last {
+            marginPx + layout.getLineBottom(it) - page.topPx <= view.height
+        }
+        val slicedTop = marginPx + layout.getLineTop(sliced) - page.topPx
+        val slicedBottom = marginPx + layout.getLineBottom(sliced) - page.topPx
+        val inset = view.height - (slicedTop + slicedBottom) / 2
+        view.setObscuredInsets(0, inset)
+
+        val (top, bottom) = view.visibleClip(layout, page)
+
+        assertThat(top).isEqualTo(marginPx)
+        // The last WHOLLY visible line's bottom — the sliced line draws not at all.
+        assertThat(bottom).isEqualTo(marginPx + layout.getLineBottom(sliced - 1) - page.topPx)
+        assertThat(bottom).isAtMost(view.height - inset)
+        assertThat(bottom).isAtMost(view.pageClipBottom(layout, page))
+    }
+
+    @Test
+    fun `insets leaving no whole line fall back to the resting clip, both edges together`() {
+        // A single line taller than the band the chrome leaves (a full-bleed image, say) must draw
+        // sliced rather than vanish into a blank page — the fallback the guard exists for.
+        val view = PageView(context)
+        val text = "TALL"
+        val layout = StaticLayout.Builder
+            .obtain(text, 0, text.length, TextPaint().apply { textSize = 90f }, 400)
+            .build()
+        val page = Page(
+            index = 0, startLine = 0, endLine = 0,
+            startOffset = 0, endOffset = text.length, topPx = layout.getLineTop(0),
+        )
+        val marginPx = 20
+        view.show(layout, page, marginPx)
+        view.measure(
+            MeasureSpec.makeMeasureSpec(400, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(200, MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        view.setObscuredInsets(60, 60) // the line fits in neither direction
+
+        val (top, bottom) = view.visibleClip(layout, page)
+
+        assertThat(top).isEqualTo(marginPx)
+        assertThat(bottom).isEqualTo(view.pageClipBottom(layout, page))
+    }
+
+    @Test
+    fun `setObscuredInsets stores the band and zero restores it`() {
+        val view = PageView(context)
+        assertThat(view.obscuredInsetsForTest).isEqualTo(0 to 0)
+        view.setObscuredInsets(184, 236)
+        assertThat(view.obscuredInsetsForTest).isEqualTo(184 to 236)
+        view.setObscuredInsets(0, 0)
+        assertThat(view.obscuredInsetsForTest).isEqualTo(0 to 0)
+    }
+
+    @Test
+    fun `insets apply per column against each column's own page window`() {
+        // In a spread each column's Page.topPx re-bases its first line to the margin, so the same
+        // screen band clips each column independently — the right column must not inherit the
+        // left's line geometry.
+        val (view, layout, pages) = spreadPageView()
+        val line0Top = spreadMargin + layout.getLineTop(0) - pages[0].topPx
+        val line0Bottom = spreadMargin + layout.getLineBottom(0) - pages[0].topPx
+        view.setObscuredInsets((line0Top + line0Bottom) / 2, 0)
+
+        val leftClip = view.visibleClip(layout, pages[0])
+        val rightClip = view.visibleClip(layout, pages[1])
+
+        // Left column: its first line is sliced, clip drops to its second line.
+        assertThat(leftClip.first).isEqualTo(spreadMargin + layout.getLineTop(1) - pages[0].topPx)
+        // Right column: ITS first line sits at the same screen y (that is what topPx does), so it
+        // is sliced by the same band and the clip drops to its second line too.
+        assertThat(rightClip.first).isEqualTo(spreadMargin + layout.getLineTop(3) - pages[1].topPx)
+    }
+
+    @Test
+    fun `it draws with obscured insets and highlights, no error`() {
+        val view = laidOutPageView()
+        val canvas = Canvas(Bitmap.createBitmap(400, 600, Bitmap.Config.ARGB_8888))
+        view.setObscuredInsets(50, 80)
+        view.setHighlights(listOf(0 to 5))
+        view.setBracketAnchor(8)
+        view.draw(canvas)
+        view.setObscuredInsets(0, 0)
+        view.draw(canvas)
+    }
+
     @Test
     fun `it draws a page both with a progress bar and without, no error`() {
         // Screencap is black on e-ink, so a Canvas regression must surface here. Exercise the

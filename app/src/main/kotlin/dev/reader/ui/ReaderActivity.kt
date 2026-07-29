@@ -432,6 +432,14 @@ open class ReaderActivity : AppCompatActivity() {
         chapterScrubber.onScrubCommit = { fraction, snap -> onScrubCommitted(fraction, snap) }
         chapterScrubber.onScrubCancel = { abandonScrub() }
         settingsSheet = overlay.findViewById(R.id.settings_sheet)
+        // The obscured-inset sync (see syncObscuredInsets) needs post-layout heights, and a view
+        // flipped VISIBLE is only measured in the traversal that follows — so the three surfaces
+        // whose heights matter each re-sync on layout. The GONE direction never lays out, which is
+        // why the hide paths below all call syncObscuredInsets() explicitly instead.
+        val syncOnLayout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> syncObscuredInsets() }
+        overlay.findViewById<View>(R.id.reader_chrome_top).addOnLayoutChangeListener(syncOnLayout)
+        overlay.findViewById<View>(R.id.reader_chrome_bottom).addOnLayoutChangeListener(syncOnLayout)
+        settingsSheet.addOnLayoutChangeListener(syncOnLayout)
         settings = SettingsSheet(overlay, settingsHost) { ReaderPrefs(this) }
         // The three back-matter bodies report emptiness up to the shared empty state rather than
         // each carrying one — see BackMatterPanel.onBodyEmpty.
@@ -454,7 +462,10 @@ open class ReaderActivity : AppCompatActivity() {
             overlay, toc, bookmarks, highlights,
             prefs = { ReaderPrefs(this) },
             bookKey = { intent.getStringExtra(EXTRA_BOOK_PATH).orEmpty() },
-            onDismiss = { backMatter.hide() },
+            onDismiss = {
+                backMatter.hide()
+                syncObscuredInsets()
+            },
         )
         overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
         overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleBackMatter() }
@@ -463,7 +474,10 @@ open class ReaderActivity : AppCompatActivity() {
         // The device has no hardware Back, so each surface carries its own ‹ at the screen margin,
         // in the same place on both — the same first step system Back takes. Closing a surface only
         // hides that layer; the bare overlay stays up (tap the page to return to reading).
-        overlay.findViewById<View>(R.id.settings_close).setOnClickListener { settingsSheet.visibility = View.GONE }
+        overlay.findViewById<View>(R.id.settings_close).setOnClickListener {
+            settingsSheet.visibility = View.GONE
+            syncObscuredInsets()
+        }
         settings.wire()
         setContentView(container)
 
@@ -475,8 +489,14 @@ open class ReaderActivity : AppCompatActivity() {
                 // Back matter and Type are layers inside the overlay: Back peels whichever is open
                 // off first, then the overlay, then the book — one thing per press. Only one is ever
                 // open at a time (opening either closes the other), so the order is a formality.
-                backMatter.isVisible -> backMatter.hide()
-                settingsSheet.visibility == View.VISIBLE -> settingsSheet.visibility = View.GONE
+                backMatter.isVisible -> {
+                    backMatter.hide()
+                    syncObscuredInsets()
+                }
+                settingsSheet.visibility == View.VISIBLE -> {
+                    settingsSheet.visibility = View.GONE
+                    syncObscuredInsets()
+                }
                 isOverlayVisible() -> hideOverlay()
                 else -> exitToLibrary()
             }
@@ -694,6 +714,30 @@ open class ReaderActivity : AppCompatActivity() {
     /** Whether the reading chrome is currently on screen. */
     private fun isOverlayVisible(): Boolean = overlay.visibility == View.VISIBLE
 
+    /**
+     * Tells [PageView] which bands the chrome covers, so it stops drawing the lines the chrome
+     * slices (see [PageView.setObscuredInsets]) — the rule then meets air, not half glyphs.
+     *
+     * One function, several triggers: layout listeners on the top chrome, the bottom bar and the
+     * Type sheet (visibility flips to VISIBLE, tab-height changes, rotation), plus explicit calls
+     * on every hide path, because a view going GONE is never laid out.
+     *
+     * Back matter is deliberately ignored: it is a full-screen opaque surface, so re-clipping the
+     * page under it would spend an invisible e-ink redraw. While it is open the last chrome insets
+     * sit stale and harmless; they are correct again the moment it closes (its close path re-syncs).
+     */
+    private fun syncObscuredInsets() {
+        if (!::backMatter.isInitialized) return // a layout pass can beat onCreate's panel wiring
+        if (backMatter.isVisible) return
+        val top = if (isOverlayVisible()) overlay.findViewById<View>(R.id.reader_chrome_top).height else 0
+        val bottom = when {
+            !isOverlayVisible() -> 0
+            settingsSheet.visibility == View.VISIBLE -> settingsSheet.height
+            else -> overlay.findViewById<View>(R.id.reader_chrome_bottom).height
+        }
+        pageView.setObscuredInsets(top, bottom)
+    }
+
     /** Reveals the reading chrome — one redraw, no animation. */
     private fun showOverlay() {
         highlights.hideDeleteChip() // the chip is a reading-mode affordance; it never coexists with the chrome
@@ -708,6 +752,10 @@ open class ReaderActivity : AppCompatActivity() {
         // The ribbon states a fact about the page the reader is looking at, and pages turn while the
         // chrome is down — so it is re-read on the way up. One indexed DAO read; nothing paginates.
         bookmarks.refreshCurrentPageMark()
+        // The bars' heights are only real after the traversal that makes them visible; the child
+        // layout listeners don't reliably fire on a re-show with unchanged bounds, so the show path
+        // syncs itself. Same frame as the reveal — one redraw, not two.
+        overlay.doOnLayout { syncObscuredInsets() }
     }
 
     /** Draws the chrome's mark ribbon for the page on screen — flooded when marked, outlined when
@@ -752,6 +800,9 @@ open class ReaderActivity : AppCompatActivity() {
         // the page waiting for a second tap the reader has long since moved on from.
         highlights.cancelPendingSelection()
         overlay.visibility = View.GONE
+        // Before the refresh below, so the un-clipping and the clean flash land as ONE frame — a
+        // hardware refresh does not redraw the view (see PageView.fullRefresh), only re-flashes it.
+        syncObscuredInsets()
         pageView.epd.exitFastMode()
         if (cleanRefresh) {
             // One clean refresh on the way out, so the page the reader returns to is crisp rather
@@ -767,6 +818,7 @@ open class ReaderActivity : AppCompatActivity() {
         highlights.hideDeleteChip() // a surface covers the page; the on-page chip must not float over it
         if (settingsSheet.visibility == View.VISIBLE) {
             settingsSheet.visibility = View.GONE
+            syncObscuredInsets() // GONE is never laid out; drop the inset back to the bar's height
         } else {
             backMatter.hide() // one surface open at a time
             settings.refresh()
@@ -783,6 +835,7 @@ open class ReaderActivity : AppCompatActivity() {
         highlights.hideDeleteChip() // a surface covers the page; the on-page chip must not float over it
         if (backMatter.isVisible) {
             backMatter.hide()
+            syncObscuredInsets()
         } else {
             settingsSheet.visibility = View.GONE // one surface open at a time
             backMatter.open()
