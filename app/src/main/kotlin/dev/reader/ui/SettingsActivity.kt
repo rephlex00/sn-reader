@@ -43,6 +43,21 @@ open class SettingsActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.settings_version).text = versionName()
 
+        // Folders-or-flat is a standing choice about how the library is arranged, so it lives here
+        // rather than among the shelf's own search and sort controls, which are about finding one
+        // book right now. LibraryActivity re-reads LibraryPrefs on every entry, so no observer is
+        // needed to carry the change back.
+        findViewById<CellRowView>(R.id.settings_flatten_cells).apply {
+            setCells(
+                labels = listOf(getString(R.string.folders_nested), getString(R.string.folders_flat)),
+                chosen = if (prefs.flatten) 1 else 0,
+            )
+            onChoice = { index ->
+                prefs.flatten = index == 1
+                choose(index)
+            }
+        }
+
         // The device has no hardware Back, so this screen carries its own ‹ in the same place every
         // other surface does — the gap the reader's own "‹ Library" was added to close.
         findViewById<View>(R.id.settings_back).setOnClickListener {

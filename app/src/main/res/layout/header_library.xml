@@ -1,15 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The shelf's half-title and its controls.
+<!-- The shelf's half-title, and the controls it keeps out of the way until asked.
 
      This replaces an AppCompat Toolbar with a Roboto title, a magnifier and a three-dot overflow —
-     the single thing that made the library read as a different app from the reader it launches. It
-     is the first surface anyone sees, so it is the one that has to say what kind of app this is.
+     the single thing that made the library read as a different app from the reader it launches.
 
-     Two things change beyond the typeface. Everything the overflow hid is now visible and one tap
-     away: search is a bordered field with its purpose written in it, and view, filter and sort are
-     cells — the same shape as every choice in Type, so the reader learns one control for the whole
-     app. And the header states the shelf's own count, the way a printed half-title page names what
-     follows it.
+     The half-title is the whole of the resting state: the shelf's name, its count, and two glyphs.
+     Search, filter, sort and view are how you *narrow* a shelf rather than how you read one, so
+     they are folded away behind the search mark and the books get the room instead. Revealing them
+     is one redraw, and the shelf repaginates around them.
+
+     Those two glyphs are the only pictograms in the app. They earn it: a gear and a magnifier are
+     the two marks whose meaning is universal enough not to need a word, and a word for either would
+     have competed with the half-title it sits on.
 
      e-ink: no ripple, no elevation, no animation. The rules do the separating. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -17,19 +19,19 @@
     android:layout_height="wrap_content"
     android:background="@color/paper"
     android:orientation="vertical"
-    android:paddingTop="@dimen/space_loose">
+    android:paddingTop="@dimen/space">
 
-    <!-- The half-title: where you are on the left, what is here on the right. -->
+    <!-- The half-title: where you are, what is here, and the two ways out of it. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:baselineAligned="true"
+        android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingHorizontal="@dimen/margin_screen">
 
         <TextView
             android:id="@+id/library_title"
-            style="@style/Text.Mark"
+            style="@style/Text.Halftitle"
             android:ellipsize="end"
             android:maxLines="1"
             android:text="@string/library_title" />
@@ -39,150 +41,137 @@
             style="@style/Text.Figure"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_marginStart="@dimen/space"
+            android:layout_marginStart="@dimen/space_snug"
             android:ellipsize="end"
             android:maxLines="1" />
 
-        <!-- The way to the colophon. The overflow menu that used to hold it is gone, so it is a
-             word at the end of the half-title — the same grammar the reader's chrome uses, where
-             the dismiss sits left and the destinations sit right. -->
-        <TextView
-            android:id="@+id/library_settings"
-            style="@style/Text.Mark"
-            android:layout_marginStart="@dimen/space"
+        <ImageView
+            android:id="@+id/library_find"
+            android:layout_width="@dimen/tap_target_min"
+            android:layout_height="@dimen/tap_target_min"
             android:clickable="true"
+            android:contentDescription="@string/library_find"
             android:focusable="true"
-            android:gravity="center"
-            android:minWidth="@dimen/tap_target_min"
-            android:minHeight="@dimen/tap_target_min"
-            android:text="@string/settings_title"
-            android:textColor="@color/reader_text_primary" />
+            android:padding="@dimen/space_snug"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_search" />
+
+        <ImageView
+            android:id="@+id/library_settings"
+            android:layout_width="@dimen/tap_target_min"
+            android:layout_height="@dimen/tap_target_min"
+            android:layout_marginStart="@dimen/space_tight"
+            android:clickable="true"
+            android:contentDescription="@string/settings_title"
+            android:focusable="true"
+            android:padding="@dimen/space_snug"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_settings" />
 
     </LinearLayout>
 
-    <!-- EDGE: the half-title belongs to the shelf, not to the controls under it. -->
+    <!-- EDGE: the half-title belongs to the shelf, not to whatever is folded out under it. -->
     <View
         android:layout_width="match_parent"
         android:layout_height="@dimen/rule_edge"
-        android:layout_marginTop="@dimen/space_snug"
+        android:layout_marginTop="@dimen/space_tight"
         android:layout_marginHorizontal="@dimen/margin_screen"
         android:background="@color/reader_rule" />
 
-    <!-- Search, and how the shelf is drawn. The field says what it is for rather than hiding
-         behind a magnifier, and reports its result count in its own right-hand end — no separate
-         results banner, and no filtered-to-nothing state with no explanation. -->
+    <!-- Everything below is revealed by the search mark and hidden again by it. -->
     <LinearLayout
+        android:id="@+id/library_find_panel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="@dimen/margin_screen"
-        android:paddingTop="@dimen/space">
+        android:orientation="vertical"
+        android:visibility="gone">
 
-        <FrameLayout
-            android:layout_width="0dp"
-            android:layout_height="@dimen/cell_height"
-            android:layout_weight="1"
-            android:background="@drawable/cell_group">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen"
+            android:paddingTop="@dimen/space">
 
-            <EditText
-                android:id="@+id/library_search"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="@null"
-                android:hint="@string/library_search_hint"
-                android:imeOptions="actionSearch"
-                android:inputType="text"
-                android:maxLines="1"
-                android:paddingHorizontal="@dimen/cell_padding_h"
-                android:paddingEnd="96dp"
-                android:textColor="@color/reader_text_primary"
-                android:textColorHint="@color/reader_text_secondary"
-                android:textSize="@dimen/text_row" />
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="@dimen/cell_height"
+                android:layout_weight="1"
+                android:background="@drawable/cell_group">
 
-            <TextView
-                android:id="@+id/library_found"
-                style="@style/Text.Mark"
-                android:layout_gravity="end|center_vertical"
-                android:layout_marginEnd="@dimen/cell_padding_h"
-                android:visibility="gone" />
+                <!-- No caret. A blinking cursor is an animation, and an animation on this panel is
+                     a partial refresh several times a second for as long as the field is focused —
+                     the one thing the whole app is built to avoid. The typed text is its own
+                     evidence that the field is live. -->
+                <EditText
+                    android:id="@+id/library_search"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@null"
+                    android:cursorVisible="false"
+                    android:hint="@string/library_search_hint"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:paddingHorizontal="@dimen/cell_padding_h"
+                    android:paddingEnd="96dp"
+                    android:textColor="@color/reader_text_primary"
+                    android:textColorHint="@color/reader_text_secondary"
+                    android:textSize="@dimen/text_row" />
 
-        </FrameLayout>
+                <TextView
+                    android:id="@+id/library_found"
+                    style="@style/Text.Mark"
+                    android:layout_gravity="end|center_vertical"
+                    android:layout_marginEnd="@dimen/cell_padding_h"
+                    android:visibility="gone" />
 
-        <dev.reader.ui.CellRowView
-            android:id="@+id/library_view_cells"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/cell_height"
-            android:layout_marginStart="@dimen/space_snug" />
+            </FrameLayout>
 
-    </LinearLayout>
+            <dev.reader.ui.CellRowView
+                android:id="@+id/library_view_cells"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/cell_height"
+                android:layout_marginStart="@dimen/space_snug" />
 
-    <!-- Which books, and how the folders are treated.
+        </LinearLayout>
 
-         The drawn design put filter and sort on one row. It could: it showed three filters and
-         three sorts and knew nothing about flatten. This app has four, four and a flatten, and ten
-         cells across 749dp leaves each below the 88dp floor — on the panel the sort group simply
-         ran off the right edge and took the search field's width with it. Splitting the row is the
-         honest fix; compressing the cells past their floor would not have been. -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="@dimen/margin_screen"
-        android:paddingTop="@dimen/space_snug">
+        <!-- Which books, and in what order. Three each, so both fit one row: the filter names the
+             three states a shelf has, and the sort needs no label of its own beside them. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen"
+            android:paddingTop="@dimen/space_snug">
 
-        <dev.reader.ui.CellRowView
-            android:id="@+id/library_filter_cells"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/cell_height" />
+            <dev.reader.ui.CellRowView
+                android:id="@+id/library_filter_cells"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/cell_height" />
 
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <dev.reader.ui.CellRowView
+                android:id="@+id/library_sort_cells"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/cell_height" />
+
+        </LinearLayout>
+
+        <!-- HEAD: everything below is the shelf itself. -->
         <View
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <!-- Flatten. Not in the drawn design, which did not know about it — kept, and given the
-             same shape as everything else rather than left in an overflow nothing else uses. -->
-        <dev.reader.ui.CellRowView
-            android:id="@+id/library_flatten_cells"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/cell_height" />
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/rule_head"
+            android:layout_marginTop="@dimen/space"
+            android:layout_marginHorizontal="@dimen/margin_screen"
+            android:background="@color/reader_rule" />
 
     </LinearLayout>
-
-    <!-- In what order. Labelled, unlike the rows above it: ALL / NEW / READING / DONE say what
-         they do, but ADDED and OPENED only mean anything once you know they are a sort. -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="@dimen/margin_screen"
-        android:paddingTop="@dimen/space_snug">
-
-        <TextView
-            style="@style/Text.Mark"
-            android:text="@string/sort_by" />
-
-        <View
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <dev.reader.ui.CellRowView
-            android:id="@+id/library_sort_cells"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/cell_height" />
-
-    </LinearLayout>
-
-    <!-- HEAD: everything below is the shelf itself. -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="@dimen/rule_head"
-        android:layout_marginTop="@dimen/space"
-        android:layout_marginHorizontal="@dimen/margin_screen"
-        android:background="@color/reader_rule" />
 
 </LinearLayout>

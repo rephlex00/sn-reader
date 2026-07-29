@@ -95,6 +95,38 @@
                 android:paddingHorizontal="@dimen/space_loose"
                 android:text="@string/settings_change_folder" />
 
+            <!-- Whether the shelf shows the folders your books sit in, or every book at once.
+                 It belongs here rather than on the shelf's own controls: it is a standing choice
+                 about how your library is arranged, not something you reach for while looking for
+                 a particular book. -->
+            <LinearLayout
+                style="@style/TypeRow"
+                android:layout_marginTop="@dimen/space_loose">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/Text.Row"
+                        android:text="@string/settings_folders" />
+
+                    <TextView
+                        style="@style/Text.Figure"
+                        android:layout_marginTop="@dimen/space_hair"
+                        android:text="@string/settings_folders_note" />
+
+                </LinearLayout>
+
+                <dev.reader.ui.CellRowView
+                    android:id="@+id/settings_flatten_cells"
+                    android:layout_width="wrap_content"
+                    android:layout_height="@dimen/cell_height" />
+
+            </LinearLayout>
+
             <dev.reader.ui.SideheadView
                 android:id="@+id/settings_head_colophon"
                 android:layout_width="match_parent"

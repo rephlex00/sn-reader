@@ -107,6 +107,18 @@
     <dimen name="leader_dot_size">2dp</dimen>
     <dimen name="leader_dot_pitch">8dp</dimen>
 
+    <!-- A cover's height is the artwork's own, within these bounds. The maximum is what makes two
+         rows of boards fit a page exactly; the minimum stops a wide, short scan collapsing to a
+         strip that no longer reads as a book. -->
+    <dimen name="cover_max_height">300dp</dimen>
+    <dimen name="cover_min_height">150dp</dimen>
+
+    <!-- The air under each board. Four columns is the count that fits eight to a page, and at four
+         columns a cover is limited by the column's width rather than the page's height — so two
+         rows of them leave slack. This spends it between the rows instead of banking it all at the
+         bottom, which is what made the shelf look top-heavy. -->
+    <dimen name="board_gap">44dp</dimen>
+
     <!-- The minimum any tappable thing may be. -->
     <dimen name="tap_target_min">48dp</dimen>
 </resources>

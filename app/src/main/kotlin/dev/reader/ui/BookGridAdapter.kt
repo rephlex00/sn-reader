@@ -321,7 +321,7 @@ open class BookGridAdapter(
                     book.charOffset,
                     book.progressFraction,
                 ).orEmpty()
-                BookStatus.NOT_STARTED -> context.getString(R.string.filter_new).uppercase()
+                BookStatus.NOT_STARTED -> context.getString(R.string.status_new).uppercase()
                 BookStatus.UNREADABLE -> context.getString(R.string.status_unreadable)
             }
         }

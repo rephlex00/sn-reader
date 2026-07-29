@@ -4,7 +4,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -112,7 +114,17 @@ fun spanCountFor(widthPx: Int, columnWidthPx: Int): Int = (widthPx / columnWidth
  * the count varies with density — unchanged from before, and a call for whoever owns the visual
  * density rather than a bug this pass is fixing.
  */
-private const val COLUMN_WIDTH_PX = 460
+private const val COLUMN_WIDTH_PX = 340
+
+/**
+ * How many boards fill one page of the cover shelf.
+ *
+ * Four columns by two rows. The shelf paginates rather than scrolling — a scroll on this panel is a
+ * smear held for as long as the finger moves, where a page turn is one clean redraw — so a page has
+ * to hold a whole number of rows, and a row cut off at the bottom edge is exactly what pagination
+ * exists to avoid.
+ */
+private const val BOARDS_PER_PAGE = 8
 
 /**
  * The parts of the empty state that belong to first run alone: the kicker and its rule, the
@@ -273,6 +285,19 @@ open class LibraryActivity : AppCompatActivity() {
      */
     private var launching = false
 
+    /** Which page of the cover shelf is showing, 0-based. Reset whenever what is being shown
+     *  changes — a new filter, a new sort, a different folder — because page 3 of the old shelf is
+     *  not page 3 of the new one. */
+    private var shelfPage = 0
+
+    /** Holds the grid so a short page of boards can be centred in it. See where it is added. */
+    private lateinit var shelfFrame: FrameLayout
+    private lateinit var recyclerView: RecyclerView
+
+    /** The pager's own views: ‹ / › and "2 of 4". GONE whenever there is only one page. */
+    private lateinit var pager: View
+    private lateinit var pagerReadout: TextView
+
     private var currentSort = SortOrder.TITLE
     private var observeJob: Job? = null
 
@@ -301,8 +326,12 @@ open class LibraryActivity : AppCompatActivity() {
                     if (adapter.getItemViewType(position) == BookGridAdapter.VIEW_TYPE_BOOK_TILE) 1 else spanCount
             }
         }
-        val recyclerView = RecyclerView(this).apply {
+        recyclerView = RecyclerView(this).apply {
             layoutManager = gridLayoutManager
+            // The boards should not sit hard against the rule above them; the shelf reads as a
+            // shelf when its first row has air over it.
+            setPadding(0, dp(20), 0, 0)
+            clipToPadding = false
             // The single most important line in this Activity: DefaultItemAnimator (the
             // RecyclerView default) cross-fades items in/out/through on every list change, which
             // on e-ink is a visible smear and is banned outright as animation, full stop. A view
@@ -312,6 +341,16 @@ open class LibraryActivity : AppCompatActivity() {
         }
         adapter = BookGridAdapter(lifecycleScope, ::openBook, ::openFolder)
         recyclerView.adapter = adapter
+        shelfFrame = FrameLayout(this).apply {
+            addView(
+                recyclerView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER_VERTICAL,
+                ),
+            )
+        }
 
         // The shelf's own header, in the app's vocabulary: a half-title and its count, a search
         // field that says what it is for, and cells for view / folders / filter / sort. It replaces
@@ -326,8 +365,26 @@ open class LibraryActivity : AppCompatActivity() {
         header.findViewById<View>(R.id.library_settings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+        // Search, filter and sort are folded away until asked for: they are how you narrow a shelf,
+        // not how you read one, and a reader who knows which book they want should see books rather
+        // than the machinery for finding them.
+        val findPanel = header.findViewById<View>(R.id.library_find_panel)
+        header.findViewById<View>(R.id.library_find).setOnClickListener {
+            val opening = findPanel.visibility != View.VISIBLE
+            findPanel.visibility = if (opening) View.VISIBLE else View.GONE
+            if (!opening && searchQuery.isNotEmpty()) {
+                // Folding the controls away clears what they were doing. Leaving a query running
+                // behind a hidden field would be a shelf that has silently lost most of itself.
+                librarySearch.setText("")
+            }
+            // Revealing or hiding the controls changes how much room the shelf has, so the boards
+            // repaginate around them rather than keeping a page sized for the other state.
+            shelfPage = 0
+            render()
+        }
         librarySearch.doAfterTextChanged { text ->
             searchQuery = text?.toString().orEmpty()
+                shelfPage = 0
             render()
         }
 
@@ -377,11 +434,22 @@ open class LibraryActivity : AppCompatActivity() {
         }
         libraryEmpty.findViewById<View>(R.id.library_empty_rescan).setOnClickListener { runSync() }
 
+        pager = layoutInflater.inflate(R.layout.library_pager, null)
+        pagerReadout = pager.findViewById(R.id.library_page_readout)
+        pager.findViewById<View>(R.id.library_page_prev).setOnClickListener { turnShelfTo(shelfPage - 1) }
+        pager.findViewById<View>(R.id.library_page_next).setOnClickListener { turnShelfTo(shelfPage + 1) }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(libraryEmpty, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(recyclerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            // The grid sits inside a frame it can be centred in. Four columns is what fits eight
+            // boards to a page, and at four columns a cover is limited by its column's width, so
+            // two rows of them cannot fill the page's height however tall they are allowed to be.
+            // Centring spends that slack as equal margins top and bottom instead of banking it all
+            // under the last row, where it read as a shelf that had run out of books.
+            addView(shelfFrame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(pager, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         setContentView(root)
 
@@ -471,9 +539,9 @@ open class LibraryActivity : AppCompatActivity() {
      * The labels are short because eight cells share one row.
      */
     private val filterOptions =
-        listOf(StatusFilter.ALL, StatusFilter.NOT_STARTED, StatusFilter.IN_PROGRESS, StatusFilter.FINISHED)
+        listOf(StatusFilter.ALL, StatusFilter.IN_PROGRESS, StatusFilter.FINISHED)
     private val sortOptions =
-        listOf(SortOrder.RECENTLY_ADDED, SortOrder.RECENTLY_OPENED, SortOrder.TITLE, SortOrder.AUTHOR)
+        listOf(SortOrder.RECENTLY_OPENED, SortOrder.TITLE, SortOrder.AUTHOR)
     private val viewOptions = listOf(ViewMode.TILES, ViewMode.LIST)
 
     /** Fills the header's four cell groups and points each at its action. Called once. */
@@ -485,29 +553,18 @@ open class LibraryActivity : AppCompatActivity() {
             )
             onChoice = { index -> setViewMode(viewOptions[index]) }
         }
-        cells(R.id.library_flatten_cells).apply {
-            setCells(
-                labels = listOf(getString(R.string.folders_nested), getString(R.string.folders_flat)),
-                chosen = if (prefs.flatten) 1 else 0,
-            )
-            onChoice = { index ->
-                prefs.flatten = index == 1
-                syncHeaderCells()
-                render()
-            }
-        }
         cells(R.id.library_filter_cells).apply {
             setCells(
                 labels = listOf(
                     getString(R.string.filter_all),
-                    getString(R.string.filter_new),
-                    getString(R.string.filter_reading),
-                    getString(R.string.filter_done),
+                    getString(R.string.filter_started),
+                    getString(R.string.filter_finished),
                 ),
                 chosen = filterOptions.indexOf(statusFilter).coerceAtLeast(0),
             )
             onChoice = { index ->
                 statusFilter = filterOptions[index]
+                shelfPage = 0
                 syncHeaderCells()
                 render()
             }
@@ -515,8 +572,7 @@ open class LibraryActivity : AppCompatActivity() {
         cells(R.id.library_sort_cells).apply {
             setCells(
                 labels = listOf(
-                    getString(R.string.sort_added),
-                    getString(R.string.sort_opened),
+                    getString(R.string.sort_recent),
                     getString(R.string.sort_title),
                     getString(R.string.sort_author),
                 ),
@@ -529,7 +585,6 @@ open class LibraryActivity : AppCompatActivity() {
     /** Moves every fill to match the live state. Cheap: it repaints two cells per group. */
     private fun syncHeaderCells() {
         cells(R.id.library_view_cells).choose(viewOptions.indexOf(prefs.viewMode).coerceAtLeast(0))
-        cells(R.id.library_flatten_cells).choose(if (prefs.flatten) 1 else 0)
         cells(R.id.library_filter_cells).choose(filterOptions.indexOf(statusFilter).coerceAtLeast(0))
         cells(R.id.library_sort_cells).choose(sortOptions.indexOf(currentSort).coerceAtLeast(0))
     }
@@ -764,7 +819,18 @@ open class LibraryActivity : AppCompatActivity() {
         // already carries its own progress chip, so a second statement of the same thing there
         // would be redundant.
         val presented =
-            if (prefs.viewMode == ViewMode.LIST) withShelfSideheads(rows) else rows
+            if (prefs.viewMode == ViewMode.LIST) withShelfSideheads(rows) else pageOf(rows)
+        // Covers are a fixed page, centred in whatever room is left; the list scrolls and fills.
+        val listMode = prefs.viewMode == ViewMode.LIST
+        (recyclerView.layoutParams as FrameLayout.LayoutParams).let {
+            val wanted =
+                if (listMode) FrameLayout.LayoutParams.MATCH_PARENT
+                else FrameLayout.LayoutParams.WRAP_CONTENT
+            if (it.height != wanted) {
+                it.height = wanted
+                recyclerView.layoutParams = it
+            }
+        }
         adapter.render(presented, prefs.viewMode)
         // While a filter is active the grid is flat results across the whole library, not a
         // listing of currentFolder — showing the folder's name in the toolbar would misleadingly
@@ -800,6 +866,35 @@ open class LibraryActivity : AppCompatActivity() {
     }
 
     /**
+     * The slice of [rows] on the current page, and the pager updated to match.
+     *
+     * Covers paginate; the list scrolls. That split is not arbitrary — a board is a fixed-size
+     * object, so a page holds a whole number of them and the shelf never shows a row sliced off at
+     * the bottom edge, whereas list rows vary in height and would leave ragged pages instead.
+     *
+     * The page index is clamped rather than trusted: a filter or a deleted book can shorten the
+     * shelf under a reader sitting on its last page, and landing on an empty page would look like
+     * a library that had lost its books.
+     */
+    private fun pageOf(rows: List<LibraryRow>): List<LibraryRow> {
+        val pageCount = ((rows.size + BOARDS_PER_PAGE - 1) / BOARDS_PER_PAGE).coerceAtLeast(1)
+        shelfPage = shelfPage.coerceIn(0, pageCount - 1)
+
+        pager.visibility = if (pageCount > 1) View.VISIBLE else View.GONE
+        pagerReadout.text = getString(R.string.library_page, shelfPage + 1, pageCount)
+
+        val from = shelfPage * BOARDS_PER_PAGE
+        return rows.subList(from, minOf(from + BOARDS_PER_PAGE, rows.size))
+    }
+
+    /** Turns to [page], clamped, and redraws. One redraw, as a page turn should be. */
+    private fun turnShelfTo(page: Int) {
+        if (page < 0) return
+        shelfPage = page
+        render()
+    }
+
+    /**
      * Shows the empty state with [hint] as its message.
      *
      * [firstRun] is the full title page — kicker, rule, statement, the real folder path, and the
@@ -827,6 +922,7 @@ open class LibraryActivity : AppCompatActivity() {
      */
     protected fun openFolder(path: String) {
         currentFolder = path
+        shelfPage = 0 // page 3 of the old folder is not page 3 of this one
         prefs.lastFolderPath = path
         render()
     }

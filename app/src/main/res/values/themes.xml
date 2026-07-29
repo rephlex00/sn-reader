@@ -59,6 +59,15 @@
         <item name="android:includeFontPadding">false</item>
     </style>
 
+    <!-- The shelf's own name, on its half-title. Tracked caps like every other label, but at lead
+         size: this is the one line naming the whole screen, and at 13sp it read as a caption on a
+         page it was supposed to be heading. -->
+    <style name="Text.Halftitle" parent="Text.Mark">
+        <item name="android:textSize">@dimen/text_lead</item>
+        <item name="android:letterSpacing">0.14</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
     <!-- Every figure in the app: percentages, page counts, sizes. Tabular so a column of them
          lines up, SLATE so they sit behind the names they annotate, and never below 15sp. -->
     <style name="Text.Figure">
