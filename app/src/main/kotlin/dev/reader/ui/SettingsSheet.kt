@@ -33,6 +33,10 @@ private val MARGIN_STEPS = listOf(MARGIN_NARROW_PX, MARGIN_MEDIUM_PX, MARGIN_WID
 private val REFRESH_STEPS = listOf(3, 6, 10)
 private val FONT_FAMILIES = listOf("literata", "bitter", "atkinson")
 
+/** The bundled face for each entry in [FONT_FAMILIES], in the same order — the cells are drawn in
+ *  these, so the picker previews its own options instead of naming them in a fourth typeface. */
+private val FONT_RESOURCES = listOf(R.font.literata, R.font.bitter, R.font.atkinson)
+
 /**
  * What Type asks the reader to do. Every method is an ACTION, never a widget: the surface knows
  * which control was tapped, the reader knows what tapping it means.
@@ -98,9 +102,10 @@ internal interface SettingsHost {
  * is filled. That replaced nine pill switches (another platform's language) and the "36px" readout
  * in one move, and it is why this file is now mostly a table of value sets.
  *
- * The controls are grouped under sideheads naming what each changes — the face, the page, this
- * book, the screen, previews. Grouping is what turns nine switches into four decisions; sorting the
- * same nine into a better order would not have.
+ * The controls sit in three tabs ([Tab]) rather than one column: TEXT is what you judge by looking
+ * at the live page above the sheet, PAGE is how the block sits on it, SCREEN is about the panel
+ * rather than the book. Switching tabs is two visibility flips — one e-ink redraw, and no measure
+ * pass on the rows nobody is looking at.
  *
  * This is deliberately only view binding. It decides nothing; every tap goes straight to
  * [SettingsHost]. Showing and hiding the surface is [ReaderActivity]'s job, a single `visibility`
@@ -115,6 +120,16 @@ internal class SettingsSheet(
     private val context: Context get() = overlay.context
 
     /**
+     * Which tab is showing. Kept across opens for as long as the book is: a reader stepping the
+     * margins in and out reopens Type on PAGE, not back at the top. Not persisted — a new book is a
+     * new session, and TEXT is the right place to start one.
+     */
+    private var tab: Tab = Tab.TEXT
+
+    /** Type's three tabs, in the order their cells appear. */
+    internal enum class Tab { TEXT, PAGE, SCREEN }
+
+    /**
      * Fills every cell group and wires it to its action. Called once: the listeners hold no state
      * and fire only on a deliberate tap, so they cost nothing at rest.
      *
@@ -123,24 +138,25 @@ internal class SettingsSheet(
      */
     fun wire() {
         sidehead(R.id.type_head_face, R.string.type_head_face)
-        sidehead(R.id.type_head_page, R.string.type_head_page)
+        sidehead(R.id.type_head_size, R.string.type_head_size)
         sidehead(R.id.type_head_book, R.string.type_head_book)
-        sidehead(R.id.type_head_screen, R.string.type_head_screen)
         sidehead(R.id.type_head_previews, R.string.type_head_previews)
 
-        cells(R.id.font_cells).apply {
+        cells(R.id.type_segment).apply {
             setCells(
                 labels = listOf(
-                    context.getString(R.string.font_literata),
-                    context.getString(R.string.font_bitter),
-                    context.getString(R.string.font_atkinson),
+                    context.getString(R.string.type_tab_text),
+                    context.getString(R.string.type_tab_page),
+                    context.getString(R.string.type_tab_screen),
                 ),
-                chosen = FONT_FAMILIES.indexOf(prefs().fontFamily).coerceAtLeast(0),
-                style = CellRowView.CellStyle.SPECIMEN,
+                chosen = tab.ordinal,
             )
-            onChoice = { index ->
-                host.applyTypography { p -> p.fontFamily = FONT_FAMILIES[index] }
-            }
+            onChoice = { index -> showTab(Tab.entries[index]) }
+        }
+
+        fillFontCells()
+        cells(R.id.font_cells).onChoice = { index ->
+            host.applyTypography { p -> p.fontFamily = FONT_FAMILIES[index] }
         }
 
         cells(R.id.size_cells).apply {
@@ -218,7 +234,60 @@ internal class SettingsSheet(
             host.deletePreviewsForCurrentBook()
             refresh()
         }
+
+        showTab(tab)
     }
+
+    /**
+     * The face picker, drawn as three specimens: each name set in the face it selects, all three at
+     * the size the page is currently set to. Rebuilt rather than merely re-[CellRowView.choose]n
+     * whenever [refresh] runs, because a text-size change makes every specimen the wrong size — the
+     * picker is showing what the reader's own book would look like, so it has to follow the book.
+     * Three TextViews, on open and on a control tap only; nothing at rest.
+     */
+    private fun fillFontCells() {
+        cells(R.id.font_cells).setCells(
+            labels = listOf(
+                context.getString(R.string.font_literata),
+                context.getString(R.string.font_bitter),
+                context.getString(R.string.font_atkinson),
+            ),
+            chosen = FONT_FAMILIES.indexOf(prefs().fontFamily).coerceAtLeast(0),
+            style = CellRowView.CellStyle.SPECIMEN,
+            specimenSizePx = prefs().textSizePx.coerceIn(TEXT_SIZE_MIN_PX, TEXT_SIZE_MAX_PX),
+            specimenFonts = FONT_RESOURCES,
+        )
+    }
+
+    /**
+     * Shows one tab's body, hides the other two, and sizes the sheet to what that tab actually
+     * needs — two visibility flips and a height, which is one e-ink redraw.
+     *
+     * The height is per tab rather than per sheet because a single height has to clear the tallest
+     * one, and that left TEXT — the tab whose whole point is watching the live page above the sheet
+     * — sitting under a screenful of blank paper. See the type_sheet_* dimens.
+     */
+    private fun showTab(next: Tab) {
+        tab = next
+        overlay.findViewById<View>(R.id.type_body_text).visibility = visible(next == Tab.TEXT)
+        overlay.findViewById<View>(R.id.type_body_page).visibility = visible(next == Tab.PAGE)
+        overlay.findViewById<View>(R.id.type_body_screen).visibility = visible(next == Tab.SCREEN)
+        cells(R.id.type_segment).choose(next.ordinal)
+
+        val sheet = overlay.findViewById<View>(R.id.settings_sheet)
+        val height = context.resources.getDimensionPixelSize(
+            when (next) {
+                Tab.TEXT -> R.dimen.type_sheet_text
+                Tab.PAGE -> R.dimen.type_sheet_page
+                Tab.SCREEN -> R.dimen.type_sheet_screen
+            },
+        )
+        if (sheet.layoutParams.height != height) {
+            sheet.layoutParams = sheet.layoutParams.apply { this.height = height }
+        }
+    }
+
+    private fun visible(shown: Boolean): Int = if (shown) View.VISIBLE else View.GONE
 
     /**
      * Syncs every cell group to the stored preferences. Pure View work — it moves fills between
@@ -228,7 +297,9 @@ internal class SettingsSheet(
     fun refresh() {
         val p = prefs()
 
-        cells(R.id.font_cells).choose(FONT_FAMILIES.indexOf(p.fontFamily).coerceAtLeast(0))
+        // Rebuilt, not just re-chosen: the specimens are set at the page's own text size, so a size
+        // change makes all three of them wrong until they are drawn again.
+        fillFontCells()
         cells(R.id.size_cells).choose(nearestSizeStep(p.textSizePx))
         cells(R.id.spacing_cells).choose(SPACING_STEPS.indexOf(p.lineSpacingMultiplier).coerceAtLeast(0))
         cells(R.id.margin_cells).choose(MARGIN_STEPS.indexOf(p.marginPx).coerceAtLeast(0))
@@ -271,6 +342,12 @@ internal class SettingsSheet(
         // flight — see hasPreviewsForCurrentBook.
         overlay.findViewById<View>(R.id.previews_delete_row).visibility =
             if (host.hasPreviewsForCurrentBook()) View.VISIBLE else View.GONE
+
+        // Re-applies the current tab's height. Load-bearing across a rotation: the reader declares
+        // configChanges and is never re-inflated, so the landscape type_sheet_* values would
+        // otherwise only take effect in whichever orientation the book was opened in — the same
+        // trap the chrome's second row fell into.
+        showTab(tab)
     }
 
     /**

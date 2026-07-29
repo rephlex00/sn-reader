@@ -127,7 +127,14 @@
 
     <!-- Type. Sections name what each group changes: the face, the page, this book, the screen,
          previews. Grouping is what turns nine switches into four decisions. -->
+    <!-- Type's three tabs. TEXT holds everything you judge by looking at the page above the sheet —
+         the face, the size, the leading — so it is the tab the panel opens on. -->
+    <string name="type_tab_text">Text</string>
+    <string name="type_tab_page">Page</string>
+    <string name="type_tab_screen">Screen</string>
+
     <string name="type_head_face">The face</string>
+    <string name="type_head_size">The size</string>
     <string name="type_head_page">The page</string>
     <string name="type_head_book">This book</string>
     <string name="type_head_screen">The screen</string>

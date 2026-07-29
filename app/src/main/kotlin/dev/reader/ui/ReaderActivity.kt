@@ -1346,7 +1346,6 @@ open class ReaderActivity : AppCompatActivity() {
                 // Both surfaces name the book they belong to. On a device with four books half-read
                 // that matters more than a panel title repeating its own name back at you.
                 backMatter.setBookTitle(titleView.text.toString())
-                overlay.findViewById<TextView>(R.id.type_book).text = titleView.text
 
                 // The stored position for this book, if it is in the library. getByPath is the only
                 // read on IO; resolveStart and every chapter() below stay on the main thread, as

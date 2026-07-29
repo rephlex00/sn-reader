@@ -56,9 +56,15 @@ class CellRowView @JvmOverloads constructor(
      * Fills the row with [labels] and marks [chosen].
      *
      * [style] decides the label's voice, not its behaviour: [CellStyle.MARK] is the tracked-caps
-     * form for word labels (ON / OFF, COVERS / LIST), [CellStyle.SPECIMEN] sets the label in the
-     * reading face at [specimenSizesSp] so a size or a typeface is chosen by *looking* at it — which
-     * is what removes "36px" from the interface.
+     * form for word labels (ON / OFF, COVERS / LIST), [CellStyle.SPECIMEN] sets the label as a
+     * specimen of what the cell selects, so a size or a typeface is chosen by *looking* at it —
+     * which is what removes "36px" from the interface.
+     *
+     * A specimen cell takes its size from [specimenSizesSp] (per cell, for the size picker itself)
+     * or from [specimenSizePx] (one size for the whole row — the size the PAGE is currently set to,
+     * so the face picker shows each face at the size it would actually be read at), and its face
+     * from [specimenFonts] (a font resource per cell). A face picker that sets all three names in
+     * one typeface is not a specimen of anything.
      *
      * Cells share the row equally when [equalWidths]; a settings row instead sizes each to its
      * label so the group sits hard against the right margin.
@@ -69,6 +75,8 @@ class CellRowView @JvmOverloads constructor(
         style: CellStyle = CellStyle.MARK,
         equalWidths: Boolean = true,
         specimenSizesSp: List<Float> = emptyList(),
+        specimenSizePx: Float? = null,
+        specimenFonts: List<Int> = emptyList(),
     ) {
         removeAllViews()
         cells.clear()
@@ -99,11 +107,20 @@ class CellRowView @JvmOverloads constructor(
                         )
                     }
                     CellStyle.SPECIMEN -> {
+                        // After the Literata default above, never before: this is the override that
+                        // makes a face picker show its own faces.
+                        specimenFonts.getOrNull(index)?.let {
+                            typeface = ResourcesCompat.getFont(context, it)
+                        }
                         val sp = specimenSizesSp.getOrNull(index)
-                        if (sp != null) {
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
-                        } else {
-                            setTextSize(
+                        when {
+                            sp != null -> setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+                            // Device px, not sp: the page's own text size is stored and drawn in px
+                            // (it goes straight into the Paint), so a specimen "at the size you are
+                            // reading" has to be set in the same unit or it is not that size.
+                            specimenSizePx != null ->
+                                setTextSize(TypedValue.COMPLEX_UNIT_PX, specimenSizePx)
+                            else -> setTextSize(
                                 TypedValue.COMPLEX_UNIT_PX,
                                 resources.getDimension(R.dimen.text_row),
                             )

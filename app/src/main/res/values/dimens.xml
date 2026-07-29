@@ -163,6 +163,26 @@
     <!-- The air under each board. -->
     <dimen name="board_gap">16dp</dimen>
 
+    <!-- How much of the screen Type takes, measured from the bottom. The rest is the page it is
+         changing, left live: every control in the TEXT tab re-paginates the chapter under it, and a
+         full-screen sheet meant the reader chose a face and a size blind and then found out.
+
+         One height per tab, set in SettingsSheet.showTab, rather than one height for the sheet. A
+         single height has to clear the tallest tab, which left TEXT — the tab whose whole point is
+         watching the page — sitting under 400dp of blank paper that could have been text. Each
+         value is its tab's content plus a little air, measured on the panel; a tab that outgrows
+         its value scrolls rather than clipping, which is the right failure.
+
+         TEXT is deliberately the shortest: it is the only tab you judge by looking up.
+
+         No values-land twin, and that is not an oversight — a row is the same height in both
+         orientations (landscape only makes it wider), so these were measured once and hold for
+         both. Landscape simply has less page left over, which is the honest trade for a 749dp-tall
+         screen. -->
+    <dimen name="type_sheet_text">430dp</dimen>
+    <dimen name="type_sheet_page">510dp</dimen>
+    <dimen name="type_sheet_screen">540dp</dimen>
+
     <!-- The minimum any tappable thing may be. -->
     <dimen name="tap_target_min">48dp</dimen>
 </resources>
