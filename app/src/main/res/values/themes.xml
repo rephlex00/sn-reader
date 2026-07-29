@@ -114,6 +114,43 @@
         <item name="android:textColor">@color/reader_text_primary</item>
     </style>
 
+    <!-- ===== The reader's chrome row =====
+         The bar over the page is a row of glyphs with one word on it: ‹ to leave, the book's title,
+         the mark, Aa, and CONTENTS. Everything but the title is a control, so everything but the
+         title clears the 48dp target, and each carries its meaning at a size that survives being
+         read at arm's length on a reflective panel. -->
+
+    <style name="ChromeGlyph">
+        <item name="android:layout_width">@dimen/tap_target_min</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- Out of the book. The one mark the app has already taught on every panel header. -->
+    <style name="ChromeGlyph.Back">
+        <item name="android:text">@string/reader_back</item>
+        <item name="android:textSize">@dimen/text_glyph_chrome</item>
+    </style>
+
+    <!-- Type. A specimen, not a pictogram: two letters set in the face the panel behind them
+         changes, at the size a control's label is set everywhere else in the app. -->
+    <style name="ChromeGlyph.Type">
+        <item name="android:text">@string/reader_type_glyph</item>
+        <item name="android:textSize">@dimen/text_row</item>
+    </style>
+
+    <!-- CONTENTS: the only word on a row of glyphs, and the only destination the chrome names. At
+         label size it read as a caption on the bar rather than as the control it is, so it takes
+         the sub size and the full ink a row gets rather than a label's IRON. -->
+    <style name="Text.Mark.Destination">
+        <item name="android:textSize">@dimen/text_sub</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
     <!-- ===== The cell =====
          One shape for every choice in the app: a bordered cell that is either ink-filled or paper.
          A segmented option, a font picker, a margin setting and a boolean are the same control,

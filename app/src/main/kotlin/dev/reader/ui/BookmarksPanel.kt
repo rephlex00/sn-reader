@@ -37,6 +37,12 @@ internal class BookmarksPanel(
     private val onBookmarksChanged: () -> Unit = {},
     /** Reports an empty list up to [BackMatterPanel], which owns the shared empty state. */
     private val onEmpty: (Boolean) -> Unit = {},
+    /**
+     * Whether the page on screen carries a mark — the chrome's ribbon glyph is filled or outlined
+     * from this. Reported by [refresh] and by the cheap [refreshCurrentPageMark], so the glyph and
+     * the panel's own cell can never disagree about the same page.
+     */
+    private val onMarkedChanged: (Boolean) -> Unit = {},
 ) {
 
     private val list: RecyclerView = overlay.findViewById(R.id.bookmarks_list)
@@ -71,9 +77,33 @@ internal class BookmarksPanel(
             val onThisPage = bookmarkOnCurrentPage(marks)
             toggle.setText(if (onThisPage != null) R.string.bookmark_remove else R.string.bookmark_add)
             toggleSubject.text = currentPageSubject()
+            onMarkedChanged(onThisPage != null)
             onBookmarksChanged()
         }
     }
+
+    /**
+     * Re-reads only whether the page on screen carries a mark, and reports it to [onMarkedChanged].
+     *
+     * The chrome's ribbon needs that one boolean every time the overlay opens, and [refresh] is far
+     * too expensive to run for it: that rebuilds the whole list and, through [onBookmarksChanged],
+     * resolves every mark's position — which paginates a chapter on a cache miss. This is one
+     * indexed DAO read and nothing else, which is what keeps opening the chrome free.
+     */
+    fun refreshCurrentPageMark() {
+        val path = reader.bookPath ?: return
+        scope.launch {
+            val marks = withContext(Dispatchers.IO) { bookmarks.bookmarksFor(path) }
+            onMarkedChanged(bookmarkOnCurrentPage(marks) != null)
+        }
+    }
+
+    /**
+     * Marks or unmarks the page on screen — the chrome's glyph and this panel's own cell are the
+     * same action, so a reader who does not need to see the list never has to open one. The write
+     * path is shared: it ends in [refresh], which is what puts the glyph and the cell back in step.
+     */
+    fun toggleCurrentPageMark() = toggleCurrentPage()
 
     /**
      * "Chapter 17 · page 1 of 7" — what the cell above would act on, stated rather than implied.

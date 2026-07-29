@@ -36,7 +36,11 @@
         android:background="@color/paper"
         android:orientation="vertical">
 
-        <!-- Row one: where you can go. -->
+        <!-- Row one: the book you are in, and everything you can do about it.
+
+             The title sits beside the ‹ rather than on the row below, because the row below can
+             then centre the chapter — and because the first thing a bar over a page should say is
+             which book's page it is. -->
         <LinearLayout
             android:id="@+id/chrome_destinations"
             android:layout_width="match_parent"
@@ -45,124 +49,114 @@
             android:orientation="horizontal"
             android:paddingHorizontal="@dimen/margin_screen">
 
-            <!-- "‹ Library" names a place, not a verb. "Back" named an action this device has no
-                 button for; Library names where the tap lands. -->
+            <!-- Out of the book. The bare ‹ — the same mark every panel in the app dismisses with,
+                 so it is learned once — at the size a control on the page's own bar needs. -->
             <TextView
                 android:id="@+id/back"
-                style="@style/Text.Mark"
-                android:layout_height="match_parent"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center_vertical"
-                android:minWidth="@dimen/tap_target_min"
-                android:paddingEnd="@dimen/space"
-                android:text="@string/reader_back"
-                android:textColor="@color/reader_text_primary" />
-
-            <!-- The running head, in landscape only. 1872px fits everything on one row, so the
-                 second row folds away and the book and chapter move up here — landscape gets that
-                 row back as page rather than paying for a layout it does not need. Both copies
-                 exist rather than one being reparented on rotation: reparenting a view mid-config-
-                 change is fiddly and this is four TextViews. ReaderActivity writes both and shows
-                 whichever the orientation calls for. -->
-            <TextView
-                android:id="@+id/book_title_wide"
-                style="@style/Text.Sub"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_marginStart="@dimen/space_loose"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textStyle="italic"
-                android:visibility="gone" />
-
-            <TextView
-                android:id="@+id/running_chapter_wide"
-                style="@style/Text.Mark"
-                android:layout_marginEnd="@dimen/space_loose"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:visibility="gone" />
-
-            <!-- A 2dp divider separates the running head from the two destinations, so the row
-                 reads as "where you are | where you can go" rather than as one long run. -->
-            <View
-                android:id="@+id/chrome_wide_divider"
-                android:layout_width="@dimen/rule_section"
-                android:layout_height="24dp"
-                android:layout_marginEnd="@dimen/space_loose"
-                android:background="@color/reader_rule"
-                android:visibility="gone" />
-
-            <View
-                android:id="@+id/chrome_spacer"
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <!-- Opens the back-matter surface (chapters, marks, notes). Reads "Marks" in a comic,
-                 which has no chapters — set in ComicActivity. -->
-            <TextView
-                android:id="@+id/contents_button"
-                style="@style/Text.Mark"
-                android:layout_height="match_parent"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center"
-                android:minWidth="@dimen/tap_target_min"
-                android:paddingHorizontal="@dimen/space"
-                android:text="@string/reader_contents"
-                android:textColor="@color/reader_text_primary" />
-
-            <!-- Opens the Type surface. "Type" names the thing it changes; "Aa" was a ligature in
-                 a row of words, and "Display" named a screen rather than a decision. -->
-            <TextView
-                android:id="@+id/settings_button"
-                style="@style/Text.Mark"
-                android:layout_height="match_parent"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center"
-                android:minWidth="@dimen/tap_target_min"
-                android:paddingStart="@dimen/space"
-                android:text="@string/reader_type"
-                android:textColor="@color/reader_text_primary" />
-
-        </LinearLayout>
-
-        <!-- Row two: the running head. Book left in italic SLATE, chapter right in tracked caps —
-             the recto/verso convention, and the reason the title no longer truncates. -->
-        <LinearLayout
-            android:id="@+id/chrome_running_head"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/chrome_running_head_height"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="@dimen/margin_screen">
+                style="@style/ChromeGlyph.Back"
+                android:contentDescription="@string/action_back" />
 
             <TextView
                 android:id="@+id/book_title"
                 style="@style/Text.Sub"
                 android:layout_width="0dp"
                 android:layout_weight="1"
+                android:layout_marginStart="@dimen/space_snug"
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:textStyle="italic" />
 
+            <!-- The chapter, in landscape only. 1872px fits everything on one row, so the second
+                 row folds away and the chapter moves up here — landscape gets that row back as
+                 page rather than paying for a layout it does not need. Both copies exist rather
+                 than one being reparented on rotation: reparenting a view mid-config-change is
+                 fiddly and this is two TextViews. ReaderActivity writes both and shows whichever
+                 the orientation calls for. -->
+            <TextView
+                android:id="@+id/running_chapter_wide"
+                style="@style/Text.Mark"
+                android:layout_marginStart="@dimen/space_snug"
+                android:layout_marginEnd="@dimen/space_snug"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:visibility="gone" />
+
+            <!-- A 2dp divider separates where you are from what you can do, so the landscape row
+                 reads as two groups rather than one long run. -->
+            <View
+                android:id="@+id/chrome_wide_divider"
+                android:layout_width="@dimen/rule_section"
+                android:layout_height="24dp"
+                android:layout_marginEnd="@dimen/space_snug"
+                android:background="@color/reader_rule"
+                android:visibility="gone" />
+
+            <!-- Marks or unmarks the page on screen, and says which it is: outlined ribbon, or the
+                 same ribbon flooded. It is the one control here whose look is a FACT about the page
+                 rather than a door, which is exactly why it earns a glyph where CONTENTS gets a
+                 word — a glyph can hold a state, a word can only be tapped. The full sentence
+                 version ("Mark this page", with the page named under it) still leads the Marks
+                 segment for the reader who wants to see what they are acting on. -->
+            <ImageView
+                android:id="@+id/bookmark_button"
+                android:layout_width="@dimen/tap_target_min"
+                android:layout_height="@dimen/tap_target_min"
+                android:clickable="true"
+                android:contentDescription="@string/bookmark_add"
+                android:focusable="true"
+                android:padding="@dimen/glyph_inset"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_bookmark" />
+
+            <!-- Opens the Type surface. -->
+            <TextView
+                android:id="@+id/settings_button"
+                style="@style/ChromeGlyph.Type"
+                android:contentDescription="@string/reader_type" />
+
+            <!-- Opens the back-matter surface (chapters, marks, notes). Reads "Marks" in a comic,
+                 which has no chapters — set in ComicActivity. -->
+            <TextView
+                android:id="@+id/contents_button"
+                style="@style/Text.Mark.Destination"
+                android:layout_height="match_parent"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="@dimen/tap_target_min"
+                android:paddingStart="@dimen/space_snug"
+                android:text="@string/reader_contents" />
+
+        </LinearLayout>
+
+        <!-- Row two: the running head, which is now the chapter alone and therefore centred. A
+             printed page sets the chapter this way when the verso is not carrying the title, and
+             the title has moved up to the row above. -->
+        <LinearLayout
+            android:id="@+id/chrome_running_head"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/chrome_running_head_height"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
+
             <TextView
                 android:id="@+id/running_chapter"
                 style="@style/Text.Mark"
-                android:layout_marginStart="@dimen/space"
+                android:layout_width="0dp"
+                android:layout_weight="1"
                 android:ellipsize="end"
+                android:gravity="center"
                 android:maxLines="1" />
 
         </LinearLayout>
 
-        <!-- EDGE. The one boundary in the app that must never be ambiguous: everything above it is
-             furniture, everything below it is the book. Heavy on purpose. -->
+        <!-- EDGE. Everything above it is furniture, everything below it is the book. Set at the
+             chrome weight rather than the app's 6dp EDGE: this is the one rule that sits directly
+             against the page, and a bar that thick over prose reads as something to look past. -->
         <View
             android:layout_width="match_parent"
-            android:layout_height="@dimen/rule_edge"
+            android:layout_height="@dimen/rule_chrome"
             android:background="@color/reader_rule" />
 
     </LinearLayout>
@@ -232,7 +226,7 @@
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="@dimen/rule_edge"
+            android:layout_height="@dimen/rule_chrome"
             android:background="@color/reader_rule" />
 
         <FrameLayout

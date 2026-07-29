@@ -65,12 +65,17 @@
     <string name="library_permission_needed">Reader needs permission to read your files before it can show your library. Tap here to grant it.</string>
     <string name="library_permission_prompt">Reader needs all-files access to open books.</string>
 
-    <!-- Reader chrome. Words, plus the one sanctioned glyph. "‹ Library" names a place rather
-         than an action the device has no button for; "Type" names the thing the second surface
-         changes, where "Aa" was a ligature in a row of words and "Display" named a screen. -->
-    <string name="reader_back">‹ Library</string>
+    <!-- Reader chrome. The ‹ carries the leaving on its own: it is the same mark every panel in the
+         app dismisses with, and the word "Library" beside it was naming the place you came FROM on
+         a row that had no room to name the book you are IN. The book's title took that space.
+
+         "Aa" opens Type. It is a specimen rather than a pictogram — the two letters are set in the
+         face they change — which is why it can sit in a row of glyphs where the word "Type" could
+         not, and why it needs no legend. The Type panel still titles itself with the word. -->
+    <string name="reader_back">‹</string>
     <string name="reader_contents">Contents</string>
     <string name="reader_type">Type</string>
+    <string name="reader_type_glyph">Aa</string>
 
     <!-- The back-matter segment. "Marks" and "Notes" rather than Bookmarks and Highlights: they
          fit three-up without truncating, and they are what a reader of a printed book calls them.

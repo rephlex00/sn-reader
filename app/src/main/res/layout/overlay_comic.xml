@@ -44,35 +44,28 @@
 
             <TextView
                 android:id="@+id/comic_back"
-                style="@style/Text.Mark"
-                android:layout_height="match_parent"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center_vertical"
-                android:minWidth="@dimen/tap_target_min"
-                android:paddingEnd="@dimen/space"
-                android:text="@string/reader_back"
-                android:textColor="@color/reader_text_primary" />
+                style="@style/ChromeGlyph.Back"
+                android:contentDescription="@string/action_back" />
 
             <View
                 android:layout_width="0dp"
                 android:layout_height="1dp"
                 android:layout_weight="1" />
 
-            <!-- Opens the marks surface. The bookmark pictogram is gone: marking the page you are
-                 on is the first row inside it, written as a sentence that can name the page it
-                 would act on — which a glyph in a toolbar never could. -->
+            <!-- Opens the marks surface. Still a word rather than the book reader's ribbon glyph:
+                 there is no chapters segment behind it, so this is the comic's only destination and
+                 naming it is worth more than saving the width. Marking the page itself is the first
+                 row inside, written as a sentence that names the page it would act on. -->
             <TextView
                 android:id="@+id/comic_bookmarks_button"
-                style="@style/Text.Mark"
+                style="@style/Text.Mark.Destination"
                 android:layout_height="match_parent"
                 android:clickable="true"
                 android:focusable="true"
                 android:gravity="center"
                 android:minWidth="@dimen/tap_target_min"
                 android:paddingStart="@dimen/space"
-                android:text="@string/segment_marks"
-                android:textColor="@color/reader_text_primary" />
+                android:text="@string/segment_marks" />
 
         </LinearLayout>
 
@@ -108,7 +101,7 @@
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="@dimen/rule_edge"
+            android:layout_height="@dimen/rule_chrome"
             android:background="@color/reader_rule" />
 
     </LinearLayout>
@@ -160,7 +153,7 @@
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="@dimen/rule_edge"
+            android:layout_height="@dimen/rule_chrome"
             android:background="@color/reader_rule" />
 
         <FrameLayout

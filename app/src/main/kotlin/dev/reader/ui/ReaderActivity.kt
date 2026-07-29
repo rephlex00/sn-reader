@@ -173,6 +173,16 @@ open class ReaderActivity : AppCompatActivity() {
     /** The right-hand side of the running head: the chapter you are in, in tracked caps. Kept in
      *  step with the page's own foot — see [showPage]. */
     private lateinit var runningChapterView: TextView
+
+    /**
+     * The chrome's mark ribbon: outlined when the page on screen carries no mark, flooded when it
+     * does. It is the one control on that bar whose appearance is a FACT about the page rather than
+     * a door, which is why it is a glyph where CONTENTS is a word — a glyph can hold a state.
+     *
+     * Its state comes from [BookmarksPanel] (see [showMarkState]), so the ribbon and the panel's own
+     * "Mark this page" cell can never disagree about the same page.
+     */
+    private lateinit var bookmarkButton: ImageView
     private lateinit var scrubberView: TextView
 
     /** The last text [setRestingReadout] wrote to [scrubberView] — the "page X of Y · N left in
@@ -390,6 +400,9 @@ open class ReaderActivity : AppCompatActivity() {
         // after the overlay, so it draws above both the page and the chrome.
         titleView = overlay.findViewById(R.id.book_title)
         runningChapterView = overlay.findViewById(R.id.running_chapter)
+        // Assigned before BookmarksPanel is constructed below: that panel's onMarkedChanged writes
+        // straight to this view.
+        bookmarkButton = overlay.findViewById(R.id.bookmark_button)
         applyChromeOrientation()
         scrubberView = overlay.findViewById(R.id.scrubber)
         // Literata + tabular numerals: the readout's digits (page counts, percentages) must not
@@ -430,6 +443,7 @@ open class ReaderActivity : AppCompatActivity() {
             database.bookmarkDao(), database.bookDao(),
             onBookmarksChanged = ::refreshScrubberBookmarks,
             onEmpty = { empty -> backMatter.onBodyEmpty(BackMatterPanel.Segment.MARKS, empty) },
+            onMarkedChanged = ::showMarkState,
         )
         highlights = HighlightsController(
             overlay, container, pageView, readerSurface, lifecycleScope,
@@ -445,6 +459,7 @@ open class ReaderActivity : AppCompatActivity() {
         overlay.findViewById<View>(R.id.back).setOnClickListener { exitToLibrary() }
         overlay.findViewById<View>(R.id.contents_button).setOnClickListener { toggleBackMatter() }
         overlay.findViewById<View>(R.id.settings_button).setOnClickListener { toggleSettings() }
+        bookmarkButton.setOnClickListener { bookmarks.toggleCurrentPageMark() }
         // The device has no hardware Back, so each surface carries its own ‹ at the screen margin,
         // in the same place on both — the same first step system Back takes. Closing a surface only
         // hides that layer; the bare overlay stays up (tap the page to return to reading).
@@ -690,6 +705,19 @@ open class ReaderActivity : AppCompatActivity() {
         // none today, but this keeps the control honest regardless) or a stack a prior showOverlay
         // already reflected both resolve to the same visibility here.
         updateBackControl()
+        // The ribbon states a fact about the page the reader is looking at, and pages turn while the
+        // chrome is down — so it is re-read on the way up. One indexed DAO read; nothing paginates.
+        bookmarks.refreshCurrentPageMark()
+    }
+
+    /** Draws the chrome's mark ribbon for the page on screen — flooded when marked, outlined when
+     *  not. Called by [BookmarksPanel] whenever it learns the answer; never guessed at here. */
+    private fun showMarkState(marked: Boolean) {
+        bookmarkButton.setImageResource(
+            if (marked) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark,
+        )
+        bookmarkButton.contentDescription =
+            getString(if (marked) R.string.bookmark_remove else R.string.bookmark_add)
     }
 
     /**
@@ -816,10 +844,11 @@ open class ReaderActivity : AppCompatActivity() {
     /**
      * Folds the reader's two chrome rows into one when the panel is wider than it is tall.
      *
-     * 1872px fits the dismiss, the running head, the chapter and both destinations on a single 48dp
-     * row, so landscape gets the second row back as page. The running-head row's height is 0dp in
-     * `values-land`, and its two views have wide-mode twins in the destinations row; only one pair
-     * is ever visible, and [showPage] writes both so neither can go stale.
+     * 1872px fits the ‹, the title, the chapter and every control on a single row, so landscape gets
+     * the second row back as page. The chapter has a wide-mode twin in the top row; only one of the
+     * pair is ever visible, and [showPage] writes both so neither can go stale. The title needs no
+     * twin — it lives in the top row in both orientations, and its weight is what pushes the
+     * controls to the right margin either way.
      */
     private fun applyChromeOrientation() {
         val singleRow = resources.getBoolean(R.bool.chrome_single_row)
@@ -830,13 +859,8 @@ open class ReaderActivity : AppCompatActivity() {
         // orientation the reader happened to open in.
         overlay.findViewById<View>(R.id.chrome_running_head).visibility =
             if (singleRow) View.GONE else View.VISIBLE
-        overlay.findViewById<View>(R.id.book_title_wide).visibility = wide
         overlay.findViewById<View>(R.id.running_chapter_wide).visibility = wide
         overlay.findViewById<View>(R.id.chrome_wide_divider).visibility = wide
-        // The spacer pushes the destinations right in portrait; in landscape the running head's own
-        // weight does that job, and a second weighted view would halve it.
-        overlay.findViewById<View>(R.id.chrome_spacer).visibility =
-            if (singleRow) View.GONE else View.VISIBLE
     }
 
     private fun applyTextSize(px: Float) {
@@ -1322,7 +1346,6 @@ open class ReaderActivity : AppCompatActivity() {
                 // Both surfaces name the book they belong to. On a device with four books half-read
                 // that matters more than a panel title repeating its own name back at you.
                 backMatter.setBookTitle(titleView.text.toString())
-                overlay.findViewById<TextView>(R.id.book_title_wide).text = titleView.text
                 overlay.findViewById<TextView>(R.id.type_book).text = titleView.text
 
                 // The stored position for this book, if it is in the library. getByPath is the only

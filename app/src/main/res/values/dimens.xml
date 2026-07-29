@@ -42,6 +42,13 @@
          edge, and the one boundary in the app that must never be ambiguous. -->
     <dimen name="rule_edge">6dp</dimen>
 
+    <!-- The reader chrome's two edges, and only those. Every other EDGE rule separates one piece of
+         furniture from another; these two sit directly against the book's own page, and at 6dp they
+         read as bars the text has to look past rather than as the boundary of the chrome. The
+         boundary is still unambiguous at this weight — the chrome above it is a paper bar full of
+         controls, not another column of prose. -->
+    <dimen name="rule_chrome">2dp</dimen>
+
     <!-- Under a panel header or a segmented header: "everything below belongs to this". -->
     <dimen name="rule_head">4dp</dimen>
 
@@ -97,6 +104,11 @@
 
     <!-- The single sanctioned glyph, and the jump-back mark. -->
     <dimen name="text_glyph">24sp</dimen>
+
+    <!-- The same ‹, in the reader's chrome. Larger than a panel's, because a panel's dismiss sits
+         on a header it shares with one title, while this one sits on a bar over a full page of text
+         and is the only way out of the book. At label size it was a piece of punctuation. -->
+    <dimen name="text_glyph_chrome">36sp</dimen>
 
     <!-- The current-place mark: a block in the left margin, next to a bold row. Three signals
          mark "here", because greyscale has no fourth. -->
