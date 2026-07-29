@@ -12,6 +12,12 @@ import androidx.room.PrimaryKey
  * `progressFraction` is the whole-book fraction of the bookmarked page captured at save time (the
  * same value the progress bar and library percentage use), so the list shows "%" with no
  * re-pagination. The chapter title is NOT stored — it is resolved from the live TOC at display time.
+ *
+ * [excerpt] is the page's opening words, captured at save time exactly as a highlight's text is
+ * (the [HighlightEntity.text] precedent): the saving code is already standing on the page, where
+ * the text costs nothing, while deriving it at display time would paginate a chapter per row —
+ * the eager-work pattern the panels forbid. Null for comic marks (a comic has no text) and for
+ * marks made before this column existed; the row then shows its chapter line alone.
  */
 @Entity(
     tableName = "bookmarks",
@@ -32,4 +38,5 @@ data class BookmarkEntity(
     val charOffset: Int,
     val progressFraction: Float,
     val createdAtMs: Long,
+    val excerpt: String? = null,
 )

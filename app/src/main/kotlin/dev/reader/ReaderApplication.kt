@@ -41,6 +41,7 @@ class ReaderApplication : Application() {
             .addMigrations(
                 LibraryDatabase.MIGRATION_1_2, LibraryDatabase.MIGRATION_2_3,
                 LibraryDatabase.MIGRATION_3_4, LibraryDatabase.MIGRATION_4_5,
+                LibraryDatabase.MIGRATION_5_6,
             )
             .build()
     }

@@ -69,10 +69,8 @@ internal class BackMatterPanel(
             label = context.getString(R.string.marks_sidehead)
             form = SideheadView.Form.RULED
         }
-        overlay.findViewById<SideheadView>(R.id.marks_remove_sidehead).apply {
-            label = context.getString(R.string.remove_sidehead)
-            form = SideheadView.Form.RULED
-        }
+        // The "Remove" sidehead now rides as the marks LIST's footer (BookmarkAdapter), so it
+        // follows the marks it explains instead of sitting pinned to the bezel.
 
         segmentCells.onChoice = { index -> show(segmentsOffered()[index]) }
     }

@@ -9,6 +9,7 @@ import dev.reader.data.BookDao
 import dev.reader.data.BookmarkDao
 import dev.reader.data.BookmarkEntity
 import dev.reader.engine.chapterTitleFor
+import dev.reader.engine.highlightExcerpt
 import dev.reader.formats.epub.EpubException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -149,6 +150,15 @@ internal class BookmarksPanel(
         val page = reader.currentPage ?: return
         val path = reader.bookPath ?: return
         val spineIndex = reader.currentState.spineIndex
+        // The page's opening words, captured NOW exactly as a highlight captures its text: this
+        // code is already standing on the page, where the chapter text costs nothing — deriving it
+        // at display time would paginate a chapter per row, the eager work the panels forbid.
+        val excerpt = reader.currentChapterText()
+            ?.let { text ->
+                val start = page.startOffset.coerceIn(0, text.length)
+                val end = page.endOffset.coerceIn(start, text.length)
+                highlightExcerpt(text.substring(start, end)).takeIf { it.isNotEmpty() }
+            }
         scope.launch {
             val inLibrary = withContext(Dispatchers.IO) { books.getByPath(path) != null }
             if (!inLibrary) {
@@ -170,6 +180,7 @@ internal class BookmarksPanel(
                                 charOffset = page.startOffset,
                                 progressFraction = reader.currentProgress,
                                 createdAtMs = System.currentTimeMillis(),
+                                excerpt = excerpt,
                             ),
                         )
                     }

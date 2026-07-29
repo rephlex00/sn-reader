@@ -355,7 +355,10 @@
                 android:scrollbars="vertical" />
 
             <!-- Marks. "Mark this page" is a full-width cell at the head of the list with the page
-                 it would act on named underneath — which a toolbar pictogram could never say. -->
+                 it would act on named underneath — which a toolbar pictogram could never say.
+                 It coexists with the chrome's ribbon glyph deliberately: this panel is full-screen
+                 OVER the chrome, so the ribbon is unreachable from here, and the cell is the empty
+                 state's only action (see BackMatterPanel.applyBodyVisibility). -->
             <LinearLayout
                 android:id="@+id/marks_body"
                 android:layout_width="match_parent"
@@ -386,6 +389,9 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/space_loose" />
 
+                <!-- The "Remove" explainer is the LIST's footer (see item_marks_footer.xml), not a
+                     fixed block here — fixed, it sat pinned to the bezel under the unused list
+                     height. -->
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/bookmarks_list"
                     android:layout_width="match_parent"
@@ -393,21 +399,6 @@
                     android:layout_weight="1"
                     android:layout_marginTop="@dimen/space_snug"
                     android:scrollbars="vertical" />
-
-                <!-- Removal explained once, under a sidehead, rather than a trailing ✕ on every
-                     row putting forty pictograms on a surface built to avoid them. -->
-                <dev.reader.ui.SideheadView
-                    android:id="@+id/marks_remove_sidehead"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-
-                <TextView
-                    android:id="@+id/marks_remove_hint"
-                    style="@style/Text.Figure"
-                    android:layout_width="match_parent"
-                    android:layout_marginTop="@dimen/space_snug"
-                    android:layout_marginBottom="@dimen/space_loose"
-                    android:text="@string/marks_remove_hint" />
 
             </LinearLayout>
 

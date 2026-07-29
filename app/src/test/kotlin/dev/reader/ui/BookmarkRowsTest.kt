@@ -33,6 +33,19 @@ class BookmarkRowsTest {
     }
 
     @Test
+    fun `a stored excerpt rides through to the row and a blank one does not`() {
+        val withWords = mark(1, spine = 8, off = 120, frac = 0.3f).copy(excerpt = "It's been a few hours…")
+        val preColumn = mark(2, spine = 8, off = 400, frac = 0.4f) // pre-v6 mark: excerpt null
+        val blank = mark(3, spine = 8, off = 600, frac = 0.5f).copy(excerpt = "  ")
+
+        val rows = bookmarkRows(listOf(withWords, preColumn, blank), toc)
+
+        assertThat(rows[0].excerpt).isEqualTo("It's been a few hours…")
+        assertThat(rows[1].excerpt).isNull()
+        assertThat(rows[2].excerpt).isNull() // a whitespace excerpt would show a phantom second line
+    }
+
+    @Test
     fun `currentPageBookmark matches a bookmark whose offset falls on the page`() {
         val page = Page(index = 1, startLine = 5, endLine = 9, startOffset = 100, endOffset = 200, topPx = 0)
         val onPage = mark(1, spine = 3, off = 150, frac = 0.2f)

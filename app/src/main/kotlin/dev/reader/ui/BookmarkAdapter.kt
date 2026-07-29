@@ -27,6 +27,9 @@ data class BookmarkRow(
     val charOffset: Int,
     val chapter: String,
     val figure: String,
+    /** The page's opening words, captured at save time — null for comic marks and pre-excerpt
+     *  marks, whose rows show the chapter line alone. */
+    val excerpt: String? = null,
 ) {
     /** The two parts joined, for anything that wants one string (accessibility, tests). */
     val label: String get() = "$chapter · $figure"
@@ -48,6 +51,7 @@ fun bookmarkRows(bookmarks: List<BookmarkEntity>, toc: List<TocEntry>): List<Boo
             charOffset = b.charOffset,
             chapter = chapter,
             figure = "$percent%",
+            excerpt = b.excerpt?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -68,6 +72,10 @@ fun currentPageBookmark(bookmarks: List<BookmarkEntity>, spineIndex: Int, page: 
  * no confirmation and no undo. A long press cannot be mis-tapped, and the "Remove" sidehead at the
  * foot of the list explains it once rather than forty times.
  *
+ * The "Remove" explainer rides as the list's own FOOTER (second view type, the HighlightAdapter
+ * precedent) rather than a fixed block at the panel's foot — fixed, it sat pinned to the bezel with
+ * the unused list height as a void above it. Present only when there is at least one mark.
+ *
  * No async work, cache, or timer: the whole
  * list is submitted at once on panel-open, so it costs nothing at rest. [ReaderActivity] nulls the
  * RecyclerView's itemAnimator, so [submit]'s rebind is one e-ink redraw.
@@ -75,7 +83,7 @@ fun currentPageBookmark(bookmarks: List<BookmarkEntity>, spineIndex: Int, page: 
 class BookmarkAdapter(
     private val onJump: (BookmarkRow) -> Unit,
     private val onDelete: (BookmarkRow) -> Unit,
-) : RecyclerView.Adapter<BookmarkAdapter.BookmarkViewHolder>() {
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private var rows: List<BookmarkRow> = emptyList()
 
@@ -85,29 +93,59 @@ class BookmarkAdapter(
         notifyDataSetChanged()
     }
 
-    override fun getItemCount(): Int = rows.size
+    override fun getItemCount(): Int = if (rows.isEmpty()) 0 else rows.size + 1
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BookmarkViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_bookmark, parent, false)
-        return BookmarkViewHolder(view)
+    override fun getItemViewType(position: Int): Int =
+        if (position == rows.size) VIEW_TYPE_FOOTER else VIEW_TYPE_MARK
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return if (viewType == VIEW_TYPE_FOOTER) {
+            FooterViewHolder(inflater.inflate(R.layout.item_marks_footer, parent, false))
+        } else {
+            BookmarkViewHolder(inflater.inflate(R.layout.item_bookmark, parent, false))
+        }
     }
 
-    override fun onBindViewHolder(holder: BookmarkViewHolder, position: Int) {
-        holder.bind(rows[position], onJump, onDelete)
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        if (holder is BookmarkViewHolder) holder.bind(rows[position], onJump, onDelete)
     }
 
     class BookmarkViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         private val label: TextView = view.findViewById(R.id.bookmark_label)
         private val percent: TextView = view.findViewById(R.id.bookmark_percent)
+        private val excerpt: TextView = view.findViewById(R.id.bookmark_excerpt)
+        private val oneLineMinHeight = view.resources.getDimensionPixelSize(R.dimen.row_height)
+        private val twoLineMinHeight = view.resources.getDimensionPixelSize(R.dimen.row_height_two_line)
 
         fun bind(row: BookmarkRow, onJump: (BookmarkRow) -> Unit, onDelete: (BookmarkRow) -> Unit) {
             label.text = row.chapter
             percent.text = row.figure
+            excerpt.text = row.excerpt.orEmpty()
+            excerpt.visibility = if (row.excerpt != null) View.VISIBLE else View.GONE
+            // The design system's two heights (dimens.xml): a bare row and "a mark with its
+            // opening words". Set per bind — recycled holders swap between the two shapes.
+            itemView.minimumHeight = if (row.excerpt != null) twoLineMinHeight else oneLineMinHeight
             itemView.setOnClickListener { onJump(row) }
             itemView.setOnLongClickListener {
                 onDelete(row)
                 true
             }
         }
+    }
+
+    /** The removal explainer. Static but for its sidehead label, which only code can set. */
+    class FooterViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        init {
+            view.findViewById<SideheadView>(R.id.marks_footer_sidehead).apply {
+                label = view.context.getString(R.string.remove_sidehead)
+                form = SideheadView.Form.RULED
+            }
+        }
+    }
+
+    private companion object {
+        const val VIEW_TYPE_MARK = 0
+        const val VIEW_TYPE_FOOTER = 1
     }
 }
