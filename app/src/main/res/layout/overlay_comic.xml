@@ -1,17 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The comic reader's chrome, which is the reader's chrome with one word different.
+<!-- The comic reader's chrome, which is the reader's chrome with a smaller vocabulary.
 
-     Same two rows, same EDGE rule, same foot, same dismiss in the same place — so a reader who has
-     learned the book surface has already learned this one. Three deliberate differences, each
-     following from what a comic actually is:
+     Same two rows in the same SHAPE — ‹, the title beside it, the destinations at the right, the
+     running-head row beneath, the same EDGE rule and foot — so a reader who has learned the book
+     surface has already learned this one. The differences follow from what a comic actually is:
 
-       * The first destination reads MARKS, not CONTENTS. A comic has no chapters, and a three-cell
-         segment with one live cell is worse than no segment at all — so the back-matter surface
-         behind it offers marks alone and drops the segment row entirely (BackMatterPanel
-         .hasChapters = false).
-       * The running head carries the reading direction where a book carries its chapter. It is the
-         one fact about a comic that is not obvious from the page, and the one setting people flip
-         per book. Tapping it flips it.
+       * The destinations are the ribbon and MARKS, not the ribbon, Aa and CONTENTS. A comic has no
+         chapters (the back-matter surface offers marks alone) and no type to set, so those words
+         would be dead. The ribbon marks the page in place, exactly as the book's does.
+       * The running-head row carries the reading direction where a book carries its chapter. It is
+         the one fact about a comic that is not obvious from the page, and the one setting people
+         flip per book. Tapping it flips it.
        * The page sits on a VEIL mat. A comic page fitted to this screen leaves letterboxing, and a
          black surround would be a large ink flood on a reflective panel fighting the artwork it
          frames. VEIL reads as a mat, which is what a printed comic gets.
@@ -47,15 +46,31 @@
                 style="@style/ChromeGlyph.Back"
                 android:contentDescription="@string/action_back" />
 
-            <View
+            <!-- The comic's title, in the seat the book's title holds — beside the way out. -->
+            <TextView
+                android:id="@+id/comic_title"
+                style="@style/Text.Sub.BookTitle"
                 android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
+                android:layout_weight="1"
+                android:layout_marginStart="@dimen/space_snug"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textStyle="italic" />
 
-            <!-- Opens the marks surface. Still a word rather than the book reader's ribbon glyph:
-                 there is no chapters segment behind it, so this is the comic's only destination and
-                 naming it is worth more than saving the width. Marking the page itself is the first
-                 row inside, written as a sentence that names the page it would act on. -->
+            <!-- The mark ribbon, exactly as the book's: outlined when this page is unmarked,
+                 flooded when marked, tap to toggle. -->
+            <ImageView
+                android:id="@+id/comic_bookmark_button"
+                android:layout_width="@dimen/tap_target_min"
+                android:layout_height="@dimen/tap_target_min"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="@string/bookmark_add"
+                android:padding="@dimen/glyph_inset"
+                android:src="@drawable/ic_bookmark" />
+
+            <!-- Opens the marks surface. There is no chapters segment behind it, so this is the
+                 comic's only destination and naming it is worth more than saving the width. -->
             <TextView
                 android:id="@+id/comic_bookmarks_button"
                 style="@style/Text.Mark.Destination"
@@ -69,32 +84,22 @@
 
         </LinearLayout>
 
-        <!-- The running head: the comic on the left, its reading direction on the right, where a
-             book puts its chapter. Tapping the direction flips it for this comic. -->
+        <!-- The running-head row: the reading direction, centred where a book centres its chapter.
+             It is a control as well as a fact — tapping it flips the direction for this comic. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="@dimen/chrome_running_head_height"
-            android:gravity="center_vertical"
+            android:gravity="center"
             android:orientation="horizontal"
             android:paddingHorizontal="@dimen/margin_screen">
-
-            <TextView
-                android:id="@+id/comic_title"
-                style="@style/Text.Sub"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textStyle="italic" />
 
             <TextView
                 android:id="@+id/comic_direction_button"
                 style="@style/Text.Mark"
                 android:layout_height="match_parent"
-                android:layout_marginStart="@dimen/space"
                 android:clickable="true"
                 android:focusable="true"
-                android:gravity="center_vertical|end"
+                android:gravity="center"
                 android:minWidth="@dimen/tap_target_min" />
 
         </LinearLayout>

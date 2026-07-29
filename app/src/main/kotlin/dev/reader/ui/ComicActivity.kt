@@ -66,6 +66,10 @@ open class ComicActivity : AppCompatActivity() {
     private lateinit var bookmarkButton: TextView
     private lateinit var bookmarkSubject: TextView
 
+    /** The chrome's mark ribbon — the book reader's glyph, toggling the same fact the marks
+     *  panel's cell does. Outlined when this page is unmarked, flooded when marked. */
+    private lateinit var ribbonButton: ImageView
+
     /** The bookmarks panel view (`comic_bookmarks_panel`): this Activity owns only its visibility —
      *  everything else (the list, the delete write, the empty state) belongs to [bookmarksPanel] —
      *  mirrors ReaderActivity's own `bookmarksPanel: View` / `bookmarks: BookmarksPanel` split. */
@@ -175,6 +179,8 @@ open class ComicActivity : AppCompatActivity() {
         // sentence naming the page it would act on rather than a pictogram that could not.
         bookmarkButton = overlay.findViewById(R.id.comic_bookmark_toggle)
         bookmarkSubject = overlay.findViewById(R.id.comic_bookmark_subject)
+        ribbonButton = overlay.findViewById(R.id.comic_bookmark_button)
+        ribbonButton.setOnClickListener { toggleBookmark() }
         // The panel's title slot is bound in openComic(), once the document can actually name
         // itself. Binding Activity.getTitle() here named every comic "Reader" — the manifest label.
         overlay.findViewById<SideheadView>(R.id.comic_marks_sidehead).apply {
@@ -335,6 +341,10 @@ open class ComicActivity : AppCompatActivity() {
         val bookmarked = bookmarks.any { it.spineIndex == currentPage }
         bookmarkButton.setText(if (bookmarked) R.string.bookmark_remove else R.string.bookmark_add)
         bookmarkSubject.text = getString(R.string.comic_page_readout, currentPage + 1, pageCount)
+        // The chrome ribbon states the same fact — one source of truth, both controls follow it.
+        ribbonButton.setImageResource(if (bookmarked) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark)
+        ribbonButton.contentDescription =
+            getString(if (bookmarked) R.string.bookmark_remove else R.string.bookmark_add)
     }
 
     private fun onTap(zone: TapZone) {
