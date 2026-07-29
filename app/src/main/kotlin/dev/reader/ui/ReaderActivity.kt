@@ -1394,8 +1394,10 @@ open class ReaderActivity : AppCompatActivity() {
                 // so we deliberately do NOT override it with the filename here (that would make the
                 // reader disagree with the library). The filename is only a defensive fallback for
                 // the currently-unreachable case of a blank title slipping through.
-                titleView.text = doc.metadata.title.takeIf { it.isNotBlank() }
-                    ?: File(file.path).nameWithoutExtension
+                titleView.text = displayTitle(
+                    doc.metadata.title.takeIf { it.isNotBlank() }
+                        ?: File(file.path).nameWithoutExtension,
+                )
                 // Both surfaces name the book they belong to. On a device with four books half-read
                 // that matters more than a panel title repeating its own name back at you.
                 backMatter.setBookTitle(titleView.text.toString())

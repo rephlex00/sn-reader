@@ -277,7 +277,7 @@ open class BookGridAdapter(
         holder.job?.cancel()
         holder.job = null
 
-        holder.title.text = book.title
+        holder.title.text = displayTitle(book.title)
         holder.author.text = formatAuthor(book.author)
         holder.itemView.setOnClickListener { onBookClick(book) }
 
@@ -302,7 +302,7 @@ open class BookGridAdapter(
     }
 
     private fun bindBookRow(holder: BookRowViewHolder, book: BookEntity) {
-        holder.title.text = book.title
+        holder.title.text = displayTitle(book.title)
         val author = formatAuthor(book.author)
         holder.author.text = author
         holder.author.visibility = if (author.isEmpty()) View.GONE else View.VISIBLE

@@ -175,7 +175,8 @@ open class ComicActivity : AppCompatActivity() {
         // sentence naming the page it would act on rather than a pictogram that could not.
         bookmarkButton = overlay.findViewById(R.id.comic_bookmark_toggle)
         bookmarkSubject = overlay.findViewById(R.id.comic_bookmark_subject)
-        overlay.findViewById<TextView>(R.id.comic_bookmarks_book).text = title
+        // The panel's title slot is bound in openComic(), once the document can actually name
+        // itself. Binding Activity.getTitle() here named every comic "Reader" — the manifest label.
         overlay.findViewById<SideheadView>(R.id.comic_marks_sidehead).apply {
             label = getString(R.string.marks_sidehead)
             form = SideheadView.Form.RULED
@@ -252,7 +253,9 @@ open class ComicActivity : AppCompatActivity() {
                 showMessage(e.message ?: getString(android.R.string.dialog_alert_title)); finish(); return@launch
             }
             document = doc
-            titleView.text = doc.metadata.title
+            titleView.text = displayTitle(doc.metadata.title)
+            // Both surfaces name the book they belong to — same rule as the book reader's panels.
+            overlay.findViewById<TextView>(R.id.comic_bookmarks_book).text = titleView.text
             pageCount = doc.spineSize
             bookPath = file.path
             val stored = withContext(Dispatchers.IO) { dao.getByPath(file.path) }
