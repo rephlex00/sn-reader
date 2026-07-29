@@ -58,7 +58,7 @@
 
             <TextView
                 android:id="@+id/book_title"
-                style="@style/Text.Sub"
+                style="@style/Text.Sub.BookTitle"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_marginStart="@dimen/space_snug"

@@ -166,6 +166,14 @@
         <item name="android:textColor">@color/reader_text_primary</item>
     </style>
 
+    <!-- The book, on the chrome's top row. Italic and SLATE as a book's name is set in running
+         prose, but at row size rather than a caption's: it is the subject the whole bar is about,
+         and it sits beside a 36sp chevron and above a 17sp chapter. At the sub size it was the
+         smallest voice on a row it was supposed to be heading. -->
+    <style name="Text.Sub.BookTitle">
+        <item name="android:textSize">@dimen/text_row</item>
+    </style>
+
     <!-- The running head: the chapter, centred under the title. Set above every other tracked-caps
          label in the app, because it is not a label — it is the book talking, the one line of the
          chrome that is about where you are rather than what you can press. -->
