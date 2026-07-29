@@ -218,7 +218,7 @@
 
     <!-- The back control beside the scrubber: pops the jump stack. The glyph is universal and a
          word would crowd the readout. -->
-    <string name="scrubber_back">↩</string>
+    <string name="scrubber_back">Return</string>
     <string name="error_turn_page">Something went wrong turning the page.</string>
     <string name="error_apply_setting">That setting couldn\'t be applied.</string>
     <string name="error_open_bookmark">That bookmark couldn\'t be opened.</string>

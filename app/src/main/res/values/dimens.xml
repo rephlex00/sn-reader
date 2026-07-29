@@ -188,4 +188,37 @@
 
     <!-- The minimum any tappable thing may be. -->
     <dimen name="tap_target_min">48dp</dimen>
+
+    <!-- ===== Reach: what a glyph control is actually worth aiming at =====
+
+         48dp is Android's floor, written for a phone held a foot from the face and tapped with a
+         thumb that can see where it is going. This is a 300dpi slate held at arm's length, tapped
+         by a finger that has just been resting on the bezel, on a digitizer that drops light
+         contacts outright (the same pressure behaviour the scrubber's trusted-lift grammar exists
+         to survive). At the floor, every ‹ and › in the app was a coin-toss.
+
+         Two changes, and the second matters more than the first:
+
+           * A single-glyph control gets 56dp rather than 48dp. Not larger still, because these sit
+             in 56dp rows and a target taller than its row starts stealing from its neighbours.
+           * A control at a screen edge REACHES THAT EDGE. Every one of these sits inside a row
+             padded to margin_screen, so the outermost 32dp of glass — the exact strip a thumb
+             lands on when you aim at a corner — was dead. The idiom that reclaims it, applied in
+             ChromeGlyph.Back, PanelDismiss and their trailing twins:
+
+                 layout_width  = tap_target_glyph_edge   (56 + 32)
+                 layout_margin{Start,End} = -edge_reach  (pull the box out through the padding)
+                 padding{Start,End}       =  edge_reach  (put the INK back where it was)
+
+             The net layout footprint is unchanged — width + margin = 88 - 32 = 56 — so no sibling
+             moves and the drawn glyph does not shift by a pixel. Only the hit box grows, out into
+             the margin that was doing nothing. -->
+    <dimen name="tap_target_glyph">56dp</dimen>
+    <dimen name="edge_reach">32dp</dimen>
+    <!-- edge_reach negated. Its own value because XML cannot negate a dimension reference; the
+         two must always be equal and opposite. -->
+    <dimen name="edge_reach_pull">-32dp</dimen>
+    <!-- tap_target_glyph + edge_reach. Kept as its own value because XML cannot add two dimens;
+         if either term above changes, change this one with it. -->
+    <dimen name="tap_target_glyph_edge">88dp</dimen>
 </resources>

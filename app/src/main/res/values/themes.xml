@@ -129,9 +129,9 @@
          every other word on the row, which is what "aligned" means for type. minHeight keeps the
          tap target at 48dp without reintroducing the exemption. -->
     <style name="ChromeGlyph">
-        <item name="android:layout_width">@dimen/tap_target_min</item>
+        <item name="android:layout_width">@dimen/tap_target_glyph</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">@dimen/tap_target_min</item>
+        <item name="android:minHeight">@dimen/tap_target_glyph</item>
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
         <item name="android:gravity">center</item>
@@ -148,12 +148,20 @@
          start gravity, not center: the glyph's ink, not its empty tap box, is what has to sit at
          the screen margin. Centred in the 48dp box, the ‹ started 20dp inside it — so the row's
          first ink sat at 52dp while CONTENTS's last ink ended exactly at the 32dp margin, and the
-         whole bar read as heavier on the right. The box (and so the tap target) has not moved. -->
+         whole bar read as heavier on the right.
+
+         The negative margin and matching padding reclaim the screen's own left edge as hit area:
+         this is the only way out of a book on a device with no hardware Back, and it was a 48dp
+         box with 32dp of dead glass beside it. See the "Reach" note in dimens.xml — the drawn
+         glyph does not move and no sibling shifts; only the box grows. -->
     <style name="ChromeGlyph.Back">
         <item name="android:text">@string/reader_back</item>
         <item name="android:textSize">@dimen/text_glyph_chrome</item>
         <item name="android:translationY">@dimen/chrome_glyph_lift</item>
         <item name="android:gravity">start|center_vertical</item>
+        <item name="android:layout_width">@dimen/tap_target_glyph_edge</item>
+        <item name="android:layout_marginStart">@dimen/edge_reach_pull</item>
+        <item name="android:paddingStart">@dimen/edge_reach</item>
     </style>
 
     <!-- Type. A specimen, not a pictogram: two letters set in the face the panel behind them
@@ -259,16 +267,32 @@
          it is learned once and never hunted for. The device has no hardware Back; this is the
          only guaranteed way out. -->
     <style name="PanelDismiss">
-        <item name="android:layout_width">@dimen/tap_target_min</item>
-        <item name="android:layout_height">@dimen/tap_target_min</item>
+        <item name="android:layout_width">@dimen/tap_target_glyph_edge</item>
+        <item name="android:layout_height">@dimen/tap_target_glyph</item>
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
         <!-- start, not center, for the same reason as ChromeGlyph.Back: the ink at the margin,
-             the empty half of the tap box inboard where nothing lines up against it. -->
+             the empty half of the tap box inboard where nothing lines up against it. The negative
+             margin then reclaims the dead glass outboard of it — see the "Reach" note in
+             dimens.xml. Every header this style is used in is 56dp tall and padded to
+             margin_screen, so one set of values holds for all of them. -->
         <item name="android:gravity">start|center_vertical</item>
+        <item name="android:layout_marginStart">@dimen/edge_reach_pull</item>
+        <item name="android:paddingStart">@dimen/edge_reach</item>
         <item name="android:text">‹</item>
         <item name="android:textColor">@color/reader_text_primary</item>
         <item name="android:textSize">@dimen/text_glyph</item>
         <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- The same control facing the other way: the shelf's page-forward ›. Mirrored, so its ink
+         sits at the right margin and its box reaches the right edge of the glass. -->
+    <style name="PanelDismiss.Forward">
+        <item name="android:gravity">end|center_vertical</item>
+        <item name="android:layout_marginStart">0dp</item>
+        <item name="android:paddingStart">0dp</item>
+        <item name="android:layout_marginEnd">@dimen/edge_reach_pull</item>
+        <item name="android:paddingEnd">@dimen/edge_reach</item>
+        <item name="android:text">@string/glyph_forward</item>
     </style>
 </resources>

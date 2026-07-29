@@ -1739,6 +1739,39 @@ class ReaderActivityTest {
     // -- Task 5: the jump back-stack -----------------------------------------------------------
 
     @Test
+    fun `the chrome's way out reaches the screen's own edge, and its glyph has not moved`() {
+        // The reader's ‹ is the only way out of a book on a device with no hardware Back, and it
+        // sat in a 48dp box with the row's 32dp margin as dead glass beside it — so a tap at the
+        // corner, which is where a hand at arm's length lands, hit nothing. The box now reaches
+        // x = 0. The negative margin is exactly cancelled by the padding, so this must NOT have
+        // cost the row anything: the title still starts where it did.
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        // Robolectric doesn't lay the overlay out on its own; this is a geometry assertion, so
+        // drive one pass at the panel's own portrait size.
+        val overlay = overlayOf(activity)
+        overlay.measure(
+            View.MeasureSpec.makeMeasureSpec(1404, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1872, View.MeasureSpec.EXACTLY),
+        )
+        overlay.layout(0, 0, overlay.measuredWidth, overlay.measuredHeight)
+        val back = activity.findViewById<TextView>(R.id.back)
+        val title = activity.findViewById<TextView>(R.id.book_title)
+
+        assertThat(back.left).isEqualTo(0) // reaches the physical edge
+        val minTarget = (56 * activity.resources.displayMetrics.density).toInt()
+        assertThat(back.width).isAtLeast(minTarget)
+        assertThat(back.height).isAtLeast(minTarget)
+
+        // The ink is put back by paddingStart, so the glyph draws at the margin as before...
+        val margin = activity.resources.getDimensionPixelSize(R.dimen.margin_screen)
+        assertThat(back.paddingStart).isEqualTo(margin)
+        // ...and the next control along starts exactly where the un-widened box used to end.
+        assertThat(title.left).isEqualTo(margin + activity.resources.getDimensionPixelSize(R.dimen.tap_target_glyph))
+    }
+
+    @Test
     fun `a scrub commit arms the back control and tapping it returns and disarms when empty`() {
         val controller = openedWithToc()
         val activity = controller.get()

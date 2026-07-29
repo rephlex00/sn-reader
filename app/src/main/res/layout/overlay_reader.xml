@@ -123,15 +123,19 @@
             <!-- wrap_content height with a minHeight, not match_parent: a match_parent child is
                  exempt from the row's baseline alignment (see the ChromeGlyph style), and this word
                  must sit on the same line as the ‹ and the title. -->
+            <!-- Trailing edge: the negative end margin reaches the right edge of the glass while
+                 paddingEnd keeps the word's last letter on the margin. See dimens.xml, "Reach". -->
             <TextView
                 android:id="@+id/contents_button"
                 style="@style/Text.Mark.Destination"
                 android:clickable="true"
                 android:focusable="true"
                 android:gravity="center"
-                android:minHeight="@dimen/tap_target_min"
+                android:layout_marginEnd="@dimen/edge_reach_pull"
+                android:minHeight="@dimen/tap_target_glyph"
                 android:minWidth="@dimen/tap_target_min"
                 android:paddingStart="@dimen/space_snug"
+                android:paddingEnd="@dimen/edge_reach"
                 android:text="@string/reader_contents" />
 
         </LinearLayout>
@@ -251,22 +255,29 @@
 
             <!-- Pops the jump back-stack (JumpStack): returns to the position left by the last
                  scrub commit or contents/mark/note jump. GONE whenever the stack is empty — see
-                 ReaderActivity.updateBackControl. A glyph rather than a word because the chrome
-                 above already reads "‹ Library" for leaving the book; ↩ is the one other mark the
-                 app sanctions, and it is seated on its own ring rather than left adrift. -->
+                 ReaderActivity.updateBackControl.
+
+                 A WORD, in the same tracked caps as CONTENTS and MARKS. It was a ↩ seated on a
+                 drawn ring, which made it the only circle in an app built out of rules, words and
+                 paper — and a ring is a heavy way to say "this glyph is a button" on a surface
+                 where every other button says so by being a word. RETURN also distinguishes itself
+                 from the ‹ one row above: ‹ leaves the book, this comes back from a jump.
+
+                 paddingStart alone puts the word on the screen margin, with NO negative margin:
+                 this sits in an unpadded FrameLayout, so its box already starts at the glass. (The
+                 edge_reach_pull idiom is for controls inside a row padded to margin_screen — used
+                 here it overshot, and the word printed hard against the bezel.) -->
             <TextView
                 android:id="@+id/scrubber_back"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
+                style="@style/Text.Mark.Destination"
                 android:layout_gravity="start|center_vertical"
-                android:layout_marginStart="@dimen/space_hair"
-                android:background="@drawable/return_seat"
                 android:clickable="true"
                 android:focusable="true"
-                android:gravity="center"
+                android:gravity="start|center_vertical"
+                android:minHeight="@dimen/tap_target_glyph"
+                android:paddingStart="@dimen/edge_reach"
+                android:paddingEnd="@dimen/space"
                 android:text="@string/scrubber_back"
-                android:textColor="@color/reader_text_primary"
-                android:textSize="@dimen/text_glyph"
                 android:visibility="gone" />
 
         </FrameLayout>

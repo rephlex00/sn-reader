@@ -78,9 +78,11 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:gravity="center"
-                android:minHeight="@dimen/tap_target_min"
+                android:layout_marginEnd="@dimen/edge_reach_pull"
+                android:minHeight="@dimen/tap_target_glyph"
                 android:minWidth="@dimen/tap_target_min"
                 android:paddingStart="@dimen/space"
+                android:paddingEnd="@dimen/edge_reach"
                 android:text="@string/segment_marks" />
 
         </LinearLayout>
@@ -174,19 +176,19 @@
                 android:paddingHorizontal="@dimen/margin_screen"
                 android:paddingTop="@dimen/space" />
 
+            <!-- The book reader's return control, verbatim — see overlay_reader.xml for why it is
+                 a word rather than a ↩ on a ring. -->
             <TextView
                 android:id="@+id/comic_scrubber_back"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
+                style="@style/Text.Mark.Destination"
                 android:layout_gravity="start|center_vertical"
-                android:layout_marginStart="@dimen/space_hair"
-                android:background="@drawable/return_seat"
                 android:clickable="true"
                 android:focusable="true"
-                android:gravity="center"
+                android:gravity="start|center_vertical"
+                android:minHeight="@dimen/tap_target_glyph"
+                android:paddingStart="@dimen/edge_reach"
+                android:paddingEnd="@dimen/space"
                 android:text="@string/scrubber_back"
-                android:textColor="@color/reader_text_primary"
-                android:textSize="@dimen/text_glyph"
                 android:visibility="gone" />
 
         </FrameLayout>

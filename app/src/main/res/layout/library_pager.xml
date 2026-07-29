@@ -32,8 +32,7 @@
 
     <TextView
         android:id="@+id/library_page_next"
-        style="@style/PanelDismiss"
-        android:contentDescription="@string/library_page_next"
-        android:text="@string/glyph_forward" />
+        style="@style/PanelDismiss.Forward"
+        android:contentDescription="@string/library_page_next" />
 
 </LinearLayout>
