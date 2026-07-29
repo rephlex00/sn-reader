@@ -120,9 +120,18 @@
          title clears the 48dp target, and each carries its meaning at a size that survives being
          read at arm's length on a reflective panel. -->
 
+    <!-- wrap_content height, NOT match_parent, and that is the whole of what makes the row line up.
+         A LinearLayout skips baseline alignment for any child declared match_parent (see
+         layoutHorizontal's `lp.height != MATCH_PARENT` guard), so a match_parent glyph falls back to
+         centring its own FONT BOX — and a ‹ sits low in that box, because the box reaches up past
+         the cap height to clear accents the glyph does not have. At 36sp that put the chevron a
+         visible 6dp below the title beside it. Sized to its text instead, it shares a baseline with
+         every other word on the row, which is what "aligned" means for type. minHeight keeps the
+         tap target at 48dp without reintroducing the exemption. -->
     <style name="ChromeGlyph">
         <item name="android:layout_width">@dimen/tap_target_min</item>
-        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">@dimen/tap_target_min</item>
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
         <item name="android:gravity">center</item>
@@ -143,12 +152,20 @@
         <item name="android:textSize">@dimen/text_row</item>
     </style>
 
-    <!-- CONTENTS: the only word on a row of glyphs, and the only destination the chrome names. At
-         label size it read as a caption on the bar rather than as the control it is, so it takes
-         the sub size and the full ink a row gets rather than a label's IRON. -->
+    <!-- CONTENTS: the only word on a row of glyphs, and the only destination the chrome names. It
+         takes full ink rather than a label's IRON — it is a control, not a caption — but only the
+         figure size: it is a door out of the page, and it was reading louder than the chapter, which
+         is the one thing on that bar telling you where in the book you actually are. -->
     <style name="Text.Mark.Destination">
-        <item name="android:textSize">@dimen/text_sub</item>
+        <item name="android:textSize">@dimen/text_figure</item>
         <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- The running head: the chapter, centred under the title. Set above every other tracked-caps
+         label in the app, because it is not a label — it is the book talking, the one line of the
+         chrome that is about where you are rather than what you can press. -->
+    <style name="Text.Mark.RunningHead">
+        <item name="android:textSize">@dimen/text_sub</item>
     </style>
 
     <!-- ===== The cell =====

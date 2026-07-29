@@ -59,10 +59,10 @@
             <TextView
                 android:id="@+id/comic_bookmarks_button"
                 style="@style/Text.Mark.Destination"
-                android:layout_height="match_parent"
                 android:clickable="true"
                 android:focusable="true"
                 android:gravity="center"
+                android:minHeight="@dimen/tap_target_min"
                 android:minWidth="@dimen/tap_target_min"
                 android:paddingStart="@dimen/space"
                 android:text="@string/segment_marks" />

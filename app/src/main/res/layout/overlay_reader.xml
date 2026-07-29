@@ -74,7 +74,7 @@
                  the orientation calls for. -->
             <TextView
                 android:id="@+id/running_chapter_wide"
-                style="@style/Text.Mark"
+                style="@style/Text.Mark.RunningHead"
                 android:layout_marginStart="@dimen/space_snug"
                 android:layout_marginEnd="@dimen/space_snug"
                 android:ellipsize="end"
@@ -116,13 +116,16 @@
 
             <!-- Opens the back-matter surface (chapters, marks, notes). Reads "Marks" in a comic,
                  which has no chapters — set in ComicActivity. -->
+            <!-- wrap_content height with a minHeight, not match_parent: a match_parent child is
+                 exempt from the row's baseline alignment (see the ChromeGlyph style), and this word
+                 must sit on the same line as the ‹ and the title. -->
             <TextView
                 android:id="@+id/contents_button"
                 style="@style/Text.Mark.Destination"
-                android:layout_height="match_parent"
                 android:clickable="true"
                 android:focusable="true"
                 android:gravity="center"
+                android:minHeight="@dimen/tap_target_min"
                 android:minWidth="@dimen/tap_target_min"
                 android:paddingStart="@dimen/space_snug"
                 android:text="@string/reader_contents" />
@@ -142,7 +145,7 @@
 
             <TextView
                 android:id="@+id/running_chapter"
-                style="@style/Text.Mark"
+                style="@style/Text.Mark.RunningHead"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:ellipsize="end"
