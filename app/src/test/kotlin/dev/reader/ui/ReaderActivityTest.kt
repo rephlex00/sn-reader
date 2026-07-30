@@ -19,7 +19,8 @@ import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.TocEntry
 import dev.reader.engine.snapToWords
-import dev.reader.formats.epub.EpubDocument
+import dev.reader.formats.BookException
+import dev.reader.formats.ReflowableDocument
 import dev.reader.formats.epub.EpubException
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
@@ -76,11 +77,11 @@ class ReaderActivityTest {
 
     @Test
     fun `a stale book extra shows a message and finishes instead of opening another book`() {
-        // The tapped file vanished between grid paint and tap. Falling back to findFirstEpub
+        // The tapped file vanished between grid paint and tap. Falling back to findFirstBook
         // (the old behavior) silently opens whatever EPUB sorts first — and once Task 6 wires
         // position memory, writes the wrong row's position.
         val controller = readerFor(intentWithExtra("${tempFolder.root}/gone.epub"))
-        controller.get().firstEpub = tempFolder.newFile("decoy.epub") // must NOT be used
+        controller.get().firstBook = tempFolder.newFile("decoy.epub") // must NOT be used
 
         launchAndLayOut(controller)
         idleUntil { controller.get().isFinishing }
@@ -92,19 +93,19 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `no extra at all still falls back to findFirstEpub (the adb launch path)`() {
+    fun `no extra at all still falls back to findFirstBook (the adb launch path)`() {
         val controller = readerFor(Intent(RuntimeEnvironment.getApplication(), TestableReaderActivity::class.java))
-        controller.get().firstEpub = null
+        controller.get().firstBook = null
 
         launchAndLayOut(controller)
-        // Wait on the toast, not on findFirstCalls. The counter increments inside findFirstEpub on
+        // Wait on the toast, not on findFirstCalls. The counter increments inside findFirstBook on
         // Dispatchers.IO while the toast is posted to the main thread afterwards, so waiting on the
         // counter can return before the toast exists and the assertion below reads null. That race
         // is a real intermittent failure, not a theoretical one.
         idleUntil { ShadowToast.getTextOfLatestToast() != null }
 
         assertThat(controller.get().findFirstCalls).isEqualTo(1)
-        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("No EPUB found in /Document.")
+        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("No book found in /Document.")
         // Recoverable, not finished: the user may drop a book in and come back.
         assertThat(controller.get().isFinishing).isFalse()
     }
@@ -2601,8 +2602,8 @@ class ReaderActivityTest {
     private class TestableReaderActivity : ReaderActivity() {
         var accessGranted = true
 
-        /** What [findFirstEpub] returns; the real /Document walk never runs under Robolectric. */
-        var firstEpub: File? = null
+        /** What [findFirstBook] returns; the real /Document walk never runs under Robolectric. */
+        var firstBook: File? = null
         var findFirstCalls = 0
 
         var openCalls = 0
@@ -2614,10 +2615,10 @@ class ReaderActivityTest {
         var blockOpen: CountDownLatch? = null
 
         /** Thrown by [openDocument] instead of opening, for the failed-open path. */
-        var throwOnOpen: EpubException? = null
+        var throwOnOpen: BookException? = null
 
         /** Every document the real open produced, so tests can observe closure. */
-        val openedDocuments = mutableListOf<EpubDocument>()
+        val openedDocuments = mutableListOf<ReflowableDocument>()
 
         /** How many times [scheduleStripGeneration] was called — the trigger DECISION, counted
          *  without paying for a real (multi-second) bitmap generation on every Activity test. */
@@ -2633,12 +2634,12 @@ class ReaderActivityTest {
          *  cancel an actual in-flight coroutine. Not called in production. */
         fun scheduleRealStripGenerationForTest() = super.scheduleStripGeneration()
 
-        override fun findFirstEpub(): File? {
+        override fun findFirstBook(): File? {
             findFirstCalls++
-            return firstEpub
+            return firstBook
         }
 
-        override fun openDocument(file: File): EpubDocument {
+        override fun openDocument(file: File): ReflowableDocument {
             openCalls++
             openEntered?.countDown()
             blockOpen?.await()

@@ -1,10 +1,12 @@
 package dev.reader.formats.epub
 
+import dev.reader.formats.BookException
+
 /**
  * Typed failures. The reading UI names the reason to the user; a malformed book
  * must never crash the app.
  */
-sealed class EpubException(message: String) : Exception(message) {
+sealed class EpubException(message: String) : BookException(message) {
     /** The container is not an EPUB at all. */
     class NotAnEpub(message: String) : EpubException(message)
 

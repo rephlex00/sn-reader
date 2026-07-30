@@ -5,7 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import dev.reader.engine.RenderConfig
-import dev.reader.formats.epub.EpubDocument
+import dev.reader.formats.ReflowableDocuments
 import dev.reader.formats.render.AndroidMeasuredChapter
 import dev.reader.formats.render.AndroidTextMeasurer
 import dev.reader.formats.render.SpannedChapterBuilder
@@ -22,7 +22,7 @@ import java.security.MessageDigest
  * a single low-priority, cancellable, one-shot coroutine after a book's first open under a given
  * config (measured whole-book pagination: 2.2–7.7 s on the Nomad; drawing adds a few more).
  *
- * Thread safety: [generate] opens its OWN EpubDocument. The reader's document has an
+ * Thread safety: [generate] opens its OWN document. The reader's document has an
  * unsynchronized, main-thread-only chapter cache; the generator never touches it, and the LRU
  * serving the page being read is never evicted by generation.
  *
@@ -118,7 +118,7 @@ class PreviewStripStore(private val context: Context) {
         onGenerateStartedForTest?.invoke()
 
         val measurer = AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(context))
-        EpubDocument.open(bookFile, measurer).use { doc ->
+        ReflowableDocuments.open(bookFile, measurer).use { doc ->
             val pageCounts = (0 until doc.spineSize).map { i ->
                 ensureActive()
                 doc.chapter(i, config).pages.size

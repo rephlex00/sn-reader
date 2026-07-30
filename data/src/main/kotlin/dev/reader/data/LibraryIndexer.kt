@@ -99,7 +99,7 @@ class LibraryIndexer(
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private companion object {
-        val BOOK_EXTENSIONS = setOf("epub", "cbz", "cbr")
+        val BOOK_EXTENSIONS = setOf("epub", "mobi", "azw", "prc", "cbz", "cbr")
     }
 
     suspend fun sync(): IndexResult = withContext(Dispatchers.IO) {

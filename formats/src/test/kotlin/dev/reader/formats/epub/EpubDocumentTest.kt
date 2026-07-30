@@ -6,6 +6,7 @@ import android.text.style.StyleSpan
 import android.text.style.SuperscriptSpan
 import com.google.common.truth.Truth.assertThat
 import dev.reader.engine.RenderConfig
+import dev.reader.formats.PaginatedChapter
 import dev.reader.formats.ResourceSource
 import dev.reader.formats.render.AndroidMeasuredChapter
 import dev.reader.formats.render.AndroidTextMeasurer

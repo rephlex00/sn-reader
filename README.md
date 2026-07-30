@@ -4,7 +4,7 @@
 
 <h1 align="center">Reader</h1>
 
-<p align="center">A quiet reader for EPUB and comics, built for Supernote e-ink tablets.</p>
+<p align="center">A quiet reader for EPUB, MOBI and comics, built for Supernote e-ink tablets.</p>
 
 ---
 
@@ -39,8 +39,13 @@ app uses **no measurable CPU at all**.
 * **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for
   speed; menus repaint quickly too, without touching the page's own crisp refresh
 
-Reader opens **EPUB**, **CBZ**, and **CBR** files that are really zips (many are). A genuine RAR
+Reader opens **EPUB**, **MOBI**, **CBZ**, and **CBR** files that are really zips (many are). A genuine RAR
 archive does not open yet. No PDF.
+
+MOBI support covers the un-DRMed mobi7 books that make up most sideloaded `.mobi` files, and they
+read exactly as EPUBs do — same chrome, same Contents, same marks and typography. Two kinds are
+refused, by name rather than silently: anything with DRM, and **AZW3/KF8**, which is what Amazon
+ships today. Those say so on the shelf instead of appearing broken.
 
 ## Getting it on your Supernote
 
@@ -253,7 +258,7 @@ Kotlin, Gradle, and plain Android Views on purpose. Not Compose, not a WebView: 
 than a still page needs, which is the whole thing this project is trying to avoid.
 
 Four modules. `:engine` is pure Kotlin with no Android dependency, holding the pagination logic so it
-can be tested on an ordinary JVM. `:formats` parses EPUB and measures text. `:data` is the
+can be tested on an ordinary JVM. `:formats` parses EPUB and MOBI and measures text. `:data` is the
 Room-backed book index. `:app` is the interface.
 
 You need JDK 21 and the Android SDK, including one package that is easy to miss:
