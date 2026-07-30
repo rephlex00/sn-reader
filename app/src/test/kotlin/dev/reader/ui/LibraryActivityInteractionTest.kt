@@ -181,7 +181,7 @@ class LibraryActivityInteractionTest {
         // first-run screen rather than nothing. It now says so, and names the folder it scanned,
         // instead of leaving a blank grid with no explanation.
         assertThat(activity.emptyStateVisibility).isEqualTo(View.VISIBLE)
-        assertThat(activity.emptyStateText).contains("Drop EPUB, CBZ or CBR files")
+        assertThat(activity.emptyStateText).contains("Drop EPUB, MOBI, CBZ or CBR files")
         assertThat(syncCalls).isEqualTo(1)
     }
 

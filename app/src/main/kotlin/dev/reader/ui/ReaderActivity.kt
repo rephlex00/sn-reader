@@ -39,9 +39,10 @@ import dev.reader.engine.reflowedPageIndex
 import dev.reader.engine.retreat
 import dev.reader.engine.retreatSpread
 import dev.reader.engine.spreadStart
-import dev.reader.formats.epub.EpubDocument
-import dev.reader.formats.epub.EpubException
-import dev.reader.formats.epub.PaginatedChapter
+import dev.reader.formats.BookException
+import dev.reader.formats.ReflowableDocument
+import dev.reader.formats.ReflowableDocuments
+import dev.reader.formats.PaginatedChapter
 import dev.reader.formats.render.AndroidMeasuredChapter
 import dev.reader.formats.render.AndroidTextMeasurer
 import dev.reader.formats.render.SpannedChapterBuilder
@@ -281,7 +282,7 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private lateinit var highlights: HighlightsController
 
-    private var document: EpubDocument? = null
+    private var document: ReflowableDocument? = null
     private var navigator: PageNavigator? = null
     private var state = ReadingState(0, 0)
     private var config: RenderConfig? = null
@@ -1024,7 +1025,7 @@ open class ReaderActivity : AppCompatActivity() {
             showPage(state)
             flushPosition()
             settings.refresh()
-        } catch (e: EpubException) {
+        } catch (e: BookException) {
             showError(R.string.error_apply_setting, e)
         } catch (e: Exception) {
             showError(R.string.error_apply_setting, e)
@@ -1346,11 +1347,11 @@ open class ReaderActivity : AppCompatActivity() {
         opening = true
 
         lifecycleScope.launch {
-            var opened: EpubDocument? = null
+            var opened: ReflowableDocument? = null
             try {
                 val explicitPath = intent.getStringExtra(EXTRA_BOOK_PATH)
                 val file = withContext(Dispatchers.IO) {
-                    if (explicitPath != null) File(explicitPath).takeIf { it.isFile } else findFirstEpub()
+                    if (explicitPath != null) File(explicitPath).takeIf { it.isFile } else findFirstBook()
                 }
                 if (file == null) {
                     opening = false
@@ -1367,7 +1368,7 @@ open class ReaderActivity : AppCompatActivity() {
                         // No extra at all: the standalone adb launch path. Not a permanent
                         // failure — the user may drop a book in and come back, and onResume
                         // re-arms only while `opening` is false.
-                        showMessage(R.string.error_no_epub_found)
+                        showMessage(R.string.error_no_book_found)
                     }
                     return@launch
                 }
@@ -1490,7 +1491,7 @@ open class ReaderActivity : AppCompatActivity() {
                 // caught by the `Exception` branch below, which is why this branch comes first).
                 opened?.close()
                 throw e
-            } catch (e: EpubException) {
+            } catch (e: BookException) {
                 opening = false
                 showError(R.string.error_open_book, e)
             } catch (e: Exception) {
@@ -1511,7 +1512,7 @@ open class ReaderActivity : AppCompatActivity() {
      * path, and failed-open recovery without racing real multi-second book opens. Production
      * always opens the real file with the real Android measurer.
      */
-    protected open fun openDocument(file: File): EpubDocument = EpubDocument.open(
+    protected open fun openDocument(file: File): ReflowableDocument = ReflowableDocuments.open(
         file,
         AndroidTextMeasurer(SpannedChapterBuilder(), BundledTypefaceProvider(this)),
     )
@@ -1629,15 +1630,16 @@ open class ReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * The standalone-launch fallback (no [EXTRA_BOOK_PATH] on the intent): the first EPUB under
-     * /Document. `protected open` purely as a test seam — [ReaderActivityTest] substitutes it to
-     * exercise the fallback path without a real /Document tree.
+     * The standalone-launch fallback (no [EXTRA_BOOK_PATH] on the intent): the first reflowable
+     * book under /Document, in either format. `protected open` purely as a test seam —
+     * [ReaderActivityTest] substitutes it to exercise the fallback path without a real /Document
+     * tree.
      */
-    protected open fun findFirstEpub(): File? = try {
+    protected open fun findFirstBook(): File? = try {
         val documents = File(Environment.getExternalStorageDirectory(), "Document")
         documents.walkTopDown()
             .maxDepth(10) // Closes an unbounded symlink-loop walk; matches LibraryIndexer.walk().
-            .filter { it.isFile && it.extension.equals("epub", ignoreCase = true) }
+            .filter { it.isFile && it.extension.lowercase() in READABLE_EXTENSIONS }
             .firstOrNull()
     } catch (e: SecurityException) {
         // A denied or half-revoked all-files-access grant can surface here as walkTopDown
@@ -1721,7 +1723,7 @@ open class ReaderActivity : AppCompatActivity() {
                     turnsSinceRefresh = 0
                 }
             }
-        } catch (e: EpubException) {
+        } catch (e: BookException) {
             showError(R.string.error_turn_page, e)
         } catch (e: Exception) {
             // Mirrors openFirstBook's defense-in-depth catch: chapter() is documented to throw
@@ -2409,5 +2411,12 @@ open class ReaderActivity : AppCompatActivity() {
 
         /** String extra: an absolute book path, set by [LibraryActivity] when opening a tap. */
         const val EXTRA_BOOK_PATH = "dev.reader.ui.EXTRA_BOOK_PATH"
+
+        /**
+         * Extensions this reader can open, for the standalone-launch walk only. The library's own
+         * routing goes through `bookFormatOf`; this exists because the adb/no-extra launch path
+         * has no index to consult.
+         */
+        private val READABLE_EXTENSIONS = setOf("epub", "mobi", "azw", "prc")
     }
 }

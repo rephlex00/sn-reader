@@ -19,7 +19,8 @@ import dev.reader.engine.ReadingState
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.TocEntry
 import dev.reader.engine.snapToWords
-import dev.reader.formats.epub.EpubDocument
+import dev.reader.formats.BookException
+import dev.reader.formats.ReflowableDocument
 import dev.reader.formats.epub.EpubException
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
@@ -76,11 +77,11 @@ class ReaderActivityTest {
 
     @Test
     fun `a stale book extra shows a message and finishes instead of opening another book`() {
-        // The tapped file vanished between grid paint and tap. Falling back to findFirstEpub
+        // The tapped file vanished between grid paint and tap. Falling back to findFirstBook
         // (the old behavior) silently opens whatever EPUB sorts first — and once Task 6 wires
         // position memory, writes the wrong row's position.
         val controller = readerFor(intentWithExtra("${tempFolder.root}/gone.epub"))
-        controller.get().firstEpub = tempFolder.newFile("decoy.epub") // must NOT be used
+        controller.get().firstBook = tempFolder.newFile("decoy.epub") // must NOT be used
 
         launchAndLayOut(controller)
         idleUntil { controller.get().isFinishing }
@@ -92,19 +93,19 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `no extra at all still falls back to findFirstEpub (the adb launch path)`() {
+    fun `no extra at all still falls back to findFirstBook (the adb launch path)`() {
         val controller = readerFor(Intent(RuntimeEnvironment.getApplication(), TestableReaderActivity::class.java))
-        controller.get().firstEpub = null
+        controller.get().firstBook = null
 
         launchAndLayOut(controller)
-        // Wait on the toast, not on findFirstCalls. The counter increments inside findFirstEpub on
+        // Wait on the toast, not on findFirstCalls. The counter increments inside findFirstBook on
         // Dispatchers.IO while the toast is posted to the main thread afterwards, so waiting on the
         // counter can return before the toast exists and the assertion below reads null. That race
         // is a real intermittent failure, not a theoretical one.
         idleUntil { ShadowToast.getTextOfLatestToast() != null }
 
         assertThat(controller.get().findFirstCalls).isEqualTo(1)
-        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("No EPUB found in /Document.")
+        assertThat(ShadowToast.getTextOfLatestToast()).isEqualTo("No book found in /Document.")
         // Recoverable, not finished: the user may drop a book in and come back.
         assertThat(controller.get().isFinishing).isFalse()
     }
@@ -2601,8 +2602,8 @@ class ReaderActivityTest {
     private class TestableReaderActivity : ReaderActivity() {
         var accessGranted = true
 
-        /** What [findFirstEpub] returns; the real /Document walk never runs under Robolectric. */
-        var firstEpub: File? = null
+        /** What [findFirstBook] returns; the real /Document walk never runs under Robolectric. */
+        var firstBook: File? = null
         var findFirstCalls = 0
 
         var openCalls = 0
@@ -2614,10 +2615,10 @@ class ReaderActivityTest {
         var blockOpen: CountDownLatch? = null
 
         /** Thrown by [openDocument] instead of opening, for the failed-open path. */
-        var throwOnOpen: EpubException? = null
+        var throwOnOpen: BookException? = null
 
         /** Every document the real open produced, so tests can observe closure. */
-        val openedDocuments = mutableListOf<EpubDocument>()
+        val openedDocuments = mutableListOf<ReflowableDocument>()
 
         /** How many times [scheduleStripGeneration] was called — the trigger DECISION, counted
          *  without paying for a real (multi-second) bitmap generation on every Activity test. */
@@ -2633,12 +2634,12 @@ class ReaderActivityTest {
          *  cancel an actual in-flight coroutine. Not called in production. */
         fun scheduleRealStripGenerationForTest() = super.scheduleStripGeneration()
 
-        override fun findFirstEpub(): File? {
+        override fun findFirstBook(): File? {
             findFirstCalls++
-            return firstEpub
+            return firstBook
         }
 
-        override fun openDocument(file: File): EpubDocument {
+        override fun openDocument(file: File): ReflowableDocument {
             openCalls++
             openEntered?.countDown()
             blockOpen?.await()
@@ -3066,6 +3067,160 @@ class ReaderActivityTest {
      * 800x600 viewport, so a NEXT tap lands on a page whose `startOffset` is past 0 — the signal the
      * flush test asserts on. Same structure as [minimalEpub], just far more body text.
      */
+
+    /**
+     * A multi-chapter mobi7 book, built the way a real one is: one HTML stream, a guide pointing
+     * at a TOC page whose anchors are byte offsets, and body text in `<blockquote>`. Duplicated
+     * from `:formats`' own TestMobi for the same reason `multiPageEpub` duplicates TestEpub —
+     * `:formats` publishes no testFixtures.
+     */
+
+    // -- MOBI: the same reader, the same everything ---------------------------------------------
+    // The feature is that a reader cannot tell which format they opened. These drive a real mobi7
+    // book through the real Activity and assert it behaves as the EPUB tests above expect an EPUB
+    // to — same chrome, same Contents, same pagination, same marks.
+
+    @Test
+    fun `a mobi opens in the reader and shows a page`() {
+        val book = multiChapterMobi(tempFolder.newFile("book.mobi"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+%""")
+        assertThat(activity.findViewById<TextView>(R.id.book_title).text.toString())
+            .isEqualTo("The Mobi Book")
+    }
+
+    @Test
+    fun `a mobi turns pages and crosses into its next chapter`() {
+        val book = multiChapterMobi(tempFolder.newFile("book.mobi"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+        assertThat(activity.currentTopOffsetForTest()!!.spineIndex).isEqualTo(0)
+
+        // Turn past the end of chapter one; the reader must land in chapter two rather than stop.
+        repeat(60) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
+        idleUntil { activity.currentTopOffsetForTest()!!.spineIndex == 1 }
+        assertThat(activity.currentTopOffsetForTest()!!.spineIndex).isEqualTo(1)
+    }
+
+    @Test
+    fun `a mobi fills the Contents panel from its own table of contents`() {
+        val book = multiChapterMobi(tempFolder.newFile("book.mobi"))
+        val controller = readerFor(intentWithExtra(book.path))
+        launchAndLayOut(controller)
+        val activity = controller.get()
+        idleUntil { scrubberTextOf(activity).isNotEmpty() }
+
+        pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        val list = activity.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.toc_list)
+        assertThat(list.adapter!!.itemCount).isEqualTo(2)
+    }
+
+    @Test
+    fun `the chrome over a mobi is the chrome over an epub`() {
+        // Every control the reader sees, in the same state, for a book of each format.
+        fun chromeShape(path: String): List<Int> {
+            val controller = readerFor(intentWithExtra(path))
+            launchAndLayOut(controller)
+            val a = controller.get()
+            idleUntil { scrubberTextOf(a).isNotEmpty() }
+            a.showOverlayForTest()
+            return listOf(
+                R.id.back, R.id.book_title, R.id.bookmark_button,
+                R.id.settings_button, R.id.contents_button, R.id.chapter_scrubber,
+            ).map { a.findViewById<View>(it).visibility }
+        }
+        val asEpub = chromeShape(multiPageEpub(tempFolder.newFile("a.epub")).path)
+        val asMobi = chromeShape(multiChapterMobi(tempFolder.newFile("b.mobi")).path)
+        assertThat(asMobi).isEqualTo(asEpub)
+    }
+
+    private fun multiChapterMobi(file: File): File {
+        fun chapter(n: Int) = buildString {
+            append("<div><p height=\"1em\"><font size=\"7\"><b>CHAPTER $n</b></font></p>")
+            repeat(30) { i ->
+                append("<blockquote height=\"0pt\" width=\"2em\">Chapter $n paragraph $i. ")
+                append("It carries enough words to fill several lines once laid out on the ")
+                append("viewport, so a chapter spans more than a single page.</blockquote>")
+            }
+            append("<mbp:pagebreak/></div>")
+        }
+        val head = "<html><head><guide><reference type=\"toc\" filepos=%08d /></guide></head><body>"
+        val one = chapter(1)
+        val two = chapter(2)
+        val headLen = String.format(head, 0).toByteArray(Charsets.UTF_8).size
+        val oneAt = headLen
+        val twoAt = oneAt + one.toByteArray(Charsets.UTF_8).size
+        val tocAt = twoAt + two.toByteArray(Charsets.UTF_8).size
+        val toc = "<div><p><a filepos=%08d>CHAPTER 1</a></p><p><a filepos=%08d>CHAPTER 2</a></p></div>"
+            .format(oneAt, twoAt)
+        val html = String.format(head, tocAt) + one + two + toc + "</body></html>"
+        writeMobi(file, html, title = "The Mobi Book", author = "M. Author")
+        return file
+    }
+
+    /** Writes a real PalmDB: header, offset table, record 0 (PalmDOC + MOBI + EXTH), text records. */
+    private fun writeMobi(file: File, html: String, title: String, author: String) {
+        val text = html.toByteArray(Charsets.UTF_8)
+        val recordSize = 4096
+        val textRecords = text.toList().chunked(recordSize) { it.toByteArray() } // compression 1: stored
+
+        fun bshort(o: java.io.ByteArrayOutputStream, v: Int) { o.write((v shr 8) and 0xff); o.write(v and 0xff) }
+        fun bint(o: java.io.ByteArrayOutputStream, v: Int) {
+            o.write((v shr 24) and 0xff); o.write((v shr 16) and 0xff)
+            o.write((v shr 8) and 0xff); o.write(v and 0xff)
+        }
+
+        val exthBody = java.io.ByteArrayOutputStream()
+        var exthCount = 0
+        for ((type, value) in listOf(100 to author, 503 to title)) {
+            val v = value.toByteArray(Charsets.UTF_8)
+            bint(exthBody, type); bint(exthBody, v.size + 8); exthBody.write(v); exthCount++
+        }
+        val exth = java.io.ByteArrayOutputStream().apply {
+            write("EXTH".toByteArray(Charsets.US_ASCII))
+            bint(this, 12 + exthBody.size()); bint(this, exthCount); write(exthBody.toByteArray())
+            while (size() % 4 != 0) write(0)
+        }.toByteArray()
+
+        val mobiHeaderLength = 232
+        val record0 = java.io.ByteArrayOutputStream().apply {
+            bshort(this, 1); bshort(this, 0)          // compression = stored
+            bint(this, text.size)
+            bshort(this, textRecords.size); bshort(this, recordSize); bshort(this, 0); bshort(this, 0)
+            val m = java.io.ByteArrayOutputStream()
+            m.write("MOBI".toByteArray(Charsets.US_ASCII))
+            bint(m, mobiHeaderLength); bint(m, 2); bint(m, 65001); bint(m, 0); bint(m, 6)
+            repeat(10) { bint(m, 0) }
+            bint(m, 1 + textRecords.size)             // firstNonBookIndex
+            repeat(6) { bint(m, 0) }
+            bint(m, 0)                                // firstImageIndex: no images
+            repeat(4) { bint(m, 0) }
+            bint(m, 0x40)                             // EXTH present
+            while (m.size() < mobiHeaderLength) m.write(0)
+            write(m.toByteArray()); write(exth)
+        }.toByteArray()
+
+        val records = listOf(record0) + textRecords
+        val out = java.io.ByteArrayOutputStream()
+        val name = "MobiBook".toByteArray(Charsets.US_ASCII)
+        out.write(name); repeat(32 - name.size) { out.write(0) }
+        out.write(ByteArray(28))
+        out.write("BOOK".toByteArray(Charsets.US_ASCII)); out.write("MOBI".toByteArray(Charsets.US_ASCII))
+        out.write(ByteArray(8))
+        bshort(out, records.size)
+        var offset = 78 + records.size * 8
+        for (r in records) { bint(out, offset); out.write(0); out.write(0); out.write(0); out.write(0); offset += r.size }
+        for (r in records) out.write(r)
+        file.writeBytes(out.toByteArray())
+    }
+
     private fun multiPageEpub(file: File): File {
         val body = buildString {
             repeat(60) { i ->

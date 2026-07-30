@@ -2,13 +2,10 @@ package dev.reader.formats.epub
 
 import dev.reader.engine.Block
 import dev.reader.engine.BookMetadata
-import dev.reader.engine.MeasuredChapter
-import dev.reader.engine.Page
-import dev.reader.engine.Paginator
 import dev.reader.engine.RenderConfig
 import dev.reader.engine.TextMeasurer
 import dev.reader.engine.TocEntry
-import dev.reader.formats.Document
+import dev.reader.formats.ReflowableDocument
 import dev.reader.formats.ResourceSource
 import dev.reader.formats.ZipResourceSource
 import org.jsoup.Jsoup
@@ -16,42 +13,12 @@ import org.jsoup.nodes.Document as JsoupDocument
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-/** One chapter, measured and sliced into pages. */
-data class PaginatedChapter(val measured: MeasuredChapter, val pages: List<Page>)
-
-/**
- * Chapters worth holding at once: the current chapter plus a neighbour on each side.
- * A later plan's background pagination is expected to want exactly this window.
- */
-private const val CHAPTER_CACHE_CAPACITY = 3
-
-/**
- * Bounds the chapter cache to [CHAPTER_CACHE_CAPACITY] entries, evicting least-recently-used.
- * Each retained entry pins a `StaticLayout` + `Spanned` over a full chapter's text, so an
- * unbounded cache would retain every chapter of a book read straight through for the whole
- * session — on an e-ink device with modest RAM that is a real leak.
- */
-private class LruChapterCache :
-    LinkedHashMap<Int, PaginatedChapter>(CHAPTER_CACHE_CAPACITY, 0.75f, /* accessOrder = */ true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, PaginatedChapter>): Boolean =
-        size > CHAPTER_CACHE_CAPACITY
-}
-
 class EpubDocument private constructor(
     private val source: ResourceSource,
     private val pkg: EpubPackage,
-    private val measurer: TextMeasurer,
+    measurer: TextMeasurer,
     override val toc: List<TocEntry>,
-) : Document {
-
-    private val paginator = Paginator()
-
-    // Only the current config's chapters are worth holding; a settings change invalidates
-    // all of them, and the locator puts the reader back on the same sentence anyway.
-    // Within a config, only a small neighbourhood of chapters is worth holding too — see
-    // LruChapterCache.
-    private var cacheConfig: RenderConfig? = null
-    private val cache = LruChapterCache()
+) : ReflowableDocument(measurer) {
 
     // Keyed by the exact list of stylesheet sources a chapter resolves to (see cssFor):
     // in the overwhelmingly common shape - one stylesheet shared by every chapter in the
@@ -84,93 +51,11 @@ class EpubDocument private constructor(
      * Thread-safe: Kotlin's `by lazy` defaults to [LazyThreadSafetyMode.SYNCHRONIZED], so the
      * initializer runs under a lock exactly once and all threads then observe the published result.
      */
-    val chapterWeights: List<Long> by lazy {
+    override val chapterWeights: List<Long> by lazy {
         pkg.spine.map { idref -> pkg.manifest[idref]?.href?.let(source::size) ?: 0L }
     }
 
-    /**
-     * Measures and paginates chapter [spineIndex]. Cached per config (bounded to the
-     * current chapter and a neighbour on each side), so paging within a chapter costs
-     * nothing after the first call.
-     *
-     * NOT thread-safe: [cacheConfig] and [cache] are unsynchronized. Callers must confine
-     * all calls to a single thread. Background prefetch must call the pure [paginate] off the
-     * main thread and publish through [publish] on a main-thread hop — never [chapter] — because
-     * the cache is a `LinkedHashMap(accessOrder = true)` where even a read mutates link order.
-     */
-    fun chapter(spineIndex: Int, config: RenderConfig): PaginatedChapter {
-        require(spineIndex in pkg.spine.indices) {
-            "spineIndex $spineIndex out of range 0..${pkg.spine.lastIndex}"
-        }
-        if (cacheConfig != config) {
-            cache.clear()
-            cacheConfig = config
-        }
-        return cache.getOrPut(spineIndex) { paginate(spineIndex, config) }
-    }
-
-    /**
-     * Measures and paginates chapter [spineIndex] under [config] WITHOUT touching the chapter
-     * cache — a pure function of its inputs (and the immutable archive). This is the compute half
-     * of [chapter], split out so a background prefetch can run it off the main thread (StaticLayout
-     * construction is off-main-thread-safe) and then hand the result to [publish] on a main-thread
-     * hop.
-     *
-     * Thread-safe by construction: it is safe to call concurrently with itself and with a
-     * main-thread [chapter]/page turn, because it shares NO mutable state across threads. Every
-     * input it reads is either immutable or independently concurrent —
-     *  - [pkg] (manifest/spine) and [config] are immutable;
-     *  - [source] wraps a `java.util.zip.ZipFile`, whose `getEntry`/`getInputStream` serve
-     *    independent streams safely to concurrent readers;
-     *  - the [XhtmlBlockParser] is constructed fresh per [readBlocks] call, so its documented
-     *    per-parse mutable state (baseline, colour memo) is confined to the calling thread — no
-     *    instance is ever shared;
-     *  - [measurer] and [paginator] hold no mutable instance state (fresh `TextPaint`/builder per
-     *    call);
-     *  - [cssCache] is a [ConcurrentHashMap] holding deeply-immutable [CssRules] values.
-     * It reads no chapter-cache state and writes none, so a settings change or page turn racing it
-     * cannot observe a partial result. Publishing the result is [publish]'s job, and that touches
-     * the (unsynchronized) chapter cache, so it — like [chapter] — stays main-thread only.
-     */
-    fun paginate(spineIndex: Int, config: RenderConfig): PaginatedChapter {
-        require(spineIndex in pkg.spine.indices) {
-            "spineIndex $spineIndex out of range 0..${pkg.spine.lastIndex}"
-        }
-        val blocks = readBlocks(spineIndex, config)
-        val measured = measurer.measure(blocks, config)
-        val pages = if (blocks.isEmpty()) {
-            emptyList()
-        } else {
-            paginator.paginate(measured, config.contentHeightPx)
-        }
-        return PaginatedChapter(measured, pages)
-    }
-
-    /**
-     * Publishes a [paginate] result into the cache, but ONLY if [config] still matches the cache's
-     * current config — i.e. the reader has not changed a typography setting since the background
-     * prefetch began (which would have made this result stale). Returns true if published. Main
-     * thread only, like [chapter], since it touches [cache]/[cacheConfig]. A no-op if the entry is
-     * already cached (a real read raced ahead) or the config moved on.
-     */
-    fun publish(spineIndex: Int, config: RenderConfig, chapter: PaginatedChapter): Boolean {
-        if (cacheConfig != config) return false
-        if (cache.containsKey(spineIndex)) return false
-        cache[spineIndex] = chapter
-        return true
-    }
-
-    /**
-     * Whether chapter [spineIndex] is already paginated under [config] — a read-only cache peek so a
-     * background prefetch can skip re-paginating a neighbour that is already cached (the common case
-     * after a forward read, where the previous chapter is still resident). Main thread only, like
-     * [chapter]/[publish], since it reads [cache]/[cacheConfig]; `containsKey` (unlike `get`) does
-     * NOT reorder the access-ordered cache, so a peek never disturbs LRU eviction.
-     */
-    fun isPaginated(spineIndex: Int, config: RenderConfig): Boolean =
-        cacheConfig == config && cache.containsKey(spineIndex)
-
-    private fun readBlocks(spineIndex: Int, config: RenderConfig): List<Block> {
+    override fun readBlocks(spineIndex: Int, config: RenderConfig): List<Block> {
         // Unreachable by construction: EpubPackageParser.parseSpine already filters the
         // spine down to idrefs present in the manifest, so this lookup can never miss.
         // Kept as defense-in-depth, not as a live case.

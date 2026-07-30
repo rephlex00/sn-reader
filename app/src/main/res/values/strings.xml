@@ -56,7 +56,7 @@
 
     <!-- Library empty and permission states -->
     <string name="library_empty_title">No books yet</string>
-    <string name="library_empty_hint">Drop EPUB, CBZ or CBR files into the folder below and open Reader again. Scanning is incremental, so a large library does not mean a slow start.</string>
+    <string name="library_empty_hint">Drop EPUB, MOBI, CBZ or CBR files into the folder below and open Reader again. Scanning is incremental, so a large library does not mean a slow start.</string>
     <string name="library_scan_again">Scan again</string>
     <string name="library_permission_fact">Reader needs all-files access to read your books. Settings › Apps › Special access › All files access › Reader.</string>
     <string name="library_empty_no_matches">No books match. Clear the search or filter to see your library.</string>
@@ -225,7 +225,7 @@
     <string name="error_save_highlight">That highlight couldn\'t be saved.</string>
     <string name="error_scan_library">Your library couldn\'t be scanned.</string>
     <string name="error_book_not_indexed">This book isn\'t in your library yet.</string>
-    <string name="error_no_epub_found">No EPUB found in /Document.</string>
+    <string name="error_no_book_found">No book found in /Document.</string>
     <string name="highlight_cancelled_chapter_change">Highlight cancelled — you moved to another chapter.</string>
 
     <!-- ComicActivity's minimal overlay readout: 1-based current page, of the archive's page count. -->
