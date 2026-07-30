@@ -36,15 +36,20 @@ class LeaderDotsView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
 
-    // Hoisted BEFORE the Paint below: inside a `Paint().apply { }` block the name `density`
-    // resolves to Paint's own member (always 1.0), silently dropping dp scaling. That trap has
-    // already cost this project three rounds of debugging on the running foot.
-    private val density = resources.displayMetrics.density
-    private val dotRadiusPx = 0.8f * density
-    private val dotSpacingPx = 5f * density
+    // Resolved from resources rather than multiplied out by hand: inside a `Paint().apply { }`
+    // block the name `density` resolves to Paint's own member (always 1.0), silently dropping dp
+    // scaling — a trap that has already cost this project three rounds on the running foot.
+    // getDimension returns px and cannot be caught by it.
+    //
+    // 2dp dots at 8dp pitch, in IRON. The previous 1.6dp SLATE dots at 5dp pitch were close to
+    // invisible on glass — the hairline problem in miniature, and the reason the rule elsewhere is
+    // "no stroke lighter than IRON". Heavier and further apart reads as a leader rather than as a
+    // smudge; the pitch is what keeps it from reading as a dashed rule.
+    private val dotRadiusPx = resources.getDimension(R.dimen.leader_dot_size) / 2f
+    private val dotSpacingPx = resources.getDimension(R.dimen.leader_dot_pitch)
 
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.reader_text_secondary)
+        color = ContextCompat.getColor(context, R.color.reader_text_label)
     }
 
     override fun onDraw(canvas: Canvas) {

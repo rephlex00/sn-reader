@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The shelf's half-title, and the controls it keeps out of the way until asked.
+
+     This replaces an AppCompat Toolbar with a Roboto title, a magnifier and a three-dot overflow —
+     the single thing that made the library read as a different app from the reader it launches.
+
+     The half-title is the whole of the resting state: the shelf's name, its count, and two glyphs.
+     Search, filter, sort and view are how you *narrow* a shelf rather than how you read one, so
+     they are folded away behind the search mark and the books get the room instead. Revealing them
+     is one redraw, and the shelf repaginates around them.
+
+     Those two glyphs are the only pictograms in the app. They earn it: a gear and a magnifier are
+     the two marks whose meaning is universal enough not to need a word, and a word for either would
+     have competed with the half-title it sits on.
+
+     e-ink: no ripple, no elevation, no animation. The rules do the separating. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/paper"
+    android:orientation="vertical"
+    android:paddingTop="@dimen/space">
+
+    <!-- The half-title: where you are, what is here, and the two ways out of it. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="@dimen/margin_screen">
+
+        <TextView
+            android:id="@+id/library_title"
+            style="@style/Text.Halftitle"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/library_title" />
+
+        <TextView
+            android:id="@+id/library_count"
+            style="@style/Text.Figure"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/space_snug"
+            android:ellipsize="end"
+            android:maxLines="1" />
+
+        <ImageView
+            android:id="@+id/library_find"
+            android:layout_width="@dimen/tap_target_min"
+            android:layout_height="@dimen/tap_target_min"
+            android:clickable="true"
+            android:contentDescription="@string/library_find"
+            android:focusable="true"
+            android:padding="@dimen/glyph_inset"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_search" />
+
+        <ImageView
+            android:id="@+id/library_settings"
+            android:layout_width="@dimen/tap_target_min"
+            android:layout_height="@dimen/tap_target_min"
+            android:layout_marginStart="@dimen/space_tight"
+            android:clickable="true"
+            android:contentDescription="@string/settings_title"
+            android:focusable="true"
+            android:padding="@dimen/glyph_inset"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_settings" />
+
+    </LinearLayout>
+
+    <!-- EDGE: the half-title belongs to the shelf below it. It runs to the boards' own outer
+         edge rather than the text margin — it is underlining the shelf, not the words.
+
+         Full rule_edge weight, DELIBERATELY not the reader chrome's 2dp: that lighter weight
+         exists because a 6dp bar directly against a page of prose read as something the text had
+         to look past (see rule_chrome). This rule bounds furniture against boards — covers that
+         are themselves heavy blacks — where 6dp holds its own without competing with anything. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/rule_edge"
+        android:layout_marginTop="@dimen/space_tight"
+        android:layout_marginHorizontal="@dimen/shelf_edge"
+        android:background="@color/reader_rule" />
+
+</LinearLayout>

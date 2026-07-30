@@ -173,7 +173,22 @@ class ReaderPrefs(context: Context) {
         )
     }
 
+    /**
+     * Which back-matter segment (chapters / marks / notes) this book was last left on.
+     *
+     * Per book, not global: a reader annotating one book and skimming another wants each to open
+     * where they left it. Keyed by the book's own identity rather than an index, so a re-scan that
+     * reorders the library cannot hand a book someone else's segment. An unknown key yields 0
+     * (chapters), which is also what a comic — offering marks alone — falls back to safely.
+     */
+    fun lastBackMatterSegment(bookKey: String): Int =
+        prefs.getInt(KEY_BACK_MATTER_SEGMENT + bookKey, 0)
+
+    fun setLastBackMatterSegment(bookKey: String, ordinal: Int) =
+        prefs.edit().putInt(KEY_BACK_MATTER_SEGMENT + bookKey, ordinal).apply()
+
     private companion object {
+        const val KEY_BACK_MATTER_SEGMENT = "back_matter_segment_"
         const val KEY_FONT_FAMILY = "font_family"
         const val KEY_TEXT_SIZE_PX = "text_size_px"
         const val KEY_LINE_SPACING = "line_spacing_multiplier"

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The chosen cell: reversed, not outlined. An outline reads as a *button* in every other Android
+  app, so an outlined selection is ambiguous about whether it is the current value or the thing you
+  are about to press. A reversed block cannot be misread, and with no colour available it is the
+  most legible mark this panel can make.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/ink" />
+</shape>

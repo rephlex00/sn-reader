@@ -8,6 +8,8 @@ import dev.reader.R
 import dev.reader.data.BookDao
 import dev.reader.data.BookmarkDao
 import dev.reader.data.BookmarkEntity
+import dev.reader.engine.chapterTitleFor
+import dev.reader.engine.highlightExcerpt
 import dev.reader.formats.epub.EpubException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -34,11 +36,22 @@ internal class BookmarksPanel(
     // Notified every time this panel re-reads the book's bookmarks (open, add, remove) — the
     // scrubber's glyphs hang off the same read instead of a standing observer of their own.
     private val onBookmarksChanged: () -> Unit = {},
+    /** Reports an empty list up to [BackMatterPanel], which owns the shared empty state. */
+    private val onEmpty: (Boolean) -> Unit = {},
+    /**
+     * Whether the page on screen carries a mark — the chrome's ribbon glyph is filled or outlined
+     * from this. Reported by [refresh] and by the cheap [refreshCurrentPageMark], so the glyph and
+     * the panel's own cell can never disagree about the same page.
+     */
+    private val onMarkedChanged: (Boolean) -> Unit = {},
 ) {
 
     private val list: RecyclerView = overlay.findViewById(R.id.bookmarks_list)
-    private val empty: View = overlay.findViewById(R.id.bookmarks_empty)
     private val toggle: TextView = overlay.findViewById(R.id.bookmark_toggle)
+
+    /** Names the page the toggle above would act on. A toolbar pictogram could not say which page
+     *  it was about to mark; a cell with the page written under it can. */
+    private val toggleSubject: TextView = overlay.findViewById(R.id.bookmark_toggle_subject)
     private val adapter = BookmarkAdapter(onJump = ::jumpTo, onDelete = ::delete)
 
     init {
@@ -60,14 +73,54 @@ internal class BookmarksPanel(
             val marks = withContext(Dispatchers.IO) { bookmarks.bookmarksFor(path) }
             val rows = bookmarkRows(marks, reader.toc)
             adapter.submit(rows)
-            val isEmpty = rows.isEmpty()
-            empty.visibility = if (isEmpty) View.VISIBLE else View.GONE
-            list.visibility = if (isEmpty) View.GONE else View.VISIBLE
+            onEmpty(rows.isEmpty())
 
             val onThisPage = bookmarkOnCurrentPage(marks)
             toggle.setText(if (onThisPage != null) R.string.bookmark_remove else R.string.bookmark_add)
+            toggleSubject.text = currentPageSubject()
+            onMarkedChanged(onThisPage != null)
             onBookmarksChanged()
         }
+    }
+
+    /**
+     * Re-reads only whether the page on screen carries a mark, and reports it to [onMarkedChanged].
+     *
+     * The chrome's ribbon needs that one boolean every time the overlay opens, and [refresh] is far
+     * too expensive to run for it: that rebuilds the whole list and, through [onBookmarksChanged],
+     * resolves every mark's position — which paginates a chapter on a cache miss. This is one
+     * indexed DAO read and nothing else, which is what keeps opening the chrome free.
+     */
+    fun refreshCurrentPageMark() {
+        val path = reader.bookPath ?: return
+        scope.launch {
+            val marks = withContext(Dispatchers.IO) { bookmarks.bookmarksFor(path) }
+            onMarkedChanged(bookmarkOnCurrentPage(marks) != null)
+        }
+    }
+
+    /**
+     * Marks or unmarks the page on screen — the chrome's glyph and this panel's own cell are the
+     * same action, so a reader who does not need to see the list never has to open one. The write
+     * path is shared: it ends in [refresh], which is what puts the glyph and the cell back in step.
+     */
+    fun toggleCurrentPageMark() = toggleCurrentPage()
+
+    /**
+     * "Chapter 17 · page 1 of 7" — what the cell above would act on, stated rather than implied.
+     *
+     * Blank before a page is drawn, which is the only state where naming a page would be a lie.
+     */
+    private fun currentPageSubject(): CharSequence {
+        if (reader.currentPage == null) return ""
+        val spineIndex = reader.currentState.spineIndex
+        val chapter = chapterTitleFor(reader.toc, spineIndex) ?: return ""
+        return toggle.context.getString(
+            R.string.bookmark_subject,
+            chapter,
+            reader.currentState.pageIndex + 1,
+            reader.pageCountFor(spineIndex).coerceAtLeast(1),
+        )
     }
 
     /** The bookmark on the page currently drawn, if any (range-based). Null before a page is shown. */
@@ -97,6 +150,15 @@ internal class BookmarksPanel(
         val page = reader.currentPage ?: return
         val path = reader.bookPath ?: return
         val spineIndex = reader.currentState.spineIndex
+        // The page's opening words, captured NOW exactly as a highlight captures its text: this
+        // code is already standing on the page, where the chapter text costs nothing — deriving it
+        // at display time would paginate a chapter per row, the eager work the panels forbid.
+        val excerpt = reader.currentChapterText()
+            ?.let { text ->
+                val start = page.startOffset.coerceIn(0, text.length)
+                val end = page.endOffset.coerceIn(start, text.length)
+                highlightExcerpt(text.substring(start, end)).takeIf { it.isNotEmpty() }
+            }
         scope.launch {
             val inLibrary = withContext(Dispatchers.IO) { books.getByPath(path) != null }
             if (!inLibrary) {
@@ -118,6 +180,7 @@ internal class BookmarksPanel(
                                 charOffset = page.startOffset,
                                 progressFraction = reader.currentProgress,
                                 createdAtMs = System.currentTimeMillis(),
+                                excerpt = excerpt,
                             ),
                         )
                     }

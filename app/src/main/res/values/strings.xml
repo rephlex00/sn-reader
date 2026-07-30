@@ -12,97 +12,187 @@
 
     <!-- Library -->
     <string name="library_title">Library</string>
-    <string name="menu_search">Search</string>
-    <string name="menu_sort_by">Sort by</string>
-    <string name="menu_sort_title">Title</string>
-    <string name="menu_sort_author">Author</string>
-    <string name="menu_sort_recently_added">Recently added</string>
-    <string name="menu_sort_recently_opened">Recently opened</string>
-    <string name="menu_view">View</string>
-    <string name="menu_view_tiles">Tiles</string>
-    <string name="menu_view_list">List</string>
-    <string name="menu_flatten_folders">Flatten folders</string>
-    <string name="menu_filter">Filter</string>
+    <string name="library_search_hint">Search title or author</string>
+    <!-- The shelf's own count, the way a half-title page names what follows it. -->
+    <string name="library_count">%1$d books · %2$d started</string>
+    <string name="library_count_one">%1$d book · %2$d started</string>
+    <string name="library_found">%1$d found</string>
+    <string name="library_nothing_yet">Nothing found yet</string>
+
+    <!-- View, filter and sort, as cells. Short because eight of them share one row. -->
+    <string name="view_covers">Covers</string>
+    <string name="view_list">List</string>
+    <string name="folders_nested">Folders</string>
+    <string name="folders_flat">Flat</string>
+    <string name="filter_started">Started</string>
+    <string name="sort_recent">Recent</string>
+    <string name="sort_title">Title</string>
+    <string name="sort_author">Author</string>
+
+    <!-- The half-title's two glyphs. -->
+    <string name="library_find">Search, filter and sort</string>
+
+    <!-- The shelf paginates rather than scrolling: a page turn is one clean redraw, where a scroll
+         is a smear. -->
+    <string name="library_page">%1$d of %2$d</string>
+    <string name="library_page_next">Next page</string>
+
+    <!-- The list view's two sideheads: the two states a shelf actually has. -->
+    <string name="shelf_reading_now">Reading now</string>
+    <string name="shelf_not_started">Not started</string>
     <string name="filter_all">All</string>
     <string name="filter_not_started">Not started</string>
     <string name="filter_in_progress">In progress</string>
     <string name="filter_finished">Finished</string>
-    <string name="menu_settings">Settings</string>
 
     <!-- Book status shown under a title -->
     <string name="status_in_progress">In progress</string>
     <string name="status_not_started">Not started</string>
+    <!-- What an unstarted book reads where a percentage would be, so the right-hand column keeps
+         one shape whether or not a book has been opened. -->
+    <string name="status_new">New</string>
     <string name="status_unreadable">Can\'t be opened</string>
     <string name="folder_row_label">▸ %1$s (%2$d)</string>
 
     <!-- Library empty and permission states -->
+    <string name="library_empty_title">No books yet</string>
+    <string name="library_empty_hint">Drop EPUB, CBZ or CBR files into the folder below and open Reader again. Scanning is incremental, so a large library does not mean a slow start.</string>
+    <string name="library_scan_again">Scan again</string>
+    <string name="library_permission_fact">Reader needs all-files access to read your books. Settings › Apps › Special access › All files access › Reader.</string>
     <string name="library_empty_no_matches">No books match. Clear the search or filter to see your library.</string>
     <string name="library_permission_needed">Reader needs permission to read your files before it can show your library. Tap here to grant it.</string>
     <string name="library_permission_prompt">Reader needs all-files access to open books.</string>
 
-    <!-- Reader chrome -->
-    <string name="reader_back">‹ Back</string>
-    <string name="reader_bookmarks">Bookmarks</string>
-    <string name="reader_highlights">Highlights</string>
+    <!-- Reader chrome. The ‹ carries the leaving on its own: it is the same mark every panel in the
+         app dismisses with, and the word "Library" beside it was naming the place you came FROM on
+         a row that had no room to name the book you are IN. The book's title took that space.
+
+         "Aa" opens Type. It is a specimen rather than a pictogram — the two letters are set in the
+         face they change — which is why it can sit in a row of glyphs where the word "Type" could
+         not, and why it needs no legend. The Type panel still titles itself with the word. -->
     <string name="reader_contents">Contents</string>
-    <string name="reader_display">Display</string>
-    <string name="reader_display_short">Aa</string>
+    <string name="reader_type">Type</string>
+    <string name="reader_type_glyph">Aa</string>
+
+    <!-- The back-matter segment. "Marks" and "Notes" rather than Bookmarks and Highlights: they
+         fit three-up without truncating, and they are what a reader of a printed book calls them.
+         A comic has no chapters, so its segment is Marks alone. -->
+    <string name="segment_chapters">Chapters</string>
+    <string name="segment_marks">Marks</string>
+    <string name="segment_notes">Notes</string>
+
+    <!-- The running head's right-hand side, and the comic equivalent. -->
+    <string name="running_direction_ltr">Left to right</string>
+    <string name="running_direction_rtl">Right to left</string>
 
     <!-- A Contents row's whole-book position, at the end of its leader dots. -->
     <string name="toc_percent">%1$d%%</string>
 
     <!-- Reader panels -->
-    <string name="panel_close_contents">Close contents</string>
-    <string name="panel_close_bookmarks">Close bookmarks</string>
-    <string name="panel_close_highlights">Close highlights</string>
-    <string name="panel_close_display">Close display settings</string>
-    <string name="contents_empty">No contents</string>
-    <string name="contents_empty_hint">This book doesn\'t list any chapters.</string>
-    <string name="bookmarks_empty">No bookmarks yet</string>
-    <string name="bookmarks_empty_hint">Use “Bookmark this page” above to save where you are.</string>
-    <string name="highlights_empty">No highlights yet</string>
-    <string name="highlights_empty_hint">Drag the pen across text to highlight it.</string>
-    <string name="bookmark_add">Bookmark this page</string>
-    <string name="bookmark_remove">Remove bookmark from this page</string>
+    <string name="panel_close_contents">Back to the page</string>
+    <string name="panel_close_type">Back to the page</string>
+    <string name="back_to_the_page">‹  Back to the page</string>
+
+    <!-- Contents groups the EPUB's front matter under a name instead of letting the publisher's
+         spine text ("Frankenstein;", "or, the Modern Prometheus") read as navigation. -->
+    <string name="toc_group_front_matter">Front matter</string>
+    <string name="toc_group_chapters">Chapters</string>
+
+    <!-- Empty states. Declarative, never an apology, and each says the one thing a reader who has
+         hit it does not yet know. -->
+    <string name="contents_empty">Nothing listed</string>
+    <string name="contents_empty_hint">This book carries no table of contents. The timeline at the foot of the page still moves you through it.</string>
+    <string name="marks_empty">Nothing marked yet</string>
+    <string name="marks_empty_hint">Mark this page with the cell above. A mark remembers the page, not the percentage.</string>
+    <string name="notes_empty">Nothing marked yet</string>
+    <!-- The only place in the app the pen can be explained — a reader who does not know this will
+         never make a highlight. -->
+    <string name="notes_empty_hint">Drag the pen across a passage while you read. Your finger and your palm are ignored, so you can rest a hand on the glass.</string>
+    <string name="marks_kept_per_book">Marks and notes are kept per book, and survive an update.</string>
+    <string name="comic_marks_empty_hint">Nothing marked yet. Use the cell above to mark the page you are on.</string>
+
+    <string name="bookmark_add">Mark this page</string>
+    <string name="bookmark_remove">Remove this mark</string>
+    <string name="bookmark_subject">%1$s · page %2$d of %3$d</string>
+    <string name="marks_remove_hint">Tap and hold a mark to remove it. Marks are not deleted when a book is re-scanned.</string>
+    <string name="notes_remove_hint">Tap a note on the page to remove it. %1$d in this book.</string>
+    <string name="marks_sidehead">Marked</string>
+    <string name="remove_sidehead">Remove</string>
     <string name="bookmark_delete">Delete bookmark</string>
     <string name="highlight_delete">Delete highlight</string>
     <string name="highlight_delete_chip">✕ Delete</string>
 
-    <!-- Display settings -->
-    <string name="setting_font">Font</string>
+    <!-- Type. Sections name what each group changes: the face, the page, this book, the screen,
+         previews. Grouping is what turns nine switches into four decisions. -->
+    <!-- Type's three tabs. TEXT holds everything you judge by looking at the page above the sheet —
+         the face, the size, the leading — so it is the tab the panel opens on. -->
+    <string name="type_tab_text">Text</string>
+    <string name="type_tab_page">Page</string>
+    <string name="type_tab_screen">Screen</string>
+
+    <string name="type_head_face">The face</string>
+    <string name="type_head_size">The size</string>
+    <string name="type_head_spacing">The spacing</string>
+    <string name="type_head_page">The page</string>
+    <string name="type_head_book">This book</string>
+    <string name="type_head_screen">The screen</string>
+    <string name="type_head_previews">Previews</string>
+
     <string name="font_literata">Literata</string>
     <string name="font_bitter">Bitter</string>
     <string name="font_atkinson">Atkinson</string>
-    <string name="setting_text_size">Text size</string>
-    <string name="text_size_decrease">A −</string>
-    <string name="text_size_increase">A +</string>
-    <string name="text_size_value">%1$dpx</string>
+
+    <!-- Every boolean in the app is this pair, in the same shape as every other choice. -->
+    <string name="cell_on">On</string>
+    <string name="cell_off">Off</string>
+
+    <!-- The size cells are drawn as the letters they produce, so a size is chosen by looking at
+         it rather than by reading a developer's unit. -->
+    <string name="text_size_specimen">Aa</string>
+
     <string name="setting_line_spacing">Line spacing</string>
-    <string name="spacing_12">1.2</string>
-    <string name="spacing_14">1.4</string>
-    <string name="spacing_16">1.6</string>
+    <!-- Named, not numbered: 1.2 / 1.4 / 1.6 is a stylesheet leaking into the interface. -->
+    <string name="spacing_tight">Tight</string>
+    <string name="spacing_normal">Normal</string>
+    <string name="spacing_open">Open</string>
     <string name="setting_margins">Margins</string>
     <string name="margin_narrow">Narrow</string>
     <string name="margin_medium">Medium</string>
     <string name="margin_wide">Wide</string>
-    <string name="setting_justify">Justify</string>
-    <string name="setting_hyphenation">Hyphenation</string>
+    <string name="setting_justify">Justified</string>
+    <string name="setting_hyphenation">Hyphenated</string>
     <string name="setting_publisher_styling">Publisher styling</string>
+    <string name="setting_publisher_styling_note">Off tidies this book into Reader\'s own look</string>
     <string name="setting_heading_detection">Heading detection</string>
     <string name="setting_progress_bar">Progress bar</string>
     <string name="setting_rotation_lock">Lock rotation</string>
-    <string name="setting_faster_page_turns">Faster page turns</string>
-    <string name="setting_full_refresh_every">Full refresh every</string>
+
+    <string name="setting_page_turns">Page turns</string>
+    <string name="setting_page_turns_note">Clean gives every page a full refresh</string>
+    <string name="turns_clean">Clean</string>
+    <string name="turns_faster">Faster</string>
+    <string name="setting_flash_every">Flash every</string>
+    <string name="setting_flash_every_note">Only used when page turns are faster</string>
     <string name="refresh_every_3">3</string>
     <string name="refresh_every_6">6</string>
     <string name="refresh_every_10">10</string>
+
     <string name="setting_previews">Page previews</string>
-    <string name="previews_generating">Generating previews… %1$d / %2$d chapters</string>
-    <string name="previews_delete">Delete previews for this book</string>
+    <string name="setting_previews_note">Rendered once, in the background, per book</string>
+    <string name="previews_generating">Preparing · %1$d of %2$d chapters</string>
+    <string name="previews_delete_label">Destructive</string>
+    <string name="previews_delete_note">Rebuilt next time this book is opened.</string>
+    <string name="previews_delete_action">Delete previews</string>
 
     <!-- Settings and folder chooser -->
     <string name="settings_title">Settings</string>
-    <string name="settings_book_folder">Book folder</string>
+    <string name="settings_book_folder">Folder</string>
+    <string name="settings_change_folder">Change folder</string>
+    <string name="settings_head_books">Your books</string>
+    <string name="settings_folders">Show folders</string>
+    <string name="settings_folders_note">Flat shows every book at once, whatever folder it is in</string>
+    <string name="settings_head_colophon">Colophon</string>
+    <string name="settings_no_network">No accounts, no sync, no network. Everything — your places, marks and notes — is stored on this device only.</string>
     <string name="chooser_title">Choose book folder</string>
     <string name="chooser_up">Up</string>
     <string name="chooser_use_this_folder">Use this folder</string>
@@ -115,6 +205,8 @@
     <string name="error_no_text_short">No readable text</string>
 
     <!-- The scrubber's readout while dragging: chapter title, then whole-book percentage. -->
+    <!-- The preview window's caption bar: the chapter on the left, this figure on the right. -->
+    <string name="scrub_preview_position">%1$d%%</string>
     <string name="scrubber_position">%1$s · %2$d%%</string>
 
     <!-- The resting readout while a preview strip is actively generating (and the drag isn't in
@@ -123,7 +215,7 @@
 
     <!-- The back control beside the scrubber: pops the jump stack. The glyph is universal and a
          word would crowd the readout. -->
-    <string name="scrubber_back">↩</string>
+    <string name="scrubber_back">Return</string>
     <string name="error_turn_page">Something went wrong turning the page.</string>
     <string name="error_apply_setting">That setting couldn\'t be applied.</string>
     <string name="error_open_bookmark">That bookmark couldn\'t be opened.</string>

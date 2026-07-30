@@ -177,7 +177,11 @@ class LibraryActivityInteractionTest {
         controller.start().resume()
         idleUntil { syncCalls == 1 }
 
-        assertThat(activity.emptyStateVisibility).isEqualTo(View.GONE)
+        // The permission message is gone — but the shelf is still empty, and an empty shelf is a
+        // first-run screen rather than nothing. It now says so, and names the folder it scanned,
+        // instead of leaving a blank grid with no explanation.
+        assertThat(activity.emptyStateVisibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.emptyStateText).contains("Drop EPUB, CBZ or CBR files")
         assertThat(syncCalls).isEqualTo(1)
     }
 
@@ -198,7 +202,7 @@ class LibraryActivityInteractionTest {
         val activity = launch()
         idleUntil { activity.rows.isNotEmpty() }
 
-        activity.setSearchQuery("martian")
+        activity.typeSearch("martian")
         idleUntil { bookTitles(activity.rows) == listOf("The Martian") }
 
         assertThat(bookTitles(activity.rows)).containsExactly("The Martian")
@@ -233,9 +237,9 @@ class LibraryActivityInteractionTest {
         activity.tapFolder("$ROOT/Fiction")
         idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
 
-        activity.setSearchQuery("cosmos-does-not-exist")
+        activity.typeSearch("cosmos-does-not-exist")
         idleUntil { activity.rows.isEmpty() }
-        activity.setSearchQuery("")
+        activity.typeSearch("")
         activity.clickMenu(R.id.filter_all)
 
         // Back to the folder listing at the same currentFolder ("Fiction"), not the root and not
@@ -256,7 +260,7 @@ class LibraryActivityInteractionTest {
         activity.tapFolder("$ROOT/Fiction")
         idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
 
-        activity.setSearchQuery("cosmos")
+        activity.typeSearch("cosmos")
         idleUntil { activity.rows.isEmpty() }
 
         activity.back()
@@ -274,7 +278,7 @@ class LibraryActivityInteractionTest {
         val activity = launch()
         idleUntil { activity.rows.isNotEmpty() }
 
-        activity.setSearchQuery("nothing-matches-this")
+        activity.typeSearch("nothing-matches-this")
         idleUntil { activity.rows.isEmpty() }
 
         assertThat(activity.rows).isEmpty()
@@ -295,7 +299,7 @@ class LibraryActivityInteractionTest {
         val activity = controller.get()
         idleUntil { activity.rows.isNotEmpty() }
 
-        activity.setSearchQuery("nothing-matches-this")
+        activity.typeSearch("nothing-matches-this")
         idleUntil { activity.rows.isEmpty() }
         assertThat(activity.emptyStateVisibility).isEqualTo(View.VISIBLE)
 
@@ -322,11 +326,11 @@ class LibraryActivityInteractionTest {
         idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
         assertThat(activity.toolbarTitle).isEqualTo("Fiction")
 
-        activity.setSearchQuery("cosmos-does-not-exist")
+        activity.typeSearch("cosmos-does-not-exist")
         idleUntil { activity.rows.isEmpty() }
         assertThat(activity.toolbarTitle).isEqualTo("Library")
 
-        activity.setSearchQuery("")
+        activity.typeSearch("")
         idleUntil { bookPaths(activity.rows) == listOf("$ROOT/Fiction/a.epub") }
         assertThat(activity.toolbarTitle).isEqualTo("Fiction")
     }
@@ -343,26 +347,25 @@ class LibraryActivityInteractionTest {
         /** Drives the protected [openBook] — the adapter's tap callback — directly. */
         fun tap(book: BookEntity) = openBook(book)
 
-        val emptyStateVisibility: Int get() = emptyStateView.visibility
         val emptyStateText: String get() = emptyStateView.text.toString()
 
         val rows: List<LibraryRow> get() = adapter.currentList
         val currentFolderPath: String get() = currentFolder
-        val toolbarTitle: String get() = toolbar.title.toString()
+        // The header's half-title, where the AppCompat Toolbar's title used to be.
+        val toolbarTitle: String get() = headerTitle
 
         fun tapFolder(path: String) = openFolder(path)
         fun back() = onBackPressedDispatcher.onBackPressed()
-        fun clickMenu(id: Int) = toolbar.menu.performIdentifierAction(id, 0)
+        // The overflow menu is gone — every action it hid is a visible cell now — but the
+// ids remain the stable way to name an action, so these tests still assert on
+// behaviour rather than on which cell index happens to sit where.
+        fun clickMenu(id: Int) = selectMenuAction(id)
 
         /**
-         * Drives the query through the real SearchView action view rather than an internal seam:
-         * `setQuery` sets the EditText's text, which fires the same `onQueryTextChange` the
-         * framework calls for a real keystroke.
+         * Drives the query through the real search field rather than an internal seam: setting its
+         * text fires the same watcher a keystroke does.
          */
-        fun setSearchQuery(query: String) {
-            val searchView = toolbar.menu.findItem(R.id.action_search).actionView as SearchView
-            searchView.setQuery(query, false)
-        }
+        fun typeSearch(query: String) = setSearchQuery(query)
     }
 
     /** Same looper/background-thread bridge as [LibraryActivityRecreationTest]'s idleUntil. */

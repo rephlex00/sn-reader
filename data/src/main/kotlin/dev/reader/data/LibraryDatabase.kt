@@ -5,7 +5,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [BookEntity::class, BookmarkEntity::class, HighlightEntity::class], version = 5, exportSchema = true)
+@Database(entities = [BookEntity::class, BookmarkEntity::class, HighlightEntity::class], version = 6, exportSchema = true)
 abstract class LibraryDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun bookmarkDao(): BookmarkDao
@@ -79,6 +79,18 @@ abstract class LibraryDatabase : RoomDatabase() {
         val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN rightToLeftOverride INTEGER")
+            }
+        }
+
+        /**
+         * v5 -> v6: adds [BookmarkEntity.excerpt] (the page's opening words, captured at save
+         * time). Purely additive — no existing row is touched, and every existing mark reads back
+         * null (its row shows the chapter line alone). Registered in
+         * [dev.reader.ReaderApplication]'s builder.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE bookmarks ADD COLUMN excerpt TEXT")
             }
         }
     }

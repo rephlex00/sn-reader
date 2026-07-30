@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The border around a group of cells. No fill, no radius, no shadow: at 300 dpi a square 2dp INK
+  frame is a crisper object than any rounded, shadowed one, and a drop shadow on this panel is a
+  dither field rather than a lift.
+
+  Static, not a state list — nothing here has a pressed or focused appearance, because the redraw
+  that follows a tap IS the feedback and it arrives in one frame.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <stroke
+        android:width="@dimen/cell_border"
+        android:color="@color/ink" />
+</shape>

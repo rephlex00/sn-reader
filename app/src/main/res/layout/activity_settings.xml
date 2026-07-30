@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings, set as a colophon.
+
+     Settings is not a special screen: it is the third instance of one surface, with the same header,
+     the same ‹ at the same margin, the same sideheads and the same cells as Type and back matter.
+     That is the whole point of having a vocabulary.
+
+     The drawn design showed five sections here — folder, scan, refresh mode, flash interval,
+     previews, version — and said plainly that it was guessing from the README. It was: page turns,
+     the flash interval and previews are reader settings and live in Type, where they sit beside the
+     page they change. Duplicating them here would give the same control two homes. What actually
+     belongs to the app rather than to a book is the book folder and the colophon, so that is what
+     this screen is. The structure is the design's; only the inventory is this app's.
+
+     e-ink: no ripple, no elevation, no animation. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/paper"
+    android:fillViewport="false"
+    android:overScrollMode="never">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="@dimen/space_title">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/header_height"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
+
+            <ImageView
+                android:id="@+id/settings_back"
+                style="@style/Chevron"
+                android:contentDescription="@string/action_back" />
+
+            <TextView
+                style="@style/Text.Mark"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/settings_title" />
+
+            <!-- Balances the dismiss so the title sits optically centred, as it does on the other
+                 two surfaces. -->
+            <View
+                android:layout_width="@dimen/tap_target_min"
+                android:layout_height="1dp" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/rule_head"
+            android:layout_marginHorizontal="@dimen/margin_screen"
+            android:background="@color/reader_rule" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="@dimen/margin_screen">
+
+            <dev.reader.ui.SideheadView
+                android:id="@+id/settings_head_books"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_loose" />
+
+            <TextView
+                style="@style/Text.Row"
+                android:layout_marginTop="@dimen/space"
+                android:text="@string/settings_book_folder" />
+
+            <!-- The path, set in the reading face at row size rather than as fine print. This is
+                 the one instruction in the app that fails silently when it is wrong, so it is the
+                 answer to the question the screen exists to ask — not decoration. -->
+            <TextView
+                android:id="@+id/settings_root_path"
+                style="@style/Text.Sub"
+                android:layout_width="match_parent"
+                android:layout_marginTop="@dimen/space_hair" />
+
+            <TextView
+                android:id="@+id/settings_change_folder"
+                style="@style/Cell.Action"
+                android:layout_marginTop="@dimen/space"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:paddingHorizontal="@dimen/space_loose"
+                android:text="@string/settings_change_folder" />
+
+            <!-- Whether the shelf shows the folders your books sit in, or every book at once.
+                 It belongs here rather than on the shelf's own controls: it is a standing choice
+                 about how your library is arranged, not something you reach for while looking for
+                 a particular book. -->
+            <LinearLayout
+                style="@style/TypeRow"
+                android:layout_marginTop="@dimen/space_loose">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/Text.Row"
+                        android:text="@string/settings_folders" />
+
+                    <TextView
+                        style="@style/Text.Figure"
+                        android:layout_marginTop="@dimen/space_hair"
+                        android:text="@string/settings_folders_note" />
+
+                </LinearLayout>
+
+                <dev.reader.ui.CellRowView
+                    android:id="@+id/settings_flatten_cells"
+                    android:layout_width="wrap_content"
+                    android:layout_height="@dimen/cell_height" />
+
+            </LinearLayout>
+
+            <dev.reader.ui.SideheadView
+                android:id="@+id/settings_head_colophon"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_section" />
+
+            <!-- Version set with leaders, like an index entry. The app's own name on the left, what
+                 you are running on the right. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:baselineAligned="true"
+                android:gravity="center_vertical"
+                android:layout_marginTop="@dimen/space"
+                android:minHeight="@dimen/row_height"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/Text.Row"
+                    android:text="@string/app_name" />
+
+                <dev.reader.ui.LeaderDotsView
+                    android:layout_width="0dp"
+                    android:layout_height="12dp"
+                    android:layout_marginHorizontal="@dimen/space_tight"
+                    android:layout_weight="1" />
+
+                <TextView
+                    android:id="@+id/settings_version"
+                    style="@style/Text.Figure" />
+
+            </LinearLayout>
+
+            <!-- Stated, not implied. It is the best thing about this app and until now it appeared
+                 nowhere inside it. -->
+            <TextView
+                style="@style/Text.Sub"
+                android:layout_width="match_parent"
+                android:layout_marginTop="@dimen/space_snug"
+                android:lineSpacingMultiplier="1.3"
+                android:text="@string/settings_no_network" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</ScrollView>

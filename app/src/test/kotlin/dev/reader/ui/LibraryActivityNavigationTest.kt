@@ -216,11 +216,15 @@ class LibraryActivityNavigationTest {
 
         val rows: List<LibraryRow> get() = adapter.currentList
         val currentFolderPath: String get() = currentFolder
-        val toolbarTitle: String get() = toolbar.title.toString()
+        // The header's half-title, where the AppCompat Toolbar's title used to be.
+        val toolbarTitle: String get() = headerTitle
 
         fun tapFolder(path: String) = openFolder(path)
         fun back() = onBackPressedDispatcher.onBackPressed()
-        fun clickMenu(id: Int) = toolbar.menu.performIdentifierAction(id, 0)
+        // The overflow menu is gone — every action it hid is a visible cell now — but the
+// ids remain the stable way to name an action, so these tests still assert on
+// behaviour rather than on which cell index happens to sit where.
+        fun clickMenu(id: Int) = selectMenuAction(id)
         fun bookViewTypeAt(position: Int): Int = adapter.getItemViewType(position)
     }
 

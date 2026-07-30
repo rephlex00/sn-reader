@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The way to the colophon. A pictogram rather than the word "Settings": the half-title row is
+     the shelf's own line and a word there competed with it, where a glyph sits beside the search
+     mark as one pair of controls.
+
+     Not a gear. Three slider rails with their thumbs at different stops — what the colophon
+     actually holds — drawn in the ribbon's own language: stroked at 2 in a 24 viewport, round
+     caps and joins (see ic_bookmark), so the app's few pictograms read as one hand. Each rail
+     breaks around its thumb rather than running under it; on a tinted single-ink vector a thumb
+     cannot mask the rail with paper, so the gap is drawn into the path. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/reader_text_primary">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M4,6 L11.6,6 M18.4,6 L20,6 M15,6 m-2.1,0 a2.1,2.1 0 1,0 4.2,0 a2.1,2.1 0 1,0 -4.2,0 M4,12 L5.6,12 M12.4,12 L20,12 M9,12 m-2.1,0 a2.1,2.1 0 1,0 4.2,0 a2.1,2.1 0 1,0 -4.2,0 M4,18 L9.6,18 M16.4,18 L20,18 M13,18 m-2.1,0 a2.1,2.1 0 1,0 4.2,0 a2.1,2.1 0 1,0 -4.2,0"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2" />
+</vector>

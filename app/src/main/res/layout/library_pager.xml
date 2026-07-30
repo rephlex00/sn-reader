@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The shelf's page turn.
+
+     The cover grid paginates rather than scrolling. A scroll on this panel is a smear held for as
+     long as the finger moves; a page turn is one clean redraw, which is the same trade the reader
+     itself makes and the reason it has tap zones rather than swipes. Eight boards fill a page
+     exactly, so the shelf never shows a row cut off at the bottom edge.
+
+     GONE whenever there is only one page, which is most libraries — the control appears when it has
+     something to do and takes no room otherwise. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/paper"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="@dimen/margin_screen"
+    android:paddingVertical="@dimen/space_tight"
+    android:visibility="gone">
+
+    <ImageView
+        android:id="@+id/library_page_prev"
+        style="@style/Chevron"
+        android:contentDescription="@string/action_back" />
+
+    <TextView
+        android:id="@+id/library_page_readout"
+        style="@style/Text.Figure"
+        android:layout_width="0dp"
+        android:layout_weight="1"
+        android:gravity="center" />
+
+    <ImageView
+        android:id="@+id/library_page_next"
+        style="@style/Chevron.Forward"
+        android:contentDescription="@string/library_page_next" />
+
+</LinearLayout>

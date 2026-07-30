@@ -32,6 +32,8 @@ app uses **no measurable CPU at all**.
 * **A chapter scrubber**, with a tick for every chapter, a preview of the page you'd land on as you
   drag, and **↩** to jump back — a progress bar at the foot of the page marks where the current
   chapter ends
+* **One typeface throughout**, the book's own: the shelf, the chrome and the page are set in the
+  same face, and every choice in the app is the same bordered cell
 * **Comics too** — CBZ and zip-backed CBR, one page per screen with per-book reading direction for
   manga, in the same library as your books and with the same timeline, previews and bookmarks
 * **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for
@@ -74,14 +76,16 @@ its settings. Scanning is incremental, so a big library does not mean a slow sta
 ### Your shelf
 
 <p align="center">
-  <img src="docs/screenshots/01-library.png" width="580" alt="The library grid: book covers with titles, authors, and reading progress">
+  <img src="docs/screenshots/01-library.png" width="580" alt="The shelf: a half-title with the book count, a search field, cells for view, filter and sort, and three columns of covers in a uniform frame">
 </p>
 
 Tap a book to open it exactly where you stopped. Anything you have started shows how far in you are.
 
-The toolbar searches by title or author as you type, filters by whether you have finished something,
-sorts your shelf, and switches between covers and a list. Search looks across the whole library at
-once, ignoring whichever folder you happen to be in.
+Above the shelf is a search field that filters by title or author as you type and reports how many
+books matched, and a row of controls for what you are looking at: covers or a list, all books or
+just the new / part-read / finished ones, folders or flat, and the sort order. Nothing is hidden
+behind a menu. Search looks across the whole library at once, ignoring whichever folder you happen
+to be in.
 
 ### Turning pages
 
@@ -92,7 +96,7 @@ zones instead:
 | --- | --- |
 | The left edge, roughly a quarter of the width | Back a page |
 | The right side, roughly the last 40% | Forward a page |
-| The strip between them | Show or hide the toolbar |
+| The strip between them | Show or hide the chrome |
 
 Forward is the largest of the three, so reading is one unhurried tap after another.
 
@@ -114,22 +118,26 @@ Rotating keeps your place. Not your page *number* — the text reflows into narr
 numbering changes — but the words you were reading stay on screen. The book is not reopened, and it
 costs a single clean refresh.
 
-If you would rather it stayed put, **Lock rotation** in the **Aa** panel pins the reader to whichever
+If you would rather it stayed put, **Lock rotation** in **Type** pins the reader to whichever
 way it is currently facing, which is what you want when reading on your side. Your shelf and the
 settings screens stay upright either way.
 
 ### The toolbar
 
 <p align="center">
-  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: toolbar with Back, book title, bookmark, Highlights, Contents, and Aa; below the page, the return control, a page readout, and the chapter timeline">
+  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: ‹ Library, Contents and Type on the first row, the book and chapter as a running head on the second; below the page, the return control, a page readout, and the chapter timeline">
 </p>
 
-**Back** returns to your shelf. The **bookmark** opens your saved pages, where you can also mark the
-one you are on. **Highlights** collects everything you have marked with the pen. **Contents** jumps
-by chapter. **Aa** is how the page looks.
+The chrome is two rows. The first carries **‹ Library**, which returns you to your shelf, and the
+two places you can go from a book. The second is a running head: the book on the left, the chapter
+you are in on the right, where a printed page puts them.
 
-Every panel closes with the ✕ in its corner. The Supernote has no back button of its own, so
-nothing here is a dead end.
+**Contents** is one surface holding three lists behind a **Chapters · Marks · Notes** header —
+where you are in the book, the pages you have marked, and the passages you have marked with the
+pen. It opens on whichever of the three you left it on, per book. **Type** is how the page looks.
+
+Both close with the **‹** at the top-left, in the same place on each. The Supernote has no back
+button of its own, so nothing here is a dead end.
 
 ### Marking passages
 
@@ -146,7 +154,10 @@ chapter and how far into the book it sits.
   <img src="docs/screenshots/05-contents.png" width="440" alt="The contents page, set like a printed one: leader dots running from each chapter to its percentage, the current chapter in bold">
 </p>
 
-**Contents** shows the book's chapters with your current one in bold. Tap to go there.
+**Contents** sets the book's chapters as a printed contents page — leader dots carrying the eye
+across to each percentage — with the one you are in bold and marked in the margin. Tap to go there.
+**Marks** and **Notes** sit behind the same header: the pages you have marked, and the passages you
+have marked with the pen, grouped under the chapter they came from.
 
 ### Skimming the whole book
 
@@ -164,12 +175,16 @@ to chapter starts like a detent, bookmarks sit on the track as small glyphs, and
 ### How the page looks
 
 <p align="center">
-  <img src="docs/screenshots/04-settings.png" width="580" alt="The Display panel: font, text size, line spacing, margins, and toggles">
+  <img src="docs/screenshots/04-settings.png" width="580" alt="Type: sections for the face, the page, this book and the screen, each choice a row of cells with the chosen one filled">
 </p>
 
-**Aa** opens display settings: three bundled typefaces (Literata, Bitter, Atkinson Hyperlegible,
-each with proper italics and bold), text size, line spacing, margins, and switches for
-justification and hyphenation.
+**Type** groups what it changes: **the face** (three bundled typefaces — Literata, Bitter, Atkinson
+Hyperlegible, each with proper italics and bold), **the page** (size, line spacing, margins,
+justification, hyphenation), **this book**, **the screen**, and **previews**.
+
+Every choice in the app is the same shape: a row of bordered cells with the chosen one filled in.
+A typeface, a margin and a plain on/off are all that one control, so there is a single thing to
+learn. Text size is five cells drawn at the sizes they produce, so you pick one by looking at it.
 
 **Publisher styling** decides whether a book keeps its own formatting or gets tidied into Reader's
 consistent look. Changing anything reflows the text and keeps your place.
@@ -195,7 +210,7 @@ progress badge. Your place is kept per comic, and bookmarks work by page.
 
 The reading chrome is the one you already know: a timeline along the bottom that you drag to move
 through the comic, a floating preview of the page you would land on, the page readout above it, **↩**
-to jump back after a scrub or a bookmark, and the same bookmarks panel. A comic has no chapters, so
+to jump back after a scrub or a mark, and the same marks surface. A comic has no chapters, so
 the track is one plain run rather than a ticked one, and previews are decoded as you drag instead of
 rendered ahead of time.
 
@@ -207,6 +222,16 @@ added later without changing anything else.
 Two limits worth knowing. Comics are **portrait only** — turning the tablet sideways does not give
 you a two-page spread the way a book does. And pages are **fit to the screen with no zoom**, which
 suits manga and line art well; dense colour lettering can be marginal at that size.
+
+### Settings
+
+<p align="center">
+  <img src="docs/screenshots/09-colophon.png" width="580" alt="Settings as a colophon: the book folder with a Change folder cell, and the version set with leader dots above the no-network statement">
+</p>
+
+Settings is the same surface again, and holds what belongs to the app rather than to a book: which
+folder your books live in, and a colophon naming the version you are running. Everything about how
+a page looks lives in **Type**, beside the page it changes.
 
 ## Worth knowing
 

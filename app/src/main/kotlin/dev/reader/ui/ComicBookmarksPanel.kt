@@ -4,6 +4,7 @@ import android.view.View
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import dev.reader.R
+import kotlin.math.roundToInt
 import dev.reader.data.BookmarkDao
 import dev.reader.data.BookmarkEntity
 import kotlinx.coroutines.CancellationException
@@ -69,7 +70,14 @@ internal class ComicBookmarksPanel(
                 id = bm.id,
                 spineIndex = bm.spineIndex,
                 charOffset = bm.charOffset,
-                label = context.getString(R.string.comic_bookmark_row, bm.spineIndex + 1),
+                // A comic counts in pages, never percentages — so the name says "Page 24" and the
+                // figure column carries how far through that is, the one place a comic mark has a
+                // second thing worth saying.
+                chapter = context.getString(R.string.comic_bookmark_row, bm.spineIndex + 1),
+                figure = context.getString(
+                    R.string.toc_percent,
+                    (bm.progressFraction.coerceIn(0f, 1f) * 100).roundToInt(),
+                ),
             )
         }
         adapter.submit(rows)

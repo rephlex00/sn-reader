@@ -247,4 +247,34 @@ class LibraryDatabaseMigrationTest {
         }
         db.close()
     }
+
+    @Test
+    fun `migration 5 to 6 adds excerpt as null and preserves existing marks`() {
+        val db = openV4()
+        LibraryDatabase.MIGRATION_4_5.migrate(db)
+        db.execSQL(
+            "INSERT INTO books (path, sizeBytes, modifiedAtMs, title, spineIndex, charOffset, " +
+                "unreadable, addedAtMs) VALUES ('/a.epub', 1, 2, 'T', 0, 0, 0, 3)",
+        )
+        db.execSQL(
+            "INSERT INTO bookmarks (bookPath, spineIndex, charOffset, progressFraction, createdAtMs) " +
+                "VALUES ('/a.epub', 3, 120, 0.25, 9)",
+        )
+
+        LibraryDatabase.MIGRATION_5_6.migrate(db)
+
+        db.query("SELECT excerpt, spineIndex, progressFraction FROM bookmarks").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.isNull(0)).isTrue() // excerpt: unset for a pre-v6 mark
+            assertThat(c.getInt(1)).isEqualTo(3)
+            assertThat(c.getFloat(2)).isEqualTo(0.25f)
+        }
+        // And the new column is writable.
+        db.execSQL("UPDATE bookmarks SET excerpt = 'It was the best of times…' WHERE spineIndex = 3")
+        db.query("SELECT excerpt FROM bookmarks WHERE spineIndex = 3").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getString(0)).isEqualTo("It was the best of times…")
+        }
+        db.close()
+    }
 }

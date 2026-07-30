@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The mark glyph, marked. The same path as ic_bookmark, flooded rather than stroked: the toggle
+     reads as one shape gaining ink, which is the only unambiguous "on" available without colour. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/reader_text_primary">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M6,3 L18,3 L18,21 L12,16.5 L6,21 Z" />
+</vector>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The uniform trim every cover on the shelf gets: a 2dp INK frame, and nothing behind it.
+
+  The frame is what turns a set of scans that differ wildly in margin and value into a shelf. It has
+  no fill: the ImageView it backs sizes itself to the artwork's own aspect, so there is never a gap
+  for a fill to show through — and when there was one, the mat rather than the book became the thing
+  the frame appeared to be drawn around.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <stroke
+        android:width="@dimen/cell_border"
+        android:color="@color/ink" />
+</shape>

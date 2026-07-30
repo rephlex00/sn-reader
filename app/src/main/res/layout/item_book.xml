@@ -1,66 +1,99 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One grid cell: cover, title, author, and a status line (progress or the reason a book
-     is unreadable). No animation-bearing attributes — the grid's RecyclerView additionally
-     runs with itemAnimator = null (see LibraryActivity), since a plain layout alone doesn't
-     stop DefaultItemAnimator's cross-fade on data changes. -->
+<!-- One board on the shelf: a cover in a uniform trim, the book's title, its author.
+
+     The frame hugs the artwork rather than boxing it. A cover is whatever shape it was scanned at,
+     and drawing the frame around a fixed box meant every one that did not match sat inside a grey
+     mat with bars above and below it — the mat, not the book, became the thing the frame appeared
+     to be drawn around.
+
+     But the *box* is fixed even though the frame is not, and the cover stands on its floor. Covers
+     differ in aspect, so letting each set its own baseline left a row of boards hanging from a
+     shared top edge at four different depths, with their captions stepping up and down after them.
+     Bottom-aligning inside a fixed box puts every cover in a row on one line and starts every title
+     at the same height, which is what makes a row scannable — and what a shelf looks like.
+
+     The title takes exactly one line, ellipsised — which is what keeps the authors aligned across a
+     row, and what buys the shelf its third row of books: at two lines a long title pushed its own
+     board taller than its neighbours and cost every row the height of a whole extra one.
+
+     match_parent on the frame, not wrap_content: a wrap_content frame measures its match_parent
+     child against zero available width, and the cover collapsed to well under its column.
+
+     No animation-bearing attributes — the grid's RecyclerView additionally runs with
+     itemAnimator = null (see LibraryActivity), since a plain layout alone doesn't stop
+     DefaultItemAnimator's cross-fade on data changes. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="8dp">
+    android:paddingHorizontal="@dimen/shelf_edge"
+    android:paddingBottom="@dimen/board_gap">
 
     <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="180dp"
-        android:layout_marginBottom="4dp">
+        android:layout_height="@dimen/cover_box_height">
 
-        <ImageView
-            android:id="@+id/cover"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@color/reader_cover_placeholder"
-            android:contentDescription="@null"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:id="@+id/progress_badge"
+        <!-- The badge's anchor is this inner frame, which wraps the COVER — not the full-width
+             box. Covers are narrower than their column (aspect varies, the column doesn't), and a
+             badge anchored to the box corner hung past the artwork's edge into the gutter: the
+             one element in the app that broke its container. Anchored to the artwork's own bounds
+             it sits inside the cover on every board. -->
+        <FrameLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom|end"
-            android:layout_margin="6dp"
-            android:background="@drawable/progress_badge"
-            android:paddingHorizontal="5dp"
-            android:paddingVertical="2dp"
-            android:textColor="@android:color/black"
-            android:textSize="12sp"
-            android:visibility="gone" />
+            android:layout_gravity="bottom|center_horizontal">
+
+            <!-- wrap_content on BOTH axes. Once the box caps the height, a match_parent width
+                 leaves a tall cover letterboxed inside a full-width view — and the frame, which is
+                 the view's background, gets drawn around the letterboxing rather than the artwork.
+                 Wrapping both axes lets adjustViewBounds size the view to the image itself within
+                 the column and the cap, so the frame hugs it on all four sides again. -->
+            <ImageView
+                android:id="@+id/cover"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:background="@drawable/cover_trim"
+                android:contentDescription="@null"
+                android:maxHeight="@dimen/cover_box_height"
+                android:padding="@dimen/cell_border"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/progress_badge"
+                style="@style/Text.Figure"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="@dimen/space_tight"
+                android:background="@drawable/progress_badge"
+                android:paddingHorizontal="@dimen/space_hair"
+                android:textColor="@color/reader_text_primary"
+                android:visibility="gone" />
+
+        </FrameLayout>
 
     </FrameLayout>
 
     <TextView
         android:id="@+id/title"
+        style="@style/Text.Board"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_tight"
         android:ellipsize="end"
-        android:maxLines="2"
-        android:textColor="@android:color/black"
-        android:textStyle="bold" />
+        android:lines="1" />
 
     <TextView
         android:id="@+id/author"
+        style="@style/Text.Figure"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
         android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@color/reader_text_secondary" />
+        android:maxLines="1" />
 
+    <!-- Why a book cannot be opened, when that is the case. -->
     <TextView
         android:id="@+id/status"
+        style="@style/Text.Figure"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
         android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@color/reader_text_secondary"
-        android:textSize="12sp" />
+        android:maxLines="1" />
 
 </LinearLayout>

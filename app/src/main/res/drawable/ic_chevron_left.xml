@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The way back, everywhere in the app: out of a book, off a panel, back a page of the shelf.
+
+     Drawn, not typed. This was ‹ (U+2039) — a QUOTATION MARK, borrowed for a job it was never cut
+     for. At 36sp it drew an 8 x 14dp mark: a hairline at arm's length, and small enough that people
+     aimed at it and missed. It also sat low, because a symbol straddles the baseline on the maths
+     axis, which cost a measured -7dp translation to correct (chrome_glyph_lift, now gone with it).
+
+     The viewport HUGS the ink — 8 x 18 with the stroke's round caps landing on the edges — so
+     fitCenter draws the mark at exactly the content box's size and nothing has to be derived from
+     the path. Move the path and the only thing that changes is the mark, not its placement.
+
+     Stroke 1.5 of an 8-wide viewport is ~19% of the mark's width, which renders around 4.4px at the
+     28dp the app draws it — the same apparent weight as ic_bookmark's 2-in-24, so the app's few
+     drawn marks read as one hand. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="8dp"
+    android:height="18dp"
+    android:viewportWidth="8"
+    android:viewportHeight="18"
+    android:tint="@color/reader_text_primary">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M7,1 L1,9 L7,17"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.5" />
+</vector>

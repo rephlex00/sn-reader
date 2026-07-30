@@ -47,10 +47,11 @@ internal class HighlightsController(
     private val scope: CoroutineScope,
     private val highlights: HighlightDao,
     private val books: BookDao,
+    /** Reports an empty list up to [BackMatterPanel], which owns the shared empty state. */
+    private val onEmpty: (Boolean) -> Unit = {},
 ) {
 
     private val list: RecyclerView = overlay.findViewById(R.id.highlights_list)
-    private val empty: View = overlay.findViewById(R.id.highlights_empty)
     private val adapter = HighlightAdapter(onJump = ::jumpTo, onDelete = ::deleteRow)
 
     /** The current chapter's highlights, cached so a pen tap can hit-test without a database read. */
@@ -118,9 +119,7 @@ internal class HighlightsController(
             val hl = withContext(Dispatchers.IO) { highlights.highlightsForBook(path) }
             val rows = highlightRows(hl, reader.toc)
             adapter.submit(rows)
-            val isEmpty = rows.isEmpty()
-            empty.visibility = if (isEmpty) View.VISIBLE else View.GONE
-            list.visibility = if (isEmpty) View.GONE else View.VISIBLE
+            onEmpty(rows.isEmpty())
         }
     }
 

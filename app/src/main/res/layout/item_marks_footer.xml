@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The end of the marks list: removal explained once, under a sidehead, rather than a trailing ✕
+     on every row. A LIST FOOTER rather than a fixed block at the panel's foot — fixed, it sat
+     pinned to the bezel with the whole unused list height as a void above it; as the list's last
+     row it follows the marks it explains. Shown only when there is at least one mark to remove. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="@dimen/space_loose">
+
+    <dev.reader.ui.SideheadView
+        android:id="@+id/marks_footer_sidehead"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <TextView
+        android:id="@+id/marks_footer_hint"
+        style="@style/Text.Figure"
+        android:layout_width="match_parent"
+        android:layout_marginTop="@dimen/space_snug"
+        android:layout_marginBottom="@dimen/space_loose"
+        android:text="@string/marks_remove_hint" />
+
+</LinearLayout>

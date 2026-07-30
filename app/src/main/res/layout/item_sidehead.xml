@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A sidehead as a list row, so a grouped list can carry its own section labels.
+
+     Used by the notes list (a chapter name over the notes taken in it) and by the shelf's list view
+     (Reading now / Not started). The ruled form is correct in both: neither list runs leaders, so
+     there is no second horizontal device for the rule to fight. -->
+<dev.reader.ui.SideheadView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="@dimen/space_loose"
+    android:layout_marginBottom="@dimen/space_tight" />

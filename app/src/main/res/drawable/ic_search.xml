@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Reveals the shelf's search, filter and sort controls, which are hidden until asked for. They
+     are how you narrow a shelf, not how you read one, and a reader who knows which book they want
+     should see the books rather than the machinery for finding them.
+
+     Drawn here rather than imported: a bare circle and stem in the ribbon's own language — stroked
+     at 2 in a 24 viewport, round joins (see ic_bookmark) — so the app's few pictograms read as one
+     hand. At the 30dp the header renders it, 2 is ~4px on the panel, which clears the weight below
+     which a line dithers into grey on this glass. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/reader_text_primary">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M10.5,5 A5.5,5.5 0 1,0 10.5,16 A5.5,5.5 0 1,0 10.5,5 Z M14.4,14.4 L20,20"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2" />
+</vector>

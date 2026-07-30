@@ -76,6 +76,7 @@ internal class TocAdapter(
 
         private val title: TextView = itemView.findViewById(R.id.toc_title)
         private val percent: TextView = itemView.findViewById(R.id.toc_percent)
+        private val placeMark: View = itemView.findViewById(R.id.toc_place_mark)
 
         fun bind(row: TocRow, onEntryClick: (TocRow) -> Unit) {
             title.text = row.title
@@ -117,12 +118,26 @@ internal class TocAdapter(
             }
             title.typeface = Typeface.create(bookFace, style)
 
+            // Three signals for "here", not one. The figure goes bold with the name, and the
+            // margin block is the one a reader can find from arm's length without reading —
+            // greyscale has no fourth signal to spend, so the current row uses all three.
+            percent.typeface = Typeface.create(bookFace, style)
+            percent.setTextColor(
+                itemView.context.getColor(
+                    if (row.isCurrent) R.color.reader_text_primary else R.color.reader_text_secondary,
+                ),
+            )
+            placeMark.visibility = if (row.isCurrent) View.VISIBLE else View.INVISIBLE
+
             itemView.setOnClickListener { onEntryClick(row) }
         }
     }
 
     private companion object {
-        const val BASE_PADDING_DP = 16f
+        // The app's screen margin. bind() sets the row's horizontal padding itself (to add the
+        // depth indent), so this has to agree with @dimen/margin_screen or the contents rows would
+        // sit at a different left edge from every other row in the app.
+        const val BASE_PADDING_DP = 32f
         const val INDENT_STEP_DP = 20f
     }
 }

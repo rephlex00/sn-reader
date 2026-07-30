@@ -1,14 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- No animations: every transition is a single e-ink redraw.
-         windowAnimationStyle kills Activity enter/exit, but it does not reach the *popup* windows
-         AppCompat opens for the toolbar overflow, nor the ripple on toolbar items. Those are
-         inherited from the parent theme and animate by default, so the library's overflow, search,
-         sort/view/filter menus, and every toolbar back arrow were the one place the app still
-         animated. Overridden below. -->
+    <!-- The chrome is set in the book's own typeface. Literata for labels, rows, figures and
+         cells — no sans anywhere in the app — so the furniture and the text are demonstrably the
+         same object. This one item is what removes the library's Roboto title and the "different
+         app" feeling, and it is free: the face is already bundled for the reading page.
+
+         No animations: every transition is a single e-ink redraw. windowAnimationStyle kills
+         Activity enter/exit, but it does not reach the *popup* windows AppCompat opens, nor the
+         ripple on toolbar items. Those are inherited from the parent theme and animate by default,
+         so they are overridden below. -->
     <style name="Theme.Reader" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:fontFamily">@font/literata</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
         <item name="android:windowAnimationStyle">@null</item>
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">@color/paper</item>
         <item name="android:popupMenuStyle">@style/Widget.Reader.PopupMenu</item>
         <item name="popupMenuStyle">@style/Widget.Reader.PopupMenu</item>
         <item name="android:popupWindowStyle">@style/Widget.Reader.PopupWindow</item>
@@ -17,7 +22,9 @@
         <item name="selectableItemBackgroundBorderless">@android:color/transparent</item>
     </style>
 
-    <!-- Popup menus open and close with no fade/scale: one redraw, not an animated sequence. -->
+    <!-- Popup menus open and close with no fade/scale: one redraw, not an animated sequence.
+         The library's overflow is gone, but a popup can still reach the screen from a system
+         path, and when it does it must not animate. -->
     <style name="Widget.Reader.PopupMenu" parent="Widget.AppCompat.PopupMenu">
         <item name="android:popupAnimationStyle">@null</item>
         <item name="android:popupEnterTransition">@null</item>
@@ -30,63 +37,246 @@
         <item name="android:popupExitTransition">@null</item>
     </style>
 
-    <!-- Aa sheet controls: monochrome, large tap targets, no ripple/animation. A selected option is
-         marked by a boxed outline background (aa_option_selected), set in code
-         (ReaderActivity.setOptionSelected). The outline is a static drawable — no state list, so
-         nothing animates (the e-ink constraint). Shared by the segmented options and the size
-         stepper. -->
-    <style name="AaOption">
+    <!-- ===== The voices =====
+         Seven sizes, one face, and weight doing the work colour would. Regular everywhere; bold
+         marks exactly one thing per list — the row you are on. Italic is for a book's title in
+         running prose and for a quoted note. There is no medium, no semibold, and no size between
+         two steps. -->
+
+    <!-- The base every voice descends from, so the dotted names below have a parent to inherit. -->
+    <style name="Text">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:clickable">true</item>
-        <item name="android:focusable">true</item>
-        <item name="android:minWidth">56dp</item>
-        <item name="android:minHeight">48dp</item>
-        <item name="android:gravity">center</item>
-        <item name="android:paddingHorizontal">12dp</item>
-        <item name="android:paddingVertical">10dp</item>
-        <item name="android:textColor">@android:color/black</item>
-        <item name="android:textSize">16sp</item>
     </style>
 
-    <!-- A full-width toggle row: a static label on the left and a hand-drawn ToggleSwitchView on the
-         right. The whole row is the tap target (it flips the pref); the switch is a pure display of
-         the resulting boolean, set in ReaderActivity.refreshSheet. No ripple/animation. -->
-    <style name="AaToggleRow">
+    <!-- Tracked caps. Panel titles, sideheads, running heads, segment and cell labels. IRON,
+         because a caps label is a label and must not compete with the row under it. -->
+    <style name="Text.Mark">
+        <item name="android:textSize">@dimen/text_mark</item>
+        <item name="android:textColor">@color/reader_text_label</item>
+        <item name="android:letterSpacing">@dimen/tracking_caps</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- The shelf's own name, on its half-title. Tracked caps like every other label, but at lead
+         size: this is the one line naming the whole screen, and at 13sp it read as a caption on a
+         page it was supposed to be heading. -->
+    <style name="Text.Halftitle" parent="Text.Mark">
+        <item name="android:textSize">@dimen/text_lead</item>
+        <item name="android:letterSpacing">0.14</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- Every figure in the app: percentages, page counts, sizes. Tabular so a column of them
+         lines up, SLATE so they sit behind the names they annotate, and never below 15sp. -->
+    <style name="Text.Figure">
+        <item name="android:textSize">@dimen/text_figure</item>
+        <item name="android:textColor">@color/reader_text_secondary</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- The second line of a two-line row. -->
+    <style name="Text.Sub">
+        <item name="android:textSize">@dimen/text_sub</item>
+        <item name="android:textColor">@color/reader_text_secondary</item>
+    </style>
+
+    <!-- Every primary list row: a chapter, a setting's name, a book in the list view. -->
+    <style name="Text.Row">
+        <item name="android:textSize">@dimen/text_row</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- A board's title on the shelf. One line, ellipsised: a cover is already saying which book
+         this is, and letting a long title run to two lines cost the shelf a whole row of books. -->
+    <style name="Text.Board">
+        <item name="android:textSize">@dimen/text_board_title</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- A cover caption in the grid, or a quoted note. -->
+    <style name="Text.Lead">
+        <item name="android:textSize">@dimen/text_lead</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- A book's name on a library list row; a panel's subject line. -->
+    <style name="Text.Head">
+        <item name="android:textSize">@dimen/text_head</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- The statement on an empty state, and the library half-title. One per screen, at most. -->
+    <style name="Text.Title">
+        <item name="android:textSize">@dimen/text_title</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- ===== The reader's chrome row =====
+         The bar over the page is a row of glyphs with one word on it: ‹ to leave, the book's title,
+         the mark, Aa, and CONTENTS. Everything but the title is a control, so everything but the
+         title clears the 48dp target, and each carries its meaning at a size that survives being
+         read at arm's length on a reflective panel. -->
+
+    <!-- wrap_content height, NOT match_parent, and that is the whole of what makes the row line up.
+         A LinearLayout skips baseline alignment for any child declared match_parent (see
+         layoutHorizontal's `lp.height != MATCH_PARENT` guard), so a match_parent glyph falls back to
+         centring its own FONT BOX — and a ‹ sits low in that box, because the box reaches up past
+         the cap height to clear accents the glyph does not have. At 36sp that put the chevron a
+         visible 6dp below the title beside it. Sized to its text instead, it shares a baseline with
+         every other word on the row, which is what "aligned" means for type. minHeight keeps the
+         tap target at 48dp without reintroducing the exemption. -->
+    <style name="ChromeGlyph">
+        <item name="android:layout_width">@dimen/tap_target_glyph</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">@dimen/tap_target_glyph</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- ===== The chevron: the app's one way back =====
+         Out of a book, off a panel, back a page of the shelf — the same mark in the same place on
+         every surface, so it is learned once and never hunted for. An ImageView over a drawn
+         vector (ic_chevron_left), not a TextView over ‹: see that file for why.
+
+         Two consequences of the mark being drawn rather than typed, both good riddance:
+           * No translationY. A drawn mark is centred in its own box by construction; the -7dp
+             optical lift the quotation mark needed (and its "re-measure if the size moves" caveat)
+             is gone with it.
+           * No baseline. An ImageView reports none, so LinearLayout places it by gravity instead of
+             trying to sit it on the row's text baseline — which is what we want, since a mark has
+             no baseline to share. The row's own center_vertical does the work.
+
+         The negative margin and paddingStart reclaim the screen's own edge as hit area (see "Reach"
+         in dimens.xml): this is the only way out of a book on a device with no hardware Back, and
+         it was a 48dp box with 32dp of dead glass beside it. paddingStart lands the ink on the
+         margin, the line CONTENTS ends on at the other end of the row. -->
+    <style name="Chevron">
+        <item name="android:layout_width">@dimen/tap_target_glyph_edge</item>
+        <item name="android:layout_height">@dimen/tap_target_glyph</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:src">@drawable/ic_chevron_left</item>
+        <item name="android:layout_marginStart">@dimen/edge_reach_pull</item>
+        <item name="android:paddingStart">@dimen/edge_reach</item>
+        <item name="android:paddingEnd">@dimen/chevron_pad_inboard</item>
+        <item name="android:paddingTop">@dimen/chevron_pad_v</item>
+        <item name="android:paddingBottom">@dimen/chevron_pad_v</item>
+        <item name="android:contentDescription">@string/action_back</item>
+    </style>
+
+    <!-- The same mark facing the other way, for the shelf's page-forward. Mirrored on both axes:
+         the drawable, and the padding that reaches the right edge of the glass instead of the left. -->
+    <style name="Chevron.Forward">
+        <item name="android:src">@drawable/ic_chevron_right</item>
+        <item name="android:layout_marginStart">0dp</item>
+        <item name="android:paddingStart">@dimen/chevron_pad_inboard</item>
+        <item name="android:layout_marginEnd">@dimen/edge_reach_pull</item>
+        <item name="android:paddingEnd">@dimen/edge_reach</item>
+        <item name="android:contentDescription">@string/library_page_next</item>
+    </style>
+
+    <!-- Type. A specimen, not a pictogram: two letters set in the face the panel behind them
+         changes, at the size a control's label is set everywhere else in the app. -->
+    <style name="ChromeGlyph.Type">
+        <item name="android:text">@string/reader_type_glyph</item>
+        <item name="android:textSize">@dimen/text_row</item>
+    </style>
+
+    <!-- CONTENTS: the only word on a row of glyphs, and the only destination the chrome names. It
+         takes full ink rather than a label's IRON — it is a control, not a caption — but only the
+         figure size: it is a door out of the page, and it was reading louder than the chapter, which
+         is the one thing on that bar telling you where in the book you actually are. -->
+    <style name="Text.Mark.Destination">
+        <item name="android:textSize">@dimen/text_figure</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- The book, on the chrome's top row. Italic and SLATE as a book's name is set in running
+         prose, but at row size rather than a caption's: it is the subject the whole bar is about,
+         and it sits beside a 36sp chevron and above a 17sp chapter. At the sub size it was the
+         smallest voice on a row it was supposed to be heading. -->
+    <style name="Text.Sub.BookTitle">
+        <item name="android:textSize">@dimen/text_row</item>
+    </style>
+
+    <!-- The running head: the chapter, centred under the title. Set above every other tracked-caps
+         label in the app, because it is not a label — it is the book talking, the one line of the
+         chrome that is about where you are rather than what you can press. -->
+    <style name="Text.Mark.RunningHead">
+        <item name="android:textSize">@dimen/text_sub</item>
+    </style>
+
+    <!-- ===== The cell =====
+         One shape for every choice in the app: a bordered cell that is either ink-filled or paper.
+         A segmented option, a font picker, a margin setting and a boolean are the same control,
+         learned once and read at a glance with no colour. The chosen cell is REVERSED rather than
+         outlined: an outline reads as a button in every other Android app, while a reversed block
+         is unambiguous and is the most legible mark available here.
+
+         Backgrounds are static drawables, not state lists, so nothing animates. CellRowView sets
+         them; these styles carry only the type and the geometry. -->
+
+    <style name="Cell">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:minWidth">@dimen/cell_min_width</item>
+        <item name="android:minHeight">@dimen/cell_height</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingHorizontal">@dimen/cell_padding_h</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:textSize">@dimen/text_row</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- A cell whose label is a word rather than a specimen: ON / OFF, COVERS / LIST, CLEAN /
+         FASTER. Tracked caps, so a two-letter label still reads as a control. -->
+    <style name="Cell.Mark">
+        <item name="android:textSize">@dimen/text_mark</item>
+        <item name="android:letterSpacing">@dimen/tracking_caps</item>
+        <item name="android:textAllCaps">true</item>
+    </style>
+
+    <!-- A standalone cell that performs an action rather than selecting a value: "Mark this page",
+         "Choose a folder", "Delete". Same shape as every other choice in the app, which is what
+         stops a destructive control reading as a stray text link the way "Delete previews for this
+         book" did. Never reversed — a filled cell means *chosen*, and an action is not a state. -->
+    <style name="Cell.Action">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">@dimen/cell_height</item>
+        <item name="android:background">@drawable/cell_group</item>
+        <item name="android:textSize">@dimen/text_mark</item>
+        <item name="android:letterSpacing">@dimen/tracking_caps</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/reader_text_primary</item>
+    </style>
+
+    <!-- The label to the left of a cell group in a settings row: takes the slack so the cells
+         stay hard against the right margin whatever the label's length. -->
+    <style name="Text.Row.Label">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_weight">1</item>
+    </style>
+
+    <!-- A settings row: a name on the left taking the slack, a cell group hard against the right
+         margin. Used identically by Type and by Settings, which is the point of having a
+         vocabulary — Settings is not a special screen, it is the third instance of one surface. -->
+    <style name="TypeRow">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:orientation">horizontal</item>
-        <item name="android:clickable">true</item>
-        <item name="android:focusable">true</item>
-        <item name="android:minHeight">48dp</item>
         <item name="android:gravity">center_vertical</item>
-        <item name="android:paddingVertical">10dp</item>
+        <item name="android:layout_marginTop">@dimen/space</item>
+        <item name="android:minHeight">@dimen/cell_height</item>
     </style>
 
-    <style name="AaToggleLabel">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_weight">1</item>
-        <item name="android:textColor">@android:color/black</item>
-        <item name="android:textSize">16sp</item>
-    </style>
-
-    <!-- The on-screen dismiss for every reader panel/sheet: a ✕ pinned to the top-right of the
-         header, in one shared style so its glyph, size, and 48dp tap target are identical across the
-         Contents, Bookmarks, Highlights, and Aa surfaces. The device has no hardware Back, so this is
-         the only guaranteed way to close a panel; consistent placement lets the reader learn it once.
-         Monochrome, no ripple/animation (the e-ink constraint). -->
-    <style name="PanelClose">
-        <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:clickable">true</item>
-        <item name="android:focusable">true</item>
-        <item name="android:minWidth">48dp</item>
-        <item name="android:minHeight">48dp</item>
-        <item name="android:gravity">center</item>
-        <item name="android:paddingHorizontal">16dp</item>
-        <item name="android:text">✕</item>
-        <item name="android:textColor">@android:color/black</item>
-        <item name="android:textSize">20sp</item>
-    </style>
+    
 </resources>

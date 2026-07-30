@@ -1,33 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One contents row, set as a printed book's contents page: title, a dotted leader carrying the
-     eye across the gap, and the entry's whole-book percentage. The left padding (depth indent),
-     the bold weight (current chapter), the italic (nested entry) and the Literata typeface are all
-     applied in TocAdapter; everything else is fixed here.
+<!-- One contents row, set as a printed book's contents page: the chapter, a dotted leader carrying
+     the eye across the gap, and the entry's whole-book percentage.
 
-     toc_title and toc_leader are nested inside their own weight="1" group, rather than sitting as
+     The leader is the app's one tabular device, and it is used *only* where a row points to a place
+     in a book. That is also why there are no rules between these rows: space separates them and the
+     leaders relate them, and a rule at any weight would be a second horizontal device competing
+     with the run of dots through every row.
+
+     The row you are on carries three signals — bold name, bold figure, and a 6 x 24dp INK block in
+     the left margin — because greyscale has no fourth, and the margin block is the one you can find
+     from arm's length without reading anything.
+
+     The depth indent, the bold weight (current chapter) and the italic (nested entry) are applied in
+     TocAdapter; everything else is fixed here.
+
+     toc_title and toc_leader are nested inside their own weight="1" group rather than sitting as
      three flat siblings of toc_percent. A flat LinearLayout hands a weight="0" child (toc_title,
      wrap_content) its full first-measurement-pass budget before a LATER sibling (toc_percent) has
      had any width reserved at all — so a title longer than the row would claim the whole row for
      itself, leaving nothing for the leader OR the percentage. Nesting title+leader in their own
      weight="1" group means toc_percent (always a short "N%", so cheap and safe to measure first at
-     the outer level) reserves its own width before the nested group ever gets measured; inside that
-     group, toc_title still hugs its own text width when short (leaving the leader real room to run)
-     and still ellipsizes into whatever's left when long, but toc_percent's space is untouchable
-     either way. No ConstraintLayout: this is a plain nested LinearLayout.
+     the outer level) reserves its own width before the nested group is measured.
 
-     e-ink: black on white, no ripple, no selectableItemBackground, no animation. The row itself
-     carries the tap target, not its children. -->
+     e-ink: no ripple, no selectableItemBackground, no animation. The row itself carries the tap
+     target, not its children. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:baselineAligned="true"
     android:clickable="true"
+    android:clipToPadding="false"
+    android:clipChildren="false"
     android:focusable="true"
     android:gravity="center_vertical"
-    android:minHeight="48dp"
+    android:minHeight="@dimen/row_height"
     android:orientation="horizontal"
-    android:paddingHorizontal="16dp"
-    android:paddingVertical="12dp">
+    android:paddingHorizontal="@dimen/margin_screen">
+
+    <!-- The current-place mark. Sits in the margin, outside the text column, so it reads as a
+         printed marginal rule rather than as part of the row. Visibility is set in TocAdapter. -->
+    <View
+        android:id="@+id/toc_place_mark"
+        android:layout_width="@dimen/place_mark_width"
+        android:layout_height="@dimen/place_mark_height"
+        android:layout_marginStart="-20dp"
+        android:layout_marginEnd="14dp"
+        android:background="@color/ink"
+        android:visibility="invisible" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -39,27 +58,21 @@
 
         <TextView
             android:id="@+id/toc_title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            style="@style/Text.Row"
             android:ellipsize="end"
-            android:maxLines="1"
-            android:textColor="@android:color/black"
-            android:textSize="16sp" />
+            android:maxLines="1" />
 
         <dev.reader.ui.LeaderDotsView
             android:id="@+id/toc_leader"
             android:layout_width="0dp"
             android:layout_height="12dp"
-            android:layout_marginHorizontal="6dp"
+            android:layout_marginHorizontal="@dimen/space_tight"
             android:layout_weight="1" />
 
     </LinearLayout>
 
     <TextView
         android:id="@+id/toc_percent"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textColor="@android:color/black"
-        android:textSize="14sp" />
+        style="@style/Text.Figure" />
 
 </LinearLayout>

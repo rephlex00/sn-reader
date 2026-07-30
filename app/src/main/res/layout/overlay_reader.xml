@@ -1,179 +1,245 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The reading overlay: a monochrome chrome layer drawn ABOVE the page (added after PageView in
-     the content FrameLayout). The top bar holds Back, the book title, and the Contents (TOC) and
-     Aa (typography) buttons; a read-only page scrubber sits at the bottom. The Contents list and
-     the Aa sheet are separate visibility-toggled panels inside this overlay.
+     the content FrameLayout).
+
+     The chrome is two rows, not one. The top row carries the way out, the book, and the controls;
+     the row under it is a running head carrying the chapter, centred, exactly where a printed page
+     puts it. Splitting them is what fixes the title truncation; a smaller font would not have.
+
+     Two destinations, not four. Contents is one surface with a CHAPTERS / MARKS / NOTES segment —
+     all three answer "where am I in this book" and in print they are all back matter using the
+     same device. Type answers a different question and is its own surface.
+
+     The two surfaces are shaped by what they are FOR, and they differ. Back matter is full-screen:
+     it is a list you read, nothing about the page below it matters while you are in it, and on a
+     device with no hardware Back a half-covered page is ambiguous about what is live. Type is a
+     bottom sheet with the page left showing above it, because every control in its TEXT tab
+     re-paginates that page — a full-screen Type meant choosing a face and a size blind and finding
+     out afterwards, which is the one thing a typography panel must not do.
 
      Touch model: this root FrameLayout is NOT clickable, so it does not consume touches — only its
-     Back control does. A tap anywhere else on the overlay falls through to the PageView below, whose
+     controls do. A tap anywhere else on the overlay falls through to the PageView below, whose
      onTap sees the overlay is up and dismisses it (one redraw) instead of turning a page. See
-     ReaderActivity.onTap. Starts GONE; ReaderActivity toggles visibility. No background on the root,
-     so the page shows through between the two opaque-white bars.
+     ReaderActivity.onTap. Starts GONE; ReaderActivity toggles visibility.
 
-     e-ink: solid white bars, black text, flat black divider lines. No ripple/selectableItemBackground
-     (it animates), no elevation/shadow (it ghosts), no animation of any kind. Large tap targets. -->
+     e-ink: solid paper bars, INK rules, no ripple/selectableItemBackground (it animates), no
+     elevation/shadow (it ghosts and dithers), no animation of any kind. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/reader_overlay"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:visibility="gone">
 
-    <!-- Top bar: Back + book title, anchored to the top edge. -->
+    <!-- ===== Chrome, top ===== -->
     <LinearLayout
+        android:id="@+id/reader_chrome_top"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
-        android:background="@android:color/white"
+        android:background="@color/paper"
         android:orientation="vertical">
 
+        <!-- Row one: the book you are in, and everything you can do about it.
+
+             The title sits beside the ‹ rather than on the row below, because the row below can
+             then centre the chapter — and because the first thing a bar over a page should say is
+             which book's page it is. -->
         <LinearLayout
+            android:id="@+id/chrome_destinations"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="@dimen/chrome_row_height"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
 
-            <TextView
+            <!-- Out of the book. The bare ‹ — the same mark every panel in the app dismisses with,
+                 so it is learned once — at the size a control on the page's own bar needs. -->
+            <ImageView
                 android:id="@+id/back"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:clickable="true"
-                android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:gravity="center"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="12dp"
-                android:text="@string/reader_back"
-                android:textColor="@android:color/black"
-                android:textSize="18sp"
-                android:textStyle="bold" />
+                style="@style/Chevron"
+                android:contentDescription="@string/action_back" />
 
+            <!-- No start margin: the chevron's mark sits at the START of its box (see the
+                 Chevron style), so the box's own empty remainder is the gap to the title. -->
             <TextView
                 android:id="@+id/book_title"
+                style="@style/Text.Sub.BookTitle"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:paddingHorizontal="@dimen/toolbar_button_padding_h"
-                android:paddingVertical="@dimen/toolbar_padding_v"
-                android:textColor="@android:color/black"
-                android:textSize="18sp" />
+                android:textStyle="italic" />
 
-            <!-- Opens the Bookmarks panel. Like Back, the only clickable thing in its own footprint,
-                 so it consumes its own tap while page-area taps fall through to dismiss.
-                 A glyph rather than a word: the label used to read "Marks" while the panel it opens
-                 is titled "Bookmarks" and its action reads "Bookmark this page", so one feature wore
-                 three names. The bookmark shape needs no label to be read. -->
+            <!-- The chapter, in landscape only. 1872px fits everything on one row, so the second
+                 row folds away and the chapter moves up here — landscape gets that row back as
+                 page rather than paying for a layout it does not need. Both copies exist rather
+                 than one being reparented on rotation: reparenting a view mid-config-change is
+                 fiddly and this is two TextViews. ReaderActivity writes both and shows whichever
+                 the orientation calls for. -->
+            <TextView
+                android:id="@+id/running_chapter_wide"
+                style="@style/Text.Mark.RunningHead"
+                android:layout_marginStart="@dimen/space_snug"
+                android:layout_marginEnd="@dimen/space_snug"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:visibility="gone" />
+
+            <!-- A 2dp divider separates where you are from what you can do, so the landscape row
+                 reads as two groups rather than one long run. -->
+            <View
+                android:id="@+id/chrome_wide_divider"
+                android:layout_width="@dimen/rule_section"
+                android:layout_height="24dp"
+                android:layout_marginEnd="@dimen/space_snug"
+                android:background="@color/reader_rule"
+                android:visibility="gone" />
+
+            <!-- Marks or unmarks the page on screen, and says which it is: outlined ribbon, or the
+                 same ribbon flooded. It is the one control here whose look is a FACT about the page
+                 rather than a door, which is exactly why it earns a glyph where CONTENTS gets a
+                 word — a glyph can hold a state, a word can only be tapped. The full sentence
+                 version ("Mark this page", with the page named under it) still leads the Marks
+                 segment for the reader who wants to see what they are acting on. -->
             <ImageView
-                android:id="@+id/bookmarks_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:id="@+id/bookmark_button"
+                android:layout_width="@dimen/tap_target_min"
+                android:layout_height="@dimen/tap_target_min"
                 android:clickable="true"
+                android:contentDescription="@string/bookmark_add"
                 android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="12dp"
+                android:padding="@dimen/glyph_inset"
                 android:scaleType="fitCenter"
-                android:src="@drawable/ic_bookmark"
-                android:contentDescription="@string/reader_bookmarks" />
+                android:src="@drawable/ic_bookmark" />
 
-            <!-- Opens the Highlights panel. Like Back, the only clickable thing in its own footprint,
-                 so it consumes its own tap while page-area taps fall through to dismiss. -->
-            <TextView
-                android:id="@+id/highlights_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:clickable="true"
-                android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:gravity="center"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="12dp"
-                android:text="@string/reader_highlights"
-                android:textColor="@android:color/black"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <!-- Opens the table-of-contents panel. Like Back, the only clickable thing in its own
-                 footprint, so it consumes its own tap while page-area taps fall through to dismiss. -->
-            <TextView
-                android:id="@+id/contents_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:clickable="true"
-                android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:gravity="center"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="12dp"
-                android:text="@string/reader_contents"
-                android:textColor="@android:color/black"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <!-- Opens the typography sheet below. Like Back, it is the only clickable thing on its
-                 row, so it consumes its own tap while page-area taps fall through to dismiss. -->
+            <!-- Opens the Type surface. -->
             <TextView
                 android:id="@+id/settings_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                style="@style/ChromeGlyph.Type"
+                android:contentDescription="@string/reader_type" />
+
+            <!-- Opens the back-matter surface (chapters, marks, notes). Reads "Marks" in a comic,
+                 which has no chapters — set in ComicActivity. -->
+            <!-- wrap_content height with a minHeight, not match_parent: a match_parent child is
+                 exempt from the row's baseline alignment (see the ChromeGlyph style), and this word
+                 must sit on the same line as the ‹ and the title. -->
+            <!-- Trailing edge: the negative end margin reaches the right edge of the glass while
+                 paddingEnd keeps the word's last letter on the margin. See dimens.xml, "Reach". -->
+            <TextView
+                android:id="@+id/contents_button"
+                style="@style/Text.Mark.Destination"
                 android:clickable="true"
                 android:focusable="true"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
                 android:gravity="center"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="12dp"
-                android:text="@string/reader_display_short"
-                android:textColor="@android:color/black"
-                android:textSize="20sp"
-                android:textStyle="bold" />
+                android:layout_marginEnd="@dimen/edge_reach_pull"
+                android:minHeight="@dimen/tap_target_glyph"
+                android:minWidth="@dimen/tap_target_min"
+                android:paddingStart="@dimen/space_snug"
+                android:paddingEnd="@dimen/edge_reach"
+                android:text="@string/reader_contents" />
 
         </LinearLayout>
 
+        <!-- Row two: the running head, which is now the chapter alone and therefore centred. A
+             printed page sets the chapter this way when the verso is not carrying the title, and
+             the title has moved up to the row above. -->
+        <LinearLayout
+            android:id="@+id/chrome_running_head"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/chrome_running_head_height"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
+
+            <TextView
+                android:id="@+id/running_chapter"
+                style="@style/Text.Mark.RunningHead"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:maxLines="1" />
+
+        </LinearLayout>
+
+        <!-- EDGE. Everything above it is furniture, everything below it is the book. Set at the
+             chrome weight rather than the app's 6dp EDGE: this is the one rule that sits directly
+             against the page, and a bar that thick over prose reads as something to look past. -->
         <View
             android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="@android:color/black" />
+            android:layout_height="@dimen/rule_chrome"
+            android:background="@color/reader_rule" />
 
     </LinearLayout>
 
-    <!-- The scrubbing preview: the sampled page nearest the finger, blitted from the on-disk
-         thumbnail strip. Visible only during a drag. A separate small view, so its repaints are
-         its own region — the book page underneath NEVER repaints during a drag (the v1 contract).
-         Half screen: 374x499dp at the Nomad's 1.875 density = ~702x936px. -->
-    <ImageView
-        android:id="@+id/scrub_preview"
-        android:layout_width="374dp"
-        android:layout_height="499dp"
+    <!-- ===== The scrubbing preview =====
+         The sampled page nearest the finger, blitted from the on-disk thumbnail strip, with a
+         reversed caption bar naming what you are looking at. Previously the window was bare and
+         the reader had to read the separate readout to know which page it was; the two belong
+         together. Visible only during a drag, and its repaints are its own region — the book page
+         underneath NEVER repaints during a drag (the v1 contract). -->
+    <LinearLayout
+        android:id="@+id/scrub_preview_frame"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="140dp"
         android:background="@drawable/preview_window_border"
-        android:contentDescription="@null"
-        android:padding="2dp"
-        android:scaleType="fitCenter"
-        android:visibility="gone" />
+        android:orientation="vertical"
+        android:visibility="gone">
 
-    <!-- Bottom scrubber: read-only "page X of Y" readout above a full-width timeline, anchored to
-         the bottom edge. The ↩ jump back-stack control gets its own fixed seat at the head of the
-         readout row (v2 design: "a home", not a loose glyph crowding a weighted column) — it sits
-         in a FrameLayout alongside the readout rather than beside it in a horizontal row, so the
-         readout stays independently centered and ↩ appearing/disappearing never reflows anything. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:background="@color/ink"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/space">
+
+            <TextView
+                android:id="@+id/scrub_preview_chapter"
+                style="@style/Text.Mark"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/paper" />
+
+            <TextView
+                android:id="@+id/scrub_preview_page"
+                style="@style/Text.Mark"
+                android:layout_marginStart="@dimen/space_snug"
+                android:textColor="@color/paper" />
+
+        </LinearLayout>
+
+        <!-- Half screen: 374x499dp at the Nomad's 1.875 density = ~702x936px. -->
+        <ImageView
+            android:id="@+id/scrub_preview"
+            android:layout_width="374dp"
+            android:layout_height="499dp"
+            android:contentDescription="@null"
+            android:scaleType="fitCenter" />
+
+    </LinearLayout>
+
+    <!-- ===== Chrome, foot =====
+         The readout above a full-width timeline. The ↩ jump-back control keeps its own fixed seat
+         at the head of the readout row rather than sitting in the weighted column, so it appearing
+         and disappearing never reflows anything. The strip keeps its 88dp and its geometry: that
+         was learned against this panel's firmware and only its greys are restated here. -->
     <LinearLayout
+        android:id="@+id/reader_chrome_bottom"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="@android:color/white"
+        android:background="@color/paper"
         android:orientation="vertical">
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="@android:color/black" />
+            android:layout_height="@dimen/rule_chrome"
+            android:background="@color/reader_rule" />
 
         <FrameLayout
             android:layout_width="match_parent"
@@ -181,34 +247,37 @@
 
             <TextView
                 android:id="@+id/scrubber"
+                style="@style/Text.Figure"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
                 android:gravity="center"
-                android:paddingHorizontal="16dp"
-                android:paddingTop="16dp"
-                android:textColor="@android:color/black"
-                android:textSize="16sp" />
+                android:paddingHorizontal="@dimen/margin_screen"
+                android:paddingTop="@dimen/space" />
 
             <!-- Pops the jump back-stack (JumpStack): returns to the position left by the last
-                 scrub commit or Contents/bookmark/highlight jump. GONE whenever the stack is empty
-                 — see ReaderActivity.updateBackControl. A glyph rather than a word: the reader-back
-                 control at the top already reads "Back" for leaving the book, so this needed its
-                 own mark. Anchored to the track's own left cap (return_seat.xml's 12dp inset centers
-                 the drawn 40dp ring at x≈36dp of this 64dp target) rather than left adrift at the
-                 screen edge. -->
+                 scrub commit or contents/mark/note jump. GONE whenever the stack is empty — see
+                 ReaderActivity.updateBackControl.
+
+                 A WORD, in the same tracked caps as CONTENTS and MARKS. It was a ↩ seated on a
+                 drawn ring, which made it the only circle in an app built out of rules, words and
+                 paper — and a ring is a heavy way to say "this glyph is a button" on a surface
+                 where every other button says so by being a word. RETURN also distinguishes itself
+                 from the ‹ one row above: ‹ leaves the book, this comes back from a jump.
+
+                 paddingStart alone puts the word on the screen margin, with NO negative margin:
+                 this sits in an unpadded FrameLayout, so its box already starts at the glass. (The
+                 edge_reach_pull idiom is for controls inside a row padded to margin_screen — used
+                 here it overshot, and the word printed hard against the bezel.) -->
             <TextView
                 android:id="@+id/scrubber_back"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
+                style="@style/Text.Mark.Destination"
                 android:layout_gravity="start|center_vertical"
-                android:layout_marginStart="4dp"
-                android:background="@drawable/return_seat"
                 android:clickable="true"
                 android:focusable="true"
-                android:gravity="center"
+                android:gravity="start|center_vertical"
+                android:minHeight="@dimen/tap_target_glyph"
+                android:paddingStart="@dimen/edge_reach"
+                android:paddingEnd="@dimen/space"
                 android:text="@string/scrubber_back"
-                android:textColor="#1A1A1A"
-                android:textSize="22sp"
                 android:visibility="gone" />
 
         </FrameLayout>
@@ -216,602 +285,635 @@
         <dev.reader.ui.ChapterScrubberView
             android:id="@+id/chapter_scrubber"
             android:layout_width="match_parent"
-            android:layout_height="88dp"
-            android:paddingHorizontal="16dp" />
+            android:layout_height="@dimen/scrubber_strip_height"
+            android:paddingHorizontal="@dimen/margin_screen" />
 
     </LinearLayout>
 
-    <!-- The Aa typography sheet: a bottom-anchored panel of monochrome controls, opened by the Aa
-         button and toggled by visibility (one e-ink redraw, no animation). It is clickable=true so
-         a tap on its own chrome is consumed rather than falling through to dismiss the overlay; the
-         Aa button toggles it. Each control writes a ReaderPrefs field, rebuilds the RenderConfig and
-         live-re-paginates the current chapter, keeping the reader on the same text (see
-         ReaderActivity.applySettingsChange). Starts GONE. Drawn last, so it sits above the scrubber
-         it covers while open. -->
-    <ScrollView
-        android:id="@+id/settings_sheet"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:background="@android:color/white"
-        android:clickable="true"
-        android:focusable="true"
-        android:overScrollMode="never"
-        android:fillViewport="false"
-        android:visibility="gone">
+    <!-- ===== Back matter: one surface, three segments =====
+         Chapters, Marks and Notes behind a single header with a single dismiss. The reader learns
+         one surface and then only ever chooses which list is in it; the segment they left it on is
+         remembered per book. Drawn after the bars so it covers them while open.
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingHorizontal="16dp"
-            android:paddingBottom="24dp">
-
-            <!-- Header row: title + a top-right ✕ that closes the sheet (back to the reading toolbar),
-                 matching the Contents/Bookmarks/Highlights panels so the dismiss is in one place. -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:paddingVertical="@dimen/panel_header_padding_v"
-                    android:text="@string/reader_display"
-                    android:textColor="@android:color/black"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/settings_close"
-                    style="@style/PanelClose"
-                    android:contentDescription="@string/panel_close_display" />
-
-            </LinearLayout>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/panel_divider_height"
-                android:background="@android:color/black" />
-
-            <!-- Font family -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="120dp"
-                    android:layout_height="wrap_content"
-                    android:text="@string/setting_font"
-                    android:textColor="@android:color/black"
-                    android:textSize="16sp" />
-
-                <!-- Each option is shown in its own face (set in ReaderActivity), so the picker
-                     previews the fonts before selection. -->
-                <TextView
-                    android:id="@+id/font_literata"
-                    style="@style/AaOption"
-                    android:text="@string/font_literata" />
-
-                <TextView
-                    android:id="@+id/font_bitter"
-                    style="@style/AaOption"
-                    android:text="@string/font_bitter" />
-
-                <TextView
-                    android:id="@+id/font_atkinson"
-                    style="@style/AaOption"
-                    android:text="@string/font_atkinson" />
-            </LinearLayout>
-
-            <!-- Text size stepper -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="120dp"
-                    android:layout_height="wrap_content"
-                    android:text="@string/setting_text_size"
-                    android:textColor="@android:color/black"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:id="@+id/size_minus"
-                    style="@style/AaOption"
-                    android:text="@string/text_size_decrease" />
-
-                <TextView
-                    android:id="@+id/size_value"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:minWidth="64dp"
-                    android:gravity="center"
-                    android:paddingHorizontal="8dp"
-                    android:textColor="@android:color/black"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:id="@+id/size_plus"
-                    style="@style/AaOption"
-                    android:text="@string/text_size_increase" />
-            </LinearLayout>
-
-            <!-- Line spacing -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="120dp"
-                    android:layout_height="wrap_content"
-                    android:text="@string/setting_line_spacing"
-                    android:textColor="@android:color/black"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:id="@+id/spacing_12"
-                    style="@style/AaOption"
-                    android:text="@string/spacing_12" />
-
-                <TextView
-                    android:id="@+id/spacing_14"
-                    style="@style/AaOption"
-                    android:text="@string/spacing_14" />
-
-                <TextView
-                    android:id="@+id/spacing_16"
-                    style="@style/AaOption"
-                    android:text="@string/spacing_16" />
-            </LinearLayout>
-
-            <!-- Margins -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="120dp"
-                    android:layout_height="wrap_content"
-                    android:text="@string/setting_margins"
-                    android:textColor="@android:color/black"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:id="@+id/margin_narrow"
-                    style="@style/AaOption"
-                    android:text="@string/margin_narrow" />
-
-                <TextView
-                    android:id="@+id/margin_medium"
-                    style="@style/AaOption"
-                    android:text="@string/margin_medium" />
-
-                <TextView
-                    android:id="@+id/margin_wide"
-                    style="@style/AaOption"
-                    android:text="@string/margin_wide" />
-            </LinearLayout>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginVertical="6dp"
-                android:background="@android:color/black" />
-
-            <!-- Toggles: a static label + a hand-drawn switch; the whole row flips the pref on tap
-                 and refreshSheet sets each switch's checked state. -->
-            <LinearLayout
-                android:id="@+id/toggle_justify"
-                style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="@string/setting_justify" />
-                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_justify_switch"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/toggle_hyphen"
-                style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="@string/setting_hyphenation" />
-                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_hyphen_switch"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/toggle_publisher"
-                style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="@string/setting_publisher_styling" />
-                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_publisher_switch"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/toggle_headings"
-                style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="@string/setting_heading_detection" />
-                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_headings_switch"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/toggle_progress"
-                style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="@string/setting_progress_bar" />
-                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_progress_switch"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/toggle_rotation_lock"
-                style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="@string/setting_rotation_lock" />
-                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_rotation_lock_switch"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/toggle_faster_turns"
-                style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="@string/setting_faster_page_turns" />
-                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_faster_turns_switch"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <!-- Shown only when Faster page turns is ON: how many pages between full clean refreshes. -->
-            <LinearLayout
-                android:id="@+id/refresh_frequency_row"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:visibility="gone">
-
-                <TextView
-                    android:layout_width="120dp"
-                    android:layout_height="wrap_content"
-                    android:text="@string/setting_full_refresh_every"
-                    android:textColor="@android:color/black"
-                    android:textSize="16sp" />
-
-                <TextView android:id="@+id/refresh_freq_3" style="@style/AaOption" android:text="@string/refresh_every_3" />
-                <TextView android:id="@+id/refresh_freq_6" style="@style/AaOption" android:text="@string/refresh_every_6" />
-                <TextView android:id="@+id/refresh_freq_10" style="@style/AaOption" android:text="@string/refresh_every_10" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/toggle_previews"
-                style="@style/AaToggleRow">
-                <TextView style="@style/AaToggleLabel" android:text="@string/setting_previews" />
-                <dev.reader.ui.ToggleSwitchView android:id="@+id/toggle_previews_switch"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <!-- Shown only while a strip is actively generating for the open book: a live
-                 "N / M chapters" readout. Gone otherwise, the same conditional-row pattern as
-                 refresh_frequency_row above. Visibility is driven independently of previews_delete
-                 below — that control's reachability must not depend on generation still being in
-                 flight (see previews_delete). -->
-            <LinearLayout
-                android:id="@+id/previews_status_row"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:visibility="gone">
-
-                <TextView
-                    android:id="@+id/previews_generating_text"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:paddingVertical="4dp"
-                    android:textColor="@android:color/black"
-                    android:textSize="14sp" />
-            </LinearLayout>
-
-            <!-- Its own independently-visibility-controlled control (not nested inside
-                 previews_status_row above): shown whenever there is a strip to reclaim disk space
-                 from — one already on disk for this (book, config), OR one generating right now —
-                 regardless of whether previews_status_row is showing. This is what keeps delete
-                 reachable once generation finishes and that row goes GONE: deleting an
-                 already-completed strip is the primary case this control exists for. -->
-            <TextView
-                android:id="@+id/previews_delete"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingVertical="6dp"
-                android:text="@string/previews_delete"
-                android:textColor="@android:color/black"
-                android:textSize="14sp"
-                android:visibility="gone" />
-
-        </LinearLayout>
-
-    </ScrollView>
-
-    <!-- The table-of-contents panel: a full-height monochrome list of the book's already-parsed
-         chapters (doc.toc), opened by the Contents button and toggled by visibility (one e-ink
-         redraw, no animation). It is clickable=true so a tap on its own chrome is consumed rather
-         than falling through to dismiss the overlay. Tapping an entry jumps the reader to that
-         chapter/anchor via the same restore machinery the open path uses (see
-         ReaderActivity.jumpToToc). Starts GONE. Drawn last, so it covers the bars while open; Back
-         peels it off first (TOC -> overlay -> book). An empty/malformed TOC shows the "No contents"
-         state (toc_empty) with the list hidden. -->
-    <LinearLayout
-        android:id="@+id/toc_panel"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@android:color/white"
-        android:clickable="true"
-        android:focusable="true"
-        android:orientation="vertical"
-        android:visibility="gone">
-
-        <!-- Header row: title + a top-right ✕ that closes this panel (back to the reading toolbar).
-             The device has no hardware Back, so every panel carries its own on-screen dismiss. -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <!-- Letterspaced, uppercased and set at 14sp — a printed contents page's own head —
-                 rather than the plain 20sp the other panels' headers use: this panel is styled as
-                 the book's own contents page, not as another chrome sheet. One heading, one rule:
-                 there used to be a second letterspaced "CONTENTS" head inserted below this one; it
-                 duplicated this label and pushed a long entry's percentage out of view underneath,
-                 so it was removed rather than kept alongside this one. -->
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:letterSpacing="0.18"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="@dimen/panel_header_padding_v"
-                android:text="@string/reader_contents"
-                android:textAllCaps="true"
-                android:textColor="@android:color/black"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/toc_close"
-                style="@style/PanelClose"
-                android:contentDescription="@string/panel_close_contents" />
-
-        </LinearLayout>
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="@android:color/black" />
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/toc_list"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:scrollbars="vertical" />
-
-        <!-- Shown (with toc_list hidden) when the book has no usable TOC — never an empty clickable
-             void. Unreachable for a well-formed EPUB, since the parser synthesizes a flat spine TOC
-             when neither nav nor NCX is present, but the reader must still degrade gracefully. -->
-        <LinearLayout
-            android:id="@+id/toc_empty"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="top|center_horizontal"
-            android:paddingHorizontal="24dp"
-            android:paddingTop="48dp"
-            android:visibility="gone">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/contents_empty"
-                android:textColor="@color/reader_text_primary"
-                android:textSize="@dimen/text_body" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:text="@string/contents_empty_hint"
-                android:textColor="@color/reader_text_secondary"
-                android:textSize="@dimen/text_meta" />
-
-        </LinearLayout>
-
-    </LinearLayout>
-
-    <!-- The bookmarks panel: an "Add/remove this page" toggle, then the book's bookmarks (chapter ·
-         %, tap to jump, ✕ to delete). Visibility-toggled like the Contents panel; one e-ink redraw,
-         no animation. clickable=true so a tap on its own chrome is consumed, not fallen through to
+         clickable=true so a tap on its own ground is consumed rather than falling through to
          dismiss the overlay. -->
     <LinearLayout
-        android:id="@+id/bookmarks_panel"
+        android:id="@+id/back_matter_panel"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@android:color/white"
+        android:background="@color/paper"
         android:clickable="true"
         android:focusable="true"
         android:orientation="vertical"
         android:visibility="gone">
 
-        <!-- Header row: title + a top-right ✕ that closes this panel (back to the reading toolbar). -->
+        <!-- The header does not move between segments, and neither does the ‹. It sits at the
+             screen margin on every surface in the app, so it is learned once. -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="@dimen/header_height"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
 
-            <TextView
+            <ImageView
+                android:id="@+id/back_matter_close"
+                style="@style/Chevron"
+                android:contentDescription="@string/panel_close_contents" />
+
+            <View
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="@dimen/panel_header_padding_v"
-                android:text="@string/reader_bookmarks"
-                android:textColor="@android:color/black"
-                android:textSize="20sp"
-                android:textStyle="bold" />
+                android:layout_height="1dp"
+                android:layout_weight="1" />
 
+            <!-- Whose back matter this is. On a device with four books half-read that matters
+                 more than a panel title repeating the word CONTENTS. -->
             <TextView
-                android:id="@+id/bookmarks_close"
-                style="@style/PanelClose"
-                android:contentDescription="@string/panel_close_bookmarks" />
+                android:id="@+id/back_matter_book"
+                style="@style/Text.Sub"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textStyle="italic" />
 
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/bookmark_toggle"
+        <dev.reader.ui.CellRowView
+            android:id="@+id/back_matter_segment"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:clickable="true"
-            android:focusable="true"
-            android:minHeight="48dp"
-            android:gravity="center_vertical"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="12dp"
-            android:textColor="@android:color/black"
-            android:textSize="16sp" />
+            android:layout_height="@dimen/cell_height"
+            android:layout_marginHorizontal="@dimen/margin_screen" />
 
+        <!-- HEAD: everything below belongs to the segment above it. -->
         <View
             android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="@android:color/black" />
+            android:layout_height="@dimen/rule_head"
+            android:layout_marginHorizontal="@dimen/margin_screen"
+            android:layout_marginTop="@dimen/space"
+            android:background="@color/reader_rule" />
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/bookmarks_list"
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:scrollbars="vertical" />
+            android:layout_weight="1">
 
-        <LinearLayout
-            android:id="@+id/bookmarks_empty"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="top|center_horizontal"
-            android:paddingHorizontal="24dp"
-            android:paddingTop="48dp"
-            android:visibility="gone">
+            <!-- Chapters. Sideheads here are unruled (SideheadView.Form.PLAIN): every row already
+                 runs a leader, and a rule would be a second horizontal device at similar weight. -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/toc_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:paddingTop="@dimen/space_loose"
+                android:clipToPadding="false"
+                android:scrollbars="vertical" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/bookmarks_empty"
-                android:textColor="@color/reader_text_primary"
-                android:textSize="@dimen/text_body" />
+            <!-- Marks. "Mark this page" is a full-width cell at the head of the list with the page
+                 it would act on named underneath — which a toolbar pictogram could never say.
+                 It coexists with the chrome's ribbon glyph deliberately: this panel is full-screen
+                 OVER the chrome, so the ribbon is unreachable from here, and the cell is the empty
+                 state's only action (see BackMatterPanel.applyBodyVisibility). -->
+            <LinearLayout
+                android:id="@+id/marks_body"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:paddingHorizontal="@dimen/margin_screen"
+                android:paddingTop="@dimen/space_loose"
+                android:visibility="gone">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:text="@string/bookmarks_empty_hint"
-                android:textColor="@color/reader_text_secondary"
-                android:textSize="@dimen/text_meta" />
+                <TextView
+                    android:id="@+id/bookmark_toggle"
+                    style="@style/Cell.Action"
+                    android:layout_width="match_parent"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center" />
 
-        </LinearLayout>
+                <TextView
+                    android:id="@+id/bookmark_toggle_subject"
+                    style="@style/Text.Figure"
+                    android:layout_width="match_parent"
+                    android:layout_marginTop="@dimen/space_tight"
+                    android:gravity="center" />
+
+                <dev.reader.ui.SideheadView
+                    android:id="@+id/marks_sidehead"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_loose" />
+
+                <!-- The "Remove" explainer is the LIST's footer (see item_marks_footer.xml), not a
+                     fixed block here — fixed, it sat pinned to the bezel under the unused list
+                     height. -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/bookmarks_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:layout_marginTop="@dimen/space_snug"
+                    android:scrollbars="vertical" />
+
+            </LinearLayout>
+
+            <!-- Notes. Chapter names become the sideheads, so the reference column carries only
+                 the figure rather than repeating "Chapter N" on every row. -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/highlights_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:paddingHorizontal="@dimen/margin_screen"
+                android:paddingTop="@dimen/space_loose"
+                android:clipToPadding="false"
+                android:scrollbars="vertical"
+                android:visibility="gone" />
+
+            <!-- The empty state lives INSIDE the learned surface: header and segment stay put, the
+                 ‹ is exactly where it was. Set like a title page — kicker, rule, statement, one
+                 instruction, one cell that gets you out. Declarative, never an apology. -->
+            <LinearLayout
+                android:id="@+id/back_matter_empty"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingHorizontal="@dimen/margin_screen"
+                android:paddingTop="180dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/back_matter_empty_kicker"
+                    style="@style/Text.Mark" />
+
+                <View
+                    android:layout_width="56dp"
+                    android:layout_height="@dimen/rule_head"
+                    android:layout_marginTop="@dimen/space_loose"
+                    android:layout_marginBottom="@dimen/space_loose"
+                    android:background="@color/reader_rule" />
+
+                <TextView
+                    android:id="@+id/back_matter_empty_title"
+                    style="@style/Text.Title"
+                    android:gravity="center" />
+
+                <TextView
+                    android:id="@+id/back_matter_empty_hint"
+                    style="@style/Text.Sub"
+                    android:layout_marginTop="@dimen/space"
+                    android:gravity="center"
+                    android:maxWidth="340dp" />
+
+                <TextView
+                    android:id="@+id/back_matter_empty_action"
+                    style="@style/Cell.Action"
+                    android:layout_width="340dp"
+                    android:layout_marginTop="@dimen/space_wide"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:text="@string/back_to_the_page" />
+
+                <TextView
+                    android:id="@+id/back_matter_empty_foot"
+                    style="@style/Text.Figure"
+                    android:layout_marginTop="@dimen/space_loose"
+                    android:gravity="center"
+                    android:text="@string/marks_kept_per_book" />
+
+            </LinearLayout>
+
+        </FrameLayout>
 
     </LinearLayout>
 
-    <!-- The highlights panel: the book's highlights (excerpt, chapter · %, tap to jump, ✕ to delete).
-         Unlike the bookmarks panel it has NO add/remove toggle — highlighting happens on the page with
-         the pen, not from here. Visibility-toggled like the Contents/Bookmarks panels; one e-ink
-         redraw, no animation. clickable=true so a tap on its own chrome is consumed, not fallen
-         through to dismiss the overlay. -->
+    <!-- ===== Type: a sheet the page reads over the top of =====
+
+         It was a full-screen surface. That was wrong in the one way this panel cannot afford: every
+         control in the TEXT tab re-paginates the chapter underneath it, and a sheet covering the
+         whole screen meant the reader chose a face and a size blind and only found out what they had
+         done after dismissing it. The thing being changed has to be visible while you change it.
+
+         So: a bottom sheet at a fixed height, with the live page above it. Tapping that page area
+         falls through to PageView, which closes the chrome — the same grammar as everywhere else.
+
+         And three tabs, because nine controls in one column was the defect the sideheads only
+         partly fixed. TEXT is what you judge by looking up at the page, so the sheet opens on it.
+         The bodies are siblings in a FrameLayout rather than one list being rebuilt: switching tabs
+         is then two visibility flips, which is one e-ink redraw and no measure pass on the rows
+         nobody is looking at.
+
+         Every control below is a CellRowView populated in SettingsSheet: the group border, the
+         dividers and the reversed fill all come from the widget, so this file carries only the
+         sections and their labels. -->
     <LinearLayout
-        android:id="@+id/highlights_panel"
+        android:id="@+id/settings_sheet"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@android:color/white"
+        android:layout_height="@dimen/type_sheet_text"
+        android:layout_gravity="bottom"
+        android:background="@color/paper"
         android:clickable="true"
         android:focusable="true"
         android:orientation="vertical"
         android:visibility="gone">
 
-        <!-- Header row: title + a top-right ✕ that closes this panel (back to the reading toolbar). -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/highlights_header"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="@dimen/panel_header_padding_v"
-                android:text="@string/reader_highlights"
-                android:textColor="@android:color/black"
-                android:textSize="20sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/highlights_close"
-                style="@style/PanelClose"
-                android:contentDescription="@string/panel_close_highlights" />
-
-        </LinearLayout>
-
+        <!-- Where the sheet meets the page. Same weight as the chrome's own edge, for the same
+             reason: this rule sits against prose, not against more furniture. -->
         <View
             android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="@android:color/black" />
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/highlights_list"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:scrollbars="vertical" />
+            android:layout_height="@dimen/rule_chrome"
+            android:background="@color/reader_rule" />
 
         <LinearLayout
-            android:id="@+id/highlights_empty"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="top|center_horizontal"
-            android:paddingHorizontal="24dp"
-            android:paddingTop="48dp"
-            android:visibility="gone">
+            android:layout_height="@dimen/header_height"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/margin_screen">
+
+            <ImageView
+                android:id="@+id/settings_close"
+                style="@style/Chevron"
+                android:contentDescription="@string/panel_close_type" />
 
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/highlights_empty"
-                android:textColor="@color/reader_text_primary"
-                android:textSize="@dimen/text_body" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                style="@style/Text.Mark"
+                android:layout_width="0dp"
+                android:layout_weight="1"
                 android:gravity="center"
-                android:text="@string/highlights_empty_hint"
-                android:textColor="@color/reader_text_secondary"
-                android:textSize="@dimen/text_meta" />
+                android:text="@string/reader_type" />
+
+            <!-- Balances the dismiss so the title sits optically centred. The book's name used to
+                 sit here; the book is now visible above the sheet, which says it better. -->
+            <View
+                android:layout_width="@dimen/tap_target_min"
+                android:layout_height="1dp" />
 
         </LinearLayout>
+
+        <dev.reader.ui.CellRowView
+            android:id="@+id/type_segment"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/cell_height"
+            android:layout_marginHorizontal="@dimen/margin_screen" />
+
+        <!-- HEAD: everything below belongs to the tab above it. -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/rule_head"
+            android:layout_marginHorizontal="@dimen/margin_screen"
+            android:layout_marginTop="@dimen/space"
+            android:background="@color/reader_rule" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <!-- ===== TEXT: the letters themselves ===== -->
+            <ScrollView
+                android:id="@+id/type_body_text"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:fillViewport="false"
+                android:overScrollMode="never">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingBottom="@dimen/space_loose"
+                    android:paddingHorizontal="@dimen/margin_screen">
+
+                    <dev.reader.ui.SideheadView
+                        android:id="@+id/type_head_face"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_loose" />
+
+                    <!-- Each cell is a specimen of the face it selects, set at the size the page is
+                         currently set to — so the picker answers "what would my book look like"
+                         rather than listing three names in a fourth typeface. -->
+                    <dev.reader.ui.CellRowView
+                        android:id="@+id/font_cells"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_snug" />
+
+                    <dev.reader.ui.SideheadView
+                        android:id="@+id/type_head_size"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_loose" />
+
+                    <!-- Text size, drawn as the letters it produces. "36px" was a developer's unit,
+                         and the − / + pair cost two taps and two full redraws per adjustment. -->
+                    <dev.reader.ui.CellRowView
+                        android:id="@+id/size_cells"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/cell_height"
+                        android:layout_marginTop="@dimen/space_snug" />
+
+                    <!-- The same sidehead grammar as the face and the size above — this tab's rows
+                         are all full-width specimens under sideheads, where PAGE and SCREEN are
+                         inline label + cells. One inline row here made TEXT the tab that mixed
+                         the two grammars. -->
+                    <dev.reader.ui.SideheadView
+                        android:id="@+id/type_head_spacing"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_loose" />
+
+                    <dev.reader.ui.CellRowView
+                        android:id="@+id/spacing_cells"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/cell_height"
+                        android:layout_marginTop="@dimen/space_snug" />
+
+                </LinearLayout>
+
+            </ScrollView>
+
+            <!-- ===== PAGE: how the block sits on it ===== -->
+            <ScrollView
+                android:id="@+id/type_body_page"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:fillViewport="false"
+                android:overScrollMode="never"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingBottom="@dimen/space_loose"
+                    android:paddingHorizontal="@dimen/margin_screen">
+
+                    <LinearLayout style="@style/TypeRow">
+
+                        <TextView
+                            style="@style/Text.Row.Label"
+                            android:text="@string/setting_margins" />
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/margin_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/TypeRow">
+
+                        <TextView
+                            style="@style/Text.Row.Label"
+                            android:text="@string/setting_justify" />
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/justify_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/TypeRow">
+
+                        <TextView
+                            style="@style/Text.Row.Label"
+                            android:text="@string/setting_hyphenation" />
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/hyphen_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <!-- This book -->
+                    <dev.reader.ui.SideheadView
+                        android:id="@+id/type_head_book"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_loose" />
+
+                    <!-- A consequence line only where the label genuinely cannot carry it. Publisher
+                         styling is the one setting nobody can guess from its name. -->
+                    <LinearLayout style="@style/TypeRow">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                style="@style/Text.Row"
+                                android:text="@string/setting_publisher_styling" />
+
+                            <TextView
+                                style="@style/Text.Figure"
+                                android:layout_marginTop="@dimen/space_hair"
+                                android:text="@string/setting_publisher_styling_note" />
+
+                        </LinearLayout>
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/publisher_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/TypeRow">
+
+                        <TextView
+                            style="@style/Text.Row.Label"
+                            android:text="@string/setting_heading_detection" />
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/headings_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </ScrollView>
+
+            <!-- ===== SCREEN: the panel, not the book ===== -->
+            <ScrollView
+                android:id="@+id/type_body_screen"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:fillViewport="false"
+                android:overScrollMode="never"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingBottom="@dimen/space_loose"
+                    android:paddingHorizontal="@dimen/margin_screen">
+
+                    <LinearLayout style="@style/TypeRow">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                style="@style/Text.Row"
+                                android:text="@string/setting_page_turns" />
+
+                            <TextView
+                                style="@style/Text.Figure"
+                                android:layout_marginTop="@dimen/space_hair"
+                                android:text="@string/setting_page_turns_note" />
+
+                        </LinearLayout>
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/turns_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <!-- Shown disabled rather than hidden when page turns are clean. Hiding a control
+                         teaches nothing; a disabled one teaches the relationship, and enabling it
+                         draws the border in and darkens the labels in a single redraw with nothing
+                         moving. -->
+                    <LinearLayout style="@style/TypeRow">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/refresh_freq_label"
+                                style="@style/Text.Row"
+                                android:text="@string/setting_flash_every" />
+
+                            <TextView
+                                android:id="@+id/refresh_freq_note"
+                                style="@style/Text.Figure"
+                                android:layout_marginTop="@dimen/space_hair"
+                                android:text="@string/setting_flash_every_note" />
+
+                        </LinearLayout>
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/refresh_freq_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/TypeRow">
+
+                        <TextView
+                            style="@style/Text.Row.Label"
+                            android:text="@string/setting_progress_bar" />
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/progress_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/TypeRow">
+
+                        <TextView
+                            style="@style/Text.Row.Label"
+                            android:text="@string/setting_rotation_lock" />
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/rotation_lock_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <!-- Previews -->
+                    <dev.reader.ui.SideheadView
+                        android:id="@+id/type_head_previews"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_loose" />
+
+                    <LinearLayout style="@style/TypeRow">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                style="@style/Text.Row"
+                                android:text="@string/setting_previews" />
+
+                            <TextView
+                                android:id="@+id/previews_generating_text"
+                                style="@style/Text.Figure"
+                                android:layout_marginTop="@dimen/space_hair"
+                                android:text="@string/setting_previews_note" />
+
+                        </LinearLayout>
+
+                        <dev.reader.ui.CellRowView
+                            android:id="@+id/previews_cells"
+                            android:layout_width="wrap_content"
+                            android:layout_height="@dimen/cell_height" />
+
+                    </LinearLayout>
+
+                    <!-- Destructive: below the last section, a caps label, the consequence stated in
+                         SLATE, and a bordered cell — the same shape as everything else, so it reads
+                         as a control rather than the stray text link it used to be. -->
+                    <LinearLayout
+                        android:id="@+id/previews_delete_row"
+                        style="@style/TypeRow"
+                        android:visibility="gone">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                style="@style/Text.Mark"
+                                android:text="@string/previews_delete_label" />
+
+                            <TextView
+                                style="@style/Text.Figure"
+                                android:layout_marginTop="@dimen/space_hair"
+                                android:text="@string/previews_delete_note" />
+
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/previews_delete"
+                            style="@style/Cell.Action"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:paddingHorizontal="@dimen/space_loose"
+                            android:text="@string/previews_delete_action" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </ScrollView>
+
+        </FrameLayout>
 
     </LinearLayout>
 

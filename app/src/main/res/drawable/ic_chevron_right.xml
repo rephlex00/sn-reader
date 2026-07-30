@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Forward a page of the shelf: ic_chevron_left mirrored, and the only place the app points this
+     way. Same viewport, same stroke — see ic_chevron_left for why this is drawn rather than typed. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="8dp"
+    android:height="18dp"
+    android:viewportWidth="8"
+    android:viewportHeight="18"
+    android:tint="@color/reader_text_primary">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M1,1 L7,9 L1,17"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.5" />
+</vector>

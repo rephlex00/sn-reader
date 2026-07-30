@@ -1,34 +1,223 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Spacing and type scale.
+  The type scale, the 8dp grid, and the three rule weights.
 
-  The reader's four panels (Contents, Bookmarks, Highlights, Display) are meant to read as one
-  surface the user learns once. They had drifted: the Display sheet's header sat at 12dp where the
-  other three sat at 16dp, and only Display put an 8dp gap under its rule. Naming the values is
-  what stops that happening again.
+  Sizes are sp; the panel runs at density 1.875, so 20sp is 37 device px. The design was drawn at
+  1404 x 1872 device px and the values below are that drawing divided through, snapped to the grid.
 
-  48dp is the tap-target floor everywhere, per Android's accessibility guidance and because this
-  device is used with a finger as often as a pen.
+  Two places where the drawings and the written system disagreed, and how they are resolved here:
+
+    * Row height. The drawings put a list row at 100px (53dp) and say so in as many words; the
+      written system says 72dp. The drawings win — they are the concrete reference and 13 rows of
+      contents beats 9 — but 53dp is not on the 8dp grid, so rows are 56dp. Same for the panel
+      header: drawn at 100px, set here at 56dp.
+    * Section rule. The drawings draw it at 2px, which is barely 1dp; the written system says 2dp
+      and separately forbids 1dp as invisible on glass. The written system wins: a hairline rule
+      disappearing on this panel is the exact defect the overhaul exists to fix.
+
+  48dp remains the tap-target floor everywhere, and every tappable dimension below clears it.
 -->
 <resources>
-    <!-- Panels -->
-    <dimen name="panel_edge_padding">16dp</dimen>
-    <dimen name="panel_header_padding_v">16dp</dimen>
-    <dimen name="panel_title_text">20sp</dimen>
-    <dimen name="panel_row_padding_v">12dp</dimen>
-    <dimen name="panel_divider_height">2dp</dimen>
 
-    <!-- Reader toolbar. Outer controls (Back, Aa) take the wider edge padding so the row is not
-         crowded against the screen edge; the inner group is tighter so it reads as a set. -->
-    <dimen name="toolbar_edge_padding_h">16dp</dimen>
-    <dimen name="toolbar_button_padding_h">12dp</dimen>
-    <dimen name="toolbar_padding_v">12dp</dimen>
+    <!-- ===== The grid ===== -->
 
-    <!-- Type -->
-    <dimen name="text_body">16sp</dimen>
-    <dimen name="text_title">18sp</dimen>
-    <dimen name="text_meta">13sp</dimen>
+    <!-- Every left and right edge in the app, including a panel header's dismiss glyph. -->
+    <dimen name="margin_screen">32dp</dimen>
+
+    <!-- The vertical module. Blocks of space are whole numbers of these. -->
+    <dimen name="module">24dp</dimen>
+
+    <dimen name="space_hair">4dp</dimen>
+    <dimen name="space_tight">8dp</dimen>
+    <dimen name="space_snug">12dp</dimen>
+    <dimen name="space">16dp</dimen>
+    <dimen name="space_loose">24dp</dimen>
+    <dimen name="space_wide">32dp</dimen>
+    <dimen name="space_section">48dp</dimen>
+    <dimen name="space_title">64dp</dimen>
+
+    <!-- ===== Rules. All INK; a lighter rule is not a quieter rule, it is an absent one. ===== -->
+
+    <!-- Where a surface meets another surface: chrome against page, the foot of a panel. One per
+         edge, and the one boundary in the app that must never be ambiguous. -->
+    <dimen name="rule_edge">6dp</dimen>
+
+    <!-- The reader chrome's two edges, and only those. Every other EDGE rule separates one piece of
+         furniture from another; these two sit directly against the book's own page, and at 6dp they
+         read as bars the text has to look past rather than as the boundary of the chrome. The
+         boundary is still unambiguous at this weight — the chrome above it is a paper bar full of
+         controls, not another column of prose. -->
+    <dimen name="rule_chrome">2dp</dimen>
+
+    <!-- Under a panel header or a segmented header: "everything below belongs to this". -->
+    <dimen name="rule_head">4dp</dimen>
+
+    <!-- Between kinds of content inside a surface, carrying a tracked caps label on it. -->
+    <dimen name="rule_section">2dp</dimen>
+
+    <!-- ===== Structure ===== -->
+
+    <!-- Panel and library header. Drawn at 53dp, snapped up to the grid. -->
+    <dimen name="header_height">56dp</dimen>
+
+    <!-- A single-line list row: contents, settings, library list. -->
+    <dimen name="row_height">56dp</dimen>
+
+    <!-- A two-line row: a mark with its opening words, a library row with author and place. -->
+    <dimen name="row_height_two_line">80dp</dimen>
+
+    <!-- The scrubber strip. Hardware-learned geometry — the trusted-lift gesture grammar was
+         tuned against this panel's firmware at this height. Do not tidy it into the grid. -->
+    <dimen name="scrubber_strip_height">88dp</dimen>
+
+    <!-- The reader's two chrome rows: destinations, then the running head. -->
+    <dimen name="chrome_row_height">56dp</dimen>
+    <dimen name="chrome_running_head_height">40dp</dimen>
+
+    <!-- ===== The cell — one shape for every choice ===== -->
+
+    <dimen name="cell_height">48dp</dimen>
+    <dimen name="cell_min_width">88dp</dimen>
+    <dimen name="cell_border">2dp</dimen>
+    <dimen name="cell_padding_h">16dp</dimen>
+
+    <!-- ===== Type ===== -->
+
+    <!-- Empty-state statement, the library half-title. One per screen, at most. -->
+    <dimen name="text_title">38sp</dimen>
+    <!-- A book's name on a library list row; a panel's subject line. -->
+    <dimen name="text_head">30sp</dimen>
+    <!-- Cover captions in the grid; a quoted note. -->
+    <dimen name="text_lead">24sp</dimen>
+    <!-- Every primary list row, and a cell's label. -->
+    <dimen name="text_row">20sp</dimen>
+    <!-- The second line of a two-line row. The smallest size MIST may use. -->
+    <dimen name="text_sub">17sp</dimen>
+    <!-- Figures and metadata, SLATE, always tabular. The floor for SLATE. -->
+    <dimen name="text_figure">15sp</dimen>
+    <!-- Tracked caps: panel titles, sideheads, running heads, segment and cell labels. IRON.
+         Uppercase because Literata has no true small caps. -->
+    <dimen name="text_mark">13sp</dimen>
+
+    <!-- The tracking on every caps label. Android takes letterSpacing in ems. -->
+    <item name="tracking_caps" format="float" type="dimen">0.20</item>
+
+    <!-- The current-place mark: a block in the left margin, next to a bold row. Three signals
+         mark "here", because greyscale has no fourth. -->
+    <dimen name="place_mark_width">6dp</dimen>
+    <dimen name="place_mark_height">24dp</dimen>
+
+    <!-- Leader dots: IRON, at this pitch, only where a row points to a place. -->
+    <dimen name="leader_dot_size">2dp</dimen>
+    <dimen name="leader_dot_pitch">8dp</dimen>
+
+    <!-- The boards' own outer edge. The grid's items carry this as their horizontal padding, and
+         the half-title's rule runs to it too, so the rule underlines the shelf rather than stopping
+         short of the books it heads. -->
+    <dimen name="shelf_edge">8dp</dimen>
+
+    <!-- The inset inside a glyph's 48dp tap target. 9dp leaves a 30dp mark: the tap target is
+         unchanged, the glyph itself is a quarter larger than the 24dp it started at. -->
+    <dimen name="glyph_inset">9dp</dimen>
+
+    <!-- The box a cover is bottom-aligned inside. Fixed, so every board in a row sits on the same
+         line and the titles beneath them start at the same height — covers differ in aspect, and
+         letting each one set its own baseline left the row's captions stepping up and down.
+
+         Sized so three rows of four fill a page: at 210dp a board plus its one-line caption and the
+         gap under it comes to 278dp, and three of those is the 834dp the shelf has to give. -->
+    <dimen name="cover_box_height">210dp</dimen>
+
+    <!-- A board's caption. Smaller than a list row's, because a cover is already carrying the
+         book's identity and the words under it are only confirming it.
+
+         The author stays at the figure size rather than dropping with the title: SLATE's floor is
+         15sp — below that it washes out under reflected light, which is the whole reason the
+         palette has a floor — and an author set in a darker grey to go smaller would end up
+         louder than the title it sits under. -->
+    <dimen name="text_board_title">15sp</dimen>
+
+    <!-- A cover's height is the artwork's own, within these bounds. The maximum is what makes two
+         rows of boards fit a page exactly; the minimum stops a wide, short scan collapsing to a
+         strip that no longer reads as a book. -->
+
+
+    <!-- The air under each board. -->
+    <dimen name="board_gap">16dp</dimen>
+
+    <!-- How much of the screen Type takes, measured from the bottom. The rest is the page it is
+         changing, left live: every control in the TEXT tab re-paginates the chapter under it, and a
+         full-screen sheet meant the reader chose a face and a size blind and then found out.
+
+         One height per tab, set in SettingsSheet.showTab, rather than one height for the sheet. A
+         single height has to clear the tallest tab, which left TEXT — the tab whose whole point is
+         watching the page — sitting under 400dp of blank paper that could have been text. Each
+         value is its tab's content plus a little air, measured on the panel; a tab that outgrows
+         its value scrolls rather than clipping, which is the right failure.
+
+         TEXT is deliberately the shortest: it is the only tab you judge by looking up.
+
+         No values-land twin, and that is not an oversight — a row is the same height in both
+         orientations (landscape only makes it wider), so these were measured once and hold for
+         both. Landscape simply has less page left over, which is the honest trade for a 749dp-tall
+         screen.
+
+         Each value is its tab's content plus ONE MODULE of air at the foot — measured as content
+         31/17/42dp of air respectively before this pass, i.e. three different feet on one sheet. -->
+    <dimen name="type_sheet_text">464dp</dimen>
+    <dimen name="type_sheet_page">520dp</dimen>
+    <dimen name="type_sheet_screen">524dp</dimen>
 
     <!-- The minimum any tappable thing may be. -->
     <dimen name="tap_target_min">48dp</dimen>
+
+    <!-- ===== Reach: what a glyph control is actually worth aiming at =====
+
+         48dp is Android's floor, written for a phone held a foot from the face and tapped with a
+         thumb that can see where it is going. This is a 300dpi slate held at arm's length, tapped
+         by a finger that has just been resting on the bezel, on a digitizer that drops light
+         contacts outright (the same pressure behaviour the scrubber's trusted-lift grammar exists
+         to survive). At the floor, every ‹ and › in the app was a coin-toss.
+
+         Two changes, and the second matters more than the first:
+
+           * A single-glyph control gets 56dp rather than 48dp. Not larger still, because these sit
+             in 56dp rows and a target taller than its row starts stealing from its neighbours.
+           * A control at a screen edge REACHES THAT EDGE. Every one of these sits inside a row
+             padded to margin_screen, so the outermost 32dp of glass — the exact strip a thumb
+             lands on when you aim at a corner — was dead. The idiom that reclaims it, applied in
+             the Chevron style and the trailing words beside it:
+
+                 layout_width  = tap_target_glyph_edge   (56 + 32)
+                 layout_margin{Start,End} = -edge_reach  (pull the box out through the padding)
+                 padding{Start,End}       =  edge_reach  (put the INK back where it was)
+
+             The net layout footprint is unchanged — width + margin = 88 - 32 = 56 — so no sibling
+             moves and the drawn glyph does not shift by a pixel. Only the hit box grows, out into
+             the margin that was doing nothing. -->
+    <dimen name="tap_target_glyph">56dp</dimen>
+    <dimen name="edge_reach">32dp</dimen>
+
+    <!-- ===== The chevron =====
+
+         How tall the drawn ‹ / › mark is (ic_chevron_left). ONE size everywhere — the reader's way
+         out, every panel's dismiss, the shelf's page turn. The old system gave the reader's a
+         larger size than a panel's, but that was compensation for a weak glyph: a quotation mark at
+         label size "was a piece of punctuation". A drawn chevron is not punctuation at any size,
+         and the system's own rule — one mark, in one place, learned once — is worth more than the
+         emphasis. At 28dp the mark is 12.4 x 28dp, against the 8 x 14dp the old ‹ managed.
+
+         The two paddings place it inside the 88 x 56dp target (see "Reach" above). Vertical is the
+         slack halved. Inboard is what is left after the mark's box: 88 - 32 - 14. The 14dp is the
+         mark's own width rounded up, so paddingStart can be edge_reach exactly and the ink lands on
+         the screen margin — the same line CONTENTS ends on at the other end of the row. -->
+    <dimen name="chevron_mark">28dp</dimen>
+    <dimen name="chevron_pad_v">14dp</dimen>
+    <dimen name="chevron_pad_inboard">42dp</dimen>
+    <!-- edge_reach negated. Its own value because XML cannot negate a dimension reference; the
+         two must always be equal and opposite. -->
+    <dimen name="edge_reach_pull">-32dp</dimen>
+    <!-- tap_target_glyph + edge_reach. Kept as its own value because XML cannot add two dimens;
+         if either term above changes, change this one with it. -->
+    <dimen name="tap_target_glyph_edge">88dp</dimen>
 </resources>

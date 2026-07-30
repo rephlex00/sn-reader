@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stable ids naming the library's actions.
+
+  These were the item ids of an overflow menu. The menu is gone — everything it hid is a visible
+  cell in the shelf's header now — but the *actions* are unchanged, and an id is still the stable
+  way to name one: `sortOrderForMenuItemId` and its siblings map them to the enums they select, and
+  the library tests drive `selectMenuAction` with them so they assert on behaviour rather than on
+  which cell index happens to sit where.
+
+  Declared here rather than inferred from a layout, so nothing has to keep a dead menu resource
+  alive just to mint them.
+-->
+<resources>
+    <item name="sort_title" type="id" />
+    <item name="sort_author" type="id" />
+    <item name="sort_recently_added" type="id" />
+    <item name="sort_recently_opened" type="id" />
+
+    <item name="filter_all" type="id" />
+    <item name="filter_not_started" type="id" />
+    <item name="filter_in_progress" type="id" />
+    <item name="filter_finished" type="id" />
+
+    <item name="view_tiles" type="id" />
+    <item name="view_list" type="id" />
+
+    <item name="action_flatten" type="id" />
+    <item name="action_settings" type="id" />
+    <item name="action_search" type="id" />
+</resources>

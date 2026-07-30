@@ -1,37 +1,58 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One bookmark row: a label that fills the width (tap to jump) and a trailing ✕ (tap to delete).
-     Monochrome, large tap targets, no ripple/animation. Black on white, e-ink-crisp. -->
+<!-- One mark: the chapter and its whole-book figure on the first line, the page's opening words
+     under them. The excerpt is what makes a list of marks navigable — "Chapter 3" alone names a
+     place; the words say which moment. It is captured at save time (see BookmarkEntity.excerpt)
+     and GONE when absent: comic marks and marks made before the column existed stay one line.
+
+     No leaders here, deliberately — including now that Contents rows carry them. Leaders are the
+     app's device for "this bare name points at that place", and a mark row is not a bare name any
+     more: its excerpt line already anchors it. The Notes rows make the same choice.
+
+     No trailing ✕ either. One on every row would put forty pictograms on a surface built to avoid
+     them, and it sat a finger's width from the panel's own dismiss — a mis-tap destroyed a mark
+     with no confirmation and no undo. Removal is a long press, explained once by the "Remove"
+     footer at the end of the list.
+
+     e-ink: no ripple, no animation, whole row is the tap target. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:gravity="center_vertical">
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="@dimen/row_height"
+    android:orientation="vertical"
+    android:paddingVertical="@dimen/space_tight">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:baselineAligned="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/bookmark_label"
+            style="@style/Text.Row"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1" />
+
+        <TextView
+            android:id="@+id/bookmark_percent"
+            style="@style/Text.Figure"
+            android:layout_marginStart="@dimen/space" />
+
+    </LinearLayout>
 
     <TextView
-        android:id="@+id/bookmark_label"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:clickable="true"
-        android:focusable="true"
-        android:minHeight="48dp"
-        android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp"
-        android:textColor="@android:color/black"
-        android:textSize="16sp" />
-
-    <ImageView
-        android:id="@+id/bookmark_delete"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:clickable="true"
-        android:focusable="true"
-        android:minWidth="48dp"
-        android:minHeight="48dp"
-        android:paddingHorizontal="16dp"
-        android:scaleType="fitCenter"
-        android:src="@drawable/ic_delete"
-        android:contentDescription="@string/bookmark_delete" />
+        android:id="@+id/bookmark_excerpt"
+        style="@style/Text.Sub"
+        android:layout_width="match_parent"
+        android:layout_marginTop="@dimen/space_hair"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:visibility="gone" />
 
 </LinearLayout>

@@ -288,9 +288,9 @@ class ReaderActivityTest {
     // -- Plan 4 Task 2: the reading overlay (the way out) --------------------------------------
 
     @Test
-    fun `scrubberText reads chapter-relative, one-based`() {
-        assertThat(scrubberText(0, 5)).isEqualTo("page 1 of 5 · 4 left in chapter")
-        assertThat(scrubberText(4, 5)).isEqualTo("page 5 of 5 · 0 left in chapter")
+    fun `scrubberText reads a one-based chapter page and the whole-book percent`() {
+        assertThat(scrubberText(0, 5, 12)).isEqualTo("page 1 of 5 · 12%")
+        assertThat(scrubberText(4, 5, 100)).isEqualTo("page 5 of 5 · 100%")
     }
 
     @Test
@@ -362,11 +362,12 @@ class ReaderActivityTest {
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         activity.findViewById<View>(R.id.settings_button).performClick()
 
-        // Frequency row hidden until faster mode is on.
-        assertThat(activity.findViewById<View>(R.id.refresh_frequency_row).visibility).isEqualTo(View.GONE)
-        activity.findViewById<View>(R.id.toggle_faster_turns).performClick()
-        assertThat(activity.findViewById<View>(R.id.refresh_frequency_row).visibility).isEqualTo(View.VISIBLE)
-        activity.findViewById<View>(R.id.refresh_freq_3).performClick() // N = 3
+        // The flash-interval cells are DISABLED until faster mode is on, not hidden: hiding a
+        // control teaches nothing, while a disabled one teaches the relationship.
+        assertThat(activity.findViewById<View>(R.id.refresh_freq_cells).isEnabled).isFalse()
+        cellAt(activity, R.id.turns_cells, 1).performClick() // Faster
+        assertThat(activity.findViewById<View>(R.id.refresh_freq_cells).isEnabled).isTrue()
+        cellAt(activity, R.id.refresh_freq_cells, 0).performClick() // N = 3
 
         val calls = intArrayOf(0)
         pageViewOf(activity).epd = object : EpdRefresher {
@@ -541,15 +542,14 @@ class ReaderActivityTest {
         // differently from testRenderConfig), read straight off the live readout.
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         val opened = scrubberTextOf(activity)
-        assertThat(opened).matches("""page 1 of \d+ · \d+ left in chapter""")
+        assertThat(opened).matches("""page 1 of \d+ · \d+%""")
         val y = Regex("""of (\d+)""").find(opened)!!.groupValues[1].toInt()
-        assertThat(opened).isEqualTo(scrubberText(0, y))
 
         // Hide, then turn a page (turns only happen while the overlay is hidden). The readout must
         // reflect the new page the next time the overlay opens.
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         pageViewOf(activity).onTap!!.invoke(TapZone.NEXT)
-        assertThat(scrubberTextOf(activity)).isEqualTo(scrubberText(1, y))
+        assertThat(scrubberTextOf(activity)).startsWith("page 2 of $y · ")
     }
 
     @Test
@@ -596,18 +596,20 @@ class ReaderActivityTest {
 
         activity.findViewById<View>(R.id.settings_button).performClick()
         assertThat(sheet.visibility).isEqualTo(View.VISIBLE)
-        // Reflects current (default) values: the size readout and each toggle switch read the prefs.
-        assertThat(activity.findViewById<TextView>(R.id.size_value).text.toString()).isEqualTo("34px")
-        assertThat(activity.findViewById<ToggleSwitchView>(R.id.toggle_justify_switch).checked).isTrue()
+        // Reflects current (default) values: the chosen cell in each group reads the prefs. The
+        // default 34px is the middle size step, and justification defaults on (the first cell).
+        assertThat(cellsOf(activity, R.id.size_cells).chosen()).isEqualTo(2)
+        assertThat(cellsOf(activity, R.id.justify_cells).chosen()).isEqualTo(0)
 
         activity.findViewById<View>(R.id.settings_button).performClick()
         assertThat(sheet.visibility).isEqualTo(View.GONE)
     }
 
     @Test
-    fun `each panel's close button hides that panel and leaves the reading toolbar up`() {
-        // The device has no hardware Back, so every panel/sheet must be dismissible on-screen. Each
-        // top-right ✕ peels its own layer back to the bare overlay (not out of the chrome).
+    fun `each surface's dismiss hides that surface and leaves the reading toolbar up`() {
+        // The device has no hardware Back, so every surface must be dismissible on-screen. Each ‹
+        // peels its own layer back to the bare overlay (not out of the chrome), and sits at the
+        // same screen margin on both surfaces so it is learned once.
         clearReaderPrefs()
         val controller = openedMultiPage()
         val activity = controller.get()
@@ -615,9 +617,7 @@ class ReaderActivityTest {
 
         data class CloseCase(val openId: Int, val closeId: Int, val panelId: Int)
         val cases = listOf(
-            CloseCase(R.id.contents_button, R.id.toc_close, R.id.toc_panel),
-            CloseCase(R.id.bookmarks_button, R.id.bookmarks_close, R.id.bookmarks_panel),
-            CloseCase(R.id.highlights_button, R.id.highlights_close, R.id.highlights_panel),
+            CloseCase(R.id.contents_button, R.id.back_matter_close, R.id.back_matter_panel),
             CloseCase(R.id.settings_button, R.id.settings_close, R.id.settings_sheet),
         )
         for (c in cases) {
@@ -632,21 +632,22 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `bumping the text size writes the pref, re-paginates, and keeps the reader on a valid page`() {
+    fun `choosing a text size writes the pref, re-paginates, and keeps the reader on a valid page`() {
         clearReaderPrefs()
         val controller = openedMultiPage()
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         activity.findViewById<View>(R.id.settings_button).performClick()
 
-        activity.findViewById<View>(R.id.size_plus).performClick()
+        cellAt(activity, R.id.size_cells, 3).performClick()
 
-        // The pref moved one step (34 -> 36) and the readout followed.
-        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).textSizePx).isEqualTo(36f)
-        assertThat(activity.findViewById<TextView>(R.id.size_value).text.toString()).isEqualTo("36px")
+        // A size is now a direct choice rather than a ±2px step: the fourth cell IS 39px, and the
+        // fill moves to it. No readout to check — the cell is drawn at the size it selects.
+        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).textSizePx).isEqualTo(39f)
+        assertThat(cellsOf(activity, R.id.size_cells).chosen()).isEqualTo(3)
         // The chapter re-paginated live without crashing; the reader is still on a valid page and the
         // sheet stayed open.
-        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+ left in chapter""")
+        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+%""")
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
     }
 
@@ -660,60 +661,58 @@ class ReaderActivityTest {
         // Fresh install opens on the default face.
         assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).fontFamily).isEqualTo("literata")
 
-        activity.findViewById<View>(R.id.font_bitter).performClick()
+        cellAt(activity, R.id.font_cells, 1).performClick()
 
         assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).fontFamily).isEqualTo("bitter")
         // Re-paginated live without crashing; still on a valid page, sheet still open.
-        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+ left in chapter""")
+        assertThat(scrubberTextOf(activity)).matches("""page \d+ of \d+ · \d+%""")
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
     }
 
     @Test
-    fun `selecting a font marks only that option and clears the previous selection`() {
+    fun `selecting a font fills only that cell and clears the previous one`() {
         // Regression: the selected option used to be marked by bolding it, but bold could not be
         // stripped back off a bundled font's already-bold instance, so switching fonts left the
-        // previous option still marked and every font eventually looked selected. The boxed-outline
-        // background must move to exactly the active option and clear from the others.
+        // previous option still marked and every font eventually looked selected. The reversed fill
+        // must move to exactly the active cell and clear from the others.
         clearReaderPrefs()
         val controller = openedMultiPage()
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         activity.findViewById<View>(R.id.settings_button).performClick()
 
-        // Default is literata: only its option is marked.
-        assertThat(activity.findViewById<View>(R.id.font_literata).background).isNotNull()
-        assertThat(activity.findViewById<View>(R.id.font_bitter).background).isNull()
-        assertThat(activity.findViewById<View>(R.id.font_atkinson).background).isNull()
+        // Default is literata: the first cell is filled, and exactly one ever is.
+        assertThat(cellsOf(activity, R.id.font_cells).chosen()).isEqualTo(0)
+        assertThat(filledCells(activity, R.id.font_cells)).isEqualTo(1)
 
-        activity.findViewById<View>(R.id.font_atkinson).performClick()
+        cellAt(activity, R.id.font_cells, 2).performClick()
 
-        // Selection MOVED: atkinson marked, literata cleared (the bug left literata marked too).
-        assertThat(activity.findViewById<View>(R.id.font_atkinson).background).isNotNull()
-        assertThat(activity.findViewById<View>(R.id.font_literata).background).isNull()
-        assertThat(activity.findViewById<View>(R.id.font_bitter).background).isNull()
+        // The fill MOVED: atkinson filled, literata cleared (the bug left literata marked too).
+        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).fontFamily).isEqualTo("atkinson")
+        assertThat(cellsOf(activity, R.id.font_cells).chosen()).isEqualTo(2)
+        assertThat(filledCells(activity, R.id.font_cells)).isEqualTo(1)
 
-        activity.findViewById<View>(R.id.font_bitter).performClick()
+        cellAt(activity, R.id.font_cells, 1).performClick()
 
-        assertThat(activity.findViewById<View>(R.id.font_bitter).background).isNotNull()
-        assertThat(activity.findViewById<View>(R.id.font_literata).background).isNull()
-        assertThat(activity.findViewById<View>(R.id.font_atkinson).background).isNull()
+        assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).fontFamily).isEqualTo("bitter")
+        assertThat(cellsOf(activity, R.id.font_cells).chosen()).isEqualTo(1)
+        assertThat(filledCells(activity, R.id.font_cells)).isEqualTo(1)
     }
 
     @Test
-    fun `flipping the publisher-styling toggle writes the pref and updates its switch`() {
+    fun `flipping publisher styling writes the pref and moves the fill to OFF`() {
         clearReaderPrefs()
         val controller = openedMultiPage()
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         activity.findViewById<View>(R.id.settings_button).performClick()
-        val switch = activity.findViewById<ToggleSwitchView>(R.id.toggle_publisher_switch)
-        assertThat(switch.checked).isTrue()
+        // ON is always the first cell, so a filled left-hand cell reads as "this is on".
+        assertThat(cellsOf(activity, R.id.publisher_cells).chosen()).isEqualTo(0)
 
-        // The whole row is the tap target; performClick on it flips the pref and re-renders.
-        activity.findViewById<View>(R.id.toggle_publisher).performClick()
+        cellAt(activity, R.id.publisher_cells, 1).performClick()
 
         assertThat(ReaderPrefs(RuntimeEnvironment.getApplication()).publisherStyling).isFalse()
-        assertThat(activity.findViewById<ToggleSwitchView>(R.id.toggle_publisher_switch).checked).isFalse()
+        assertThat(cellsOf(activity, R.id.publisher_cells).chosen()).isEqualTo(1)
     }
 
     @Test
@@ -832,13 +831,13 @@ class ReaderActivityTest {
         val controller = openedWithToc()
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
-        val panel = activity.findViewById<View>(R.id.toc_panel)
+        val panel = activity.findViewById<View>(R.id.back_matter_panel)
         assertThat(panel.visibility).isEqualTo(View.GONE)
 
         activity.findViewById<View>(R.id.contents_button).performClick()
 
         assertThat(panel.visibility).isEqualTo(View.VISIBLE)
-        assertThat(activity.findViewById<View>(R.id.toc_empty).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.back_matter_empty).visibility).isEqualTo(View.GONE)
         val list = activity.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.toc_list)
         assertThat(list.visibility).isEqualTo(View.VISIBLE)
         // tocEpub's nav declares three chapters; the reader opens on chapter 0.
@@ -862,7 +861,7 @@ class ReaderActivityTest {
 
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         activity.findViewById<View>(R.id.contents_button).performClick()
-        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.findViewById<View>(R.id.back_matter_panel).visibility).isEqualTo(View.VISIBLE)
 
         assertThat(activity.isChapterCachedForTest(2)).isFalse()
     }
@@ -889,7 +888,7 @@ class ReaderActivityTest {
         idleUntil { rowFor(app, book.path)!!.spineIndex == 1 }
         assertThat(rowFor(app, book.path)!!.spineIndex).isEqualTo(1)
         assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
-        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.back_matter_panel).visibility).isEqualTo(View.GONE)
     }
 
     @Test
@@ -898,11 +897,11 @@ class ReaderActivityTest {
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         activity.findViewById<View>(R.id.contents_button).performClick()
-        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.findViewById<View>(R.id.back_matter_panel).visibility).isEqualTo(View.VISIBLE)
 
         // First Back: the TOC panel only.
         activity.onBackPressedDispatcher.onBackPressed()
-        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.back_matter_panel).visibility).isEqualTo(View.GONE)
         assertThat(overlayOf(activity).visibility).isEqualTo(View.VISIBLE)
         assertThat(activity.isFinishing).isFalse()
 
@@ -926,11 +925,11 @@ class ReaderActivityTest {
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
         activity.findViewById<View>(R.id.contents_button).performClick()
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.GONE)
-        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.findViewById<View>(R.id.back_matter_panel).visibility).isEqualTo(View.VISIBLE)
 
         // Contents open, then Aa: the sheet replaces the panel.
         activity.findViewById<View>(R.id.settings_button).performClick()
-        assertThat(activity.findViewById<View>(R.id.toc_panel).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.back_matter_panel).visibility).isEqualTo(View.GONE)
         assertThat(activity.findViewById<View>(R.id.settings_sheet).visibility).isEqualTo(View.VISIBLE)
     }
 
@@ -950,18 +949,22 @@ class ReaderActivityTest {
         idleUntil { scrubberTextOf(activity).isNotEmpty() }
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
 
-        // Open the bookmarks panel; nothing bookmarked yet -> empty view, toggle says "Bookmark".
+        // Open marks; nothing marked yet -> the cell reads "Mark this page".
         val toggle = overlayOf(activity).findViewById<android.widget.TextView>(R.id.bookmark_toggle)
-        overlayOf(activity).findViewById<View>(R.id.bookmarks_button).performClick()
-        // The async refresh sets the toggle label when it completes; wait for that.
+        overlayOf(activity).findViewById<View>(R.id.contents_button).performClick()
+        showSegment(activity, 1) // MARKS
+        // The async refresh sets the cell's label when it completes; wait for that.
         idleUntil { toggle.text.isNotBlank() }
-        assertThat(overlayOf(activity).findViewById<View>(R.id.bookmarks_empty).visibility).isEqualTo(View.VISIBLE)
-        assertThat(toggle.text.toString()).contains("Bookmark this page")
+        // Marks keeps its own body when the list is empty rather than showing the shared empty
+        // state — the "Mark this page" cell at its head is the very thing that fixes the
+        // emptiness, so replacing it with an empty state would hide the way out of it.
+        assertThat(overlayOf(activity).findViewById<View>(R.id.back_matter_empty).visibility).isEqualTo(View.GONE)
+        assertThat(overlayOf(activity).findViewById<View>(R.id.marks_body).visibility).isEqualTo(View.VISIBLE)
+        assertThat(toggle.text.toString()).isEqualTo("Mark this page")
 
-        // Tap the toggle: bookmarks the current page, list now non-empty, toggle flips to "Remove".
+        // Tap the cell: marks the current page, list now non-empty, cell flips to "Remove".
         toggle.performClick()
         idleUntil { toggle.text.toString().contains("Remove") }
-        assertThat(overlayOf(activity).findViewById<View>(R.id.bookmarks_empty).visibility).isEqualTo(View.GONE)
         assertThat(overlayOf(activity).findViewById<View>(R.id.bookmarks_list).visibility).isEqualTo(View.VISIBLE)
     }
 
@@ -971,7 +974,7 @@ class ReaderActivityTest {
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
         val before = scrubberTextOf(activity)
-        overlayOf(activity).findViewById<View>(R.id.bookmarks_button).performClick()
+        overlayOf(activity).findViewById<View>(R.id.contents_button).performClick()
         assertThat(scrubberTextOf(activity)).isEqualTo(before)
     }
 
@@ -992,7 +995,8 @@ class ReaderActivityTest {
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
 
         val toggle = overlayOf(activity).findViewById<android.widget.TextView>(R.id.bookmark_toggle)
-        overlayOf(activity).findViewById<View>(R.id.bookmarks_button).performClick()
+        overlayOf(activity).findViewById<View>(R.id.contents_button).performClick()
+        showSegment(activity, 1) // MARKS
         idleUntil { toggle.text.isNotBlank() }
 
         // Tap the toggle: the handler must complete (no crash) without inserting a bookmark, and
@@ -1114,7 +1118,7 @@ class ReaderActivityTest {
 
         // A toolbar tap is NOT routed through PageView, so opening a panel must itself hide the chip —
         // otherwise it floats over the panel pointing at a now-hidden highlight.
-        activity.findViewById<View>(R.id.highlights_button).performClick()
+        activity.findViewById<View>(R.id.contents_button).performClick()
         assertThat(activity.deleteChipForTest.visibility).isEqualTo(View.GONE)
     }
 
@@ -1169,13 +1173,14 @@ class ReaderActivityTest {
     fun `the Highlights panel lists highlights, jumps on tap, and deletes with the empty state`() {
         val (controller, path) = openedMultiPageInLibrary()
         val activity = controller.get()
-        val panel = activity.findViewById<View>(R.id.highlights_panel)
-        val empty = activity.findViewById<View>(R.id.highlights_empty)
+        val panel = activity.findViewById<View>(R.id.back_matter_panel)
+        val empty = activity.findViewById<View>(R.id.back_matter_empty)
         val list = activity.findViewById<RecyclerView>(R.id.highlights_list)
 
         // Open the panel with nothing highlighted -> the empty state, list hidden.
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
-        activity.findViewById<View>(R.id.highlights_button).performClick()
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        showSegment(activity, 2) // NOTES
         idleUntil { empty.visibility == View.VISIBLE }
         assertThat(panel.visibility).isEqualTo(View.VISIBLE)
         assertThat(list.adapter!!.itemCount).isEqualTo(0)
@@ -1184,22 +1189,24 @@ class ReaderActivityTest {
         // reload) so it lists the new row.
         activity.commitHighlight(0, 12)
         idleUntil { highlightsOf(path).size == 1 }
-        activity.findViewById<View>(R.id.highlights_button).performClick() // close
-        activity.findViewById<View>(R.id.highlights_button).performClick() // reopen + refresh
-        idleUntil { list.adapter!!.itemCount == 1 }
+        activity.findViewById<View>(R.id.contents_button).performClick() // close
+        activity.findViewById<View>(R.id.contents_button).performClick() // reopen + refresh
+        // Two adapter items for one note: the chapter sidehead above it, then the note itself.
+        // The chapter is said once per group now, rather than repeated on every row.
+        idleUntil { list.adapter!!.itemCount == 2 }
         assertThat(empty.visibility).isEqualTo(View.GONE)
 
         // Tapping the row jumps to its page and closes the chrome down to the page.
-        clickHighlightBody(activity, position = 0)
+        clickHighlightBody(activity, noteIndex = 0)
         idleUntil { overlayOf(activity).visibility == View.GONE }
         assertThat(overlayOf(activity).visibility).isEqualTo(View.GONE)
         assertThat(panel.visibility).isEqualTo(View.GONE)
 
         // Reopen and delete via the row's ✕: the store empties and the empty state returns.
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY)
-        activity.findViewById<View>(R.id.highlights_button).performClick()
-        idleUntil { list.adapter!!.itemCount == 1 }
-        clickHighlightDelete(activity, position = 0)
+        activity.findViewById<View>(R.id.contents_button).performClick()
+        idleUntil { list.adapter!!.itemCount == 2 }
+        clickHighlightDelete(activity, noteIndex = 0)
         idleUntil { highlightsOf(path).isEmpty() }
         assertThat(highlightsOf(path)).isEmpty()
         idleUntil { empty.visibility == View.VISIBLE }
@@ -1237,7 +1244,7 @@ class ReaderActivityTest {
         // policy targets chapter 1 — the chapter the next boundary turn would cross into.
         val pages = pageCountOf(scrubberTextOf(activity))
         repeat(pages - 1) { pageViewOf(activity).onTap!!.invoke(TapZone.NEXT) }
-        assertThat(scrubberTextOf(activity)).isEqualTo(scrubberText(pages - 1, pages))
+        assertThat(scrubberTextOf(activity)).startsWith("page $pages of $pages · ")
 
         // The background prefetch paginates chapter 1 off the main thread and publishes it; idle
         // until it lands as a cache hit — proving the wiring computes AND publishes the neighbour.
@@ -1293,7 +1300,7 @@ class ReaderActivityTest {
         val before = scrubberTextOf(activity)
         assertThat(ReaderPrefs(activity).showProgressBar).isTrue()
 
-        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick()
+        flipCells(activity, R.id.progress_cells)
 
         assertThat(ReaderPrefs(activity).showProgressBar).isFalse()
         assertThat(pageViewOf(activity).progress).isNull()
@@ -1302,7 +1309,7 @@ class ReaderActivityTest {
 
         // Toggling a second time must restore a real fraction and flip the pref back — not leave
         // the bar permanently hidden after one off/on cycle.
-        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick()
+        flipCells(activity, R.id.progress_cells)
 
         assertThat(ReaderPrefs(activity).showProgressBar).isTrue()
         assertThat(pageViewOf(activity).progress).isNotNull()
@@ -1315,10 +1322,10 @@ class ReaderActivityTest {
         val activity = controller.get()
         pageViewOf(activity).onTap!!.invoke(TapZone.TOGGLE_OVERLAY) // show the overlay
 
-        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick() // off
+        flipCells(activity, R.id.progress_cells) // off
         assertThat(pageViewOf(activity).chapterEndForTest).isNull()
 
-        overlayOf(activity).findViewById<View>(R.id.toggle_progress).performClick() // back on
+        flipCells(activity, R.id.progress_cells) // back on
 
         // showPage always passes both arguments to setProgress; the toggle used to default
         // chapterEndFraction to null, leaving the "pages left in chapter" tick missing until the
@@ -1732,6 +1739,39 @@ class ReaderActivityTest {
     // -- Task 5: the jump back-stack -----------------------------------------------------------
 
     @Test
+    fun `the chrome's way out reaches the screen's own edge, and its glyph has not moved`() {
+        // The reader's ‹ is the only way out of a book on a device with no hardware Back, and it
+        // sat in a 48dp box with the row's 32dp margin as dead glass beside it — so a tap at the
+        // corner, which is where a hand at arm's length lands, hit nothing. The box now reaches
+        // x = 0. The negative margin is exactly cancelled by the padding, so this must NOT have
+        // cost the row anything: the title still starts where it did.
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        // Robolectric doesn't lay the overlay out on its own; this is a geometry assertion, so
+        // drive one pass at the panel's own portrait size.
+        val overlay = overlayOf(activity)
+        overlay.measure(
+            View.MeasureSpec.makeMeasureSpec(1404, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1872, View.MeasureSpec.EXACTLY),
+        )
+        overlay.layout(0, 0, overlay.measuredWidth, overlay.measuredHeight)
+        val back = activity.findViewById<ImageView>(R.id.back)
+        val title = activity.findViewById<TextView>(R.id.book_title)
+
+        assertThat(back.left).isEqualTo(0) // reaches the physical edge
+        val minTarget = (56 * activity.resources.displayMetrics.density).toInt()
+        assertThat(back.width).isAtLeast(minTarget)
+        assertThat(back.height).isAtLeast(minTarget)
+
+        // The ink is put back by paddingStart, so the glyph draws at the margin as before...
+        val margin = activity.resources.getDimensionPixelSize(R.dimen.margin_screen)
+        assertThat(back.paddingStart).isEqualTo(margin)
+        // ...and the next control along starts exactly where the un-widened box used to end.
+        assertThat(title.left).isEqualTo(margin + activity.resources.getDimensionPixelSize(R.dimen.tap_target_glyph))
+    }
+
+    @Test
     fun `a scrub commit arms the back control and tapping it returns and disarms when empty`() {
         val controller = openedWithToc()
         val activity = controller.get()
@@ -1866,16 +1906,17 @@ class ReaderActivityTest {
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+        val previewFrame = activity.findViewById<View>(R.id.scrub_preview_frame)
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
         // The blit is decoded off-main now (Task 8); give it a chance to land before asserting.
-        idleUntil { preview.visibility == View.VISIBLE }
-        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+        idleUntil { previewFrame.visibility == View.VISIBLE }
+        assertThat(previewFrame.visibility).isEqualTo(View.VISIBLE)
 
         scrubber.onScrubCommit?.invoke(0.5f, null)
         idleUntil { activity.scrubIdleForTest }
-        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(previewFrame.visibility).isEqualTo(View.GONE)
     }
 
     @Test
@@ -1901,20 +1942,21 @@ class ReaderActivityTest {
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+        val previewFrame = activity.findViewById<View>(R.id.scrub_preview_frame)
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.9f, null)
         // The blit is decoded off-main now (Task 8); give it a chance to land before committing.
-        idleUntil { preview.visibility == View.VISIBLE }
-        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+        idleUntil { previewFrame.visibility == View.VISIBLE }
+        assertThat(previewFrame.visibility).isEqualTo(View.VISIBLE)
 
         scrubber.onScrubCommit?.invoke(0.9f, null)
         // Mid-commit (pagination still pending on IO): the bridge holds — no dead window.
-        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+        assertThat(previewFrame.visibility).isEqualTo(View.VISIBLE)
 
         idleUntil { activity.scrubIdleForTest }
         // The chosen page has rendered; the bridge comes down.
-        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(previewFrame.visibility).isEqualTo(View.GONE)
         assertThat(activity.currentStateForTest.spineIndex).isGreaterThan(0)
     }
 
@@ -1934,18 +1976,19 @@ class ReaderActivityTest {
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+        val previewFrame = activity.findViewById<View>(R.id.scrub_preview_frame)
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
         // The blit is decoded off-main now (Task 8); wait for it to actually land — and assert it
         // did — before cancelling, or the GONE assertion below would trivially hold from the
         // window's initial state without the cancel path having done anything at all.
-        idleUntil { preview.visibility == View.VISIBLE }
-        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+        idleUntil { previewFrame.visibility == View.VISIBLE }
+        assertThat(previewFrame.visibility).isEqualTo(View.VISIBLE)
 
         scrubber.onScrubCancel?.invoke()
 
-        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(previewFrame.visibility).isEqualTo(View.GONE)
     }
 
     @Test
@@ -1957,12 +2000,13 @@ class ReaderActivityTest {
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+        val previewFrame = activity.findViewById<View>(R.id.scrub_preview_frame)
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
 
         // Window stays hidden (text readout carries the position); nothing crashes, nothing paginates.
-        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(previewFrame.visibility).isEqualTo(View.GONE)
         assertThat(preview.drawable).isNull()
     }
 
@@ -2012,19 +2056,20 @@ class ReaderActivityTest {
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+        val previewFrame = activity.findViewById<View>(R.id.scrub_preview_frame)
 
         // Confirm the strip is live before the settings change: a drag shows the window.
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
         // The blit is decoded off-main now (Task 8); give it a chance to land before asserting.
-        idleUntil { preview.visibility == View.VISIBLE }
-        assertThat(preview.visibility).isEqualTo(View.VISIBLE)
+        idleUntil { previewFrame.visibility == View.VISIBLE }
+        assertThat(previewFrame.visibility).isEqualTo(View.VISIBLE)
         scrubber.onScrubCommit?.invoke(0.5f, null)
         idleUntil { activity.scrubIdleForTest }
 
         // Drive a real typography change through the Aa sheet — same seam Task 3's tests use.
         activity.findViewById<View>(R.id.settings_button).performClick()
-        activity.findViewById<View>(R.id.size_plus).performClick()
+        cellAt(activity, R.id.size_cells, 3).performClick()
 
         // The stale strip is dropped rather than served against the new pagination.
         assertThat(activity.previewStripLoadedForTest).isFalse()
@@ -2033,7 +2078,7 @@ class ReaderActivityTest {
         activity.findViewById<View>(R.id.settings_close).performClick()
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
-        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(previewFrame.visibility).isEqualTo(View.GONE)
     }
 
     @Test
@@ -2073,6 +2118,7 @@ class ReaderActivityTest {
             activity.showOverlayForTest()
             val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
             val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+            val previewFrame = activity.findViewById<View>(R.id.scrub_preview_frame)
 
             scrubber.onScrubStart?.invoke()
             scrubber.onScrubMove?.invoke(0.5f, null)
@@ -2083,7 +2129,7 @@ class ReaderActivityTest {
             idleUntil { activity.previewDecodeIdleForTest }
 
             // The window stays hidden rather than showing a stale/mismatched bitmap, and nothing crashes.
-            assertThat(preview.visibility).isEqualTo(View.GONE)
+            assertThat(previewFrame.visibility).isEqualTo(View.GONE)
             assertThat(preview.drawable).isNull()
 
             // Moving again at the same fraction re-hits the same (still-missing) file without crashing —
@@ -2091,7 +2137,7 @@ class ReaderActivityTest {
             // (No new decode is even scheduled — entry == shownPreviewEntry already — so there is
             // nothing new to wait for here.)
             scrubber.onScrubMove?.invoke(0.5f, null)
-            assertThat(preview.visibility).isEqualTo(View.GONE)
+            assertThat(previewFrame.visibility).isEqualTo(View.GONE)
         } finally {
             // Held until the forced decode above has actually landed (idleUntil, above) — restoring
             // this JVM-wide static any earlier risks a leaked coroutine decoding a synthetic bitmap
@@ -2163,11 +2209,12 @@ class ReaderActivityTest {
         activity.showOverlayForTest()
         val scrubber = activity.findViewById<ChapterScrubberView>(R.id.chapter_scrubber)
         val preview = activity.findViewById<ImageView>(R.id.scrub_preview)
+        val previewFrame = activity.findViewById<View>(R.id.scrub_preview_frame)
 
         scrubber.onScrubStart?.invoke()
         scrubber.onScrubMove?.invoke(0.5f, null)
 
-        assertThat(preview.visibility).isEqualTo(View.GONE) // no window when previews off
+        assertThat(previewFrame.visibility).isEqualTo(View.GONE) // no window when previews off
         // lifecycleScope runs on Main.immediate, so onScrubMoved's launch (if any were started)
         // would have already run inline up to its IO hop by the time this call returns. A null job
         // here is a hard, race-free proof that the early return fired and no decode was ever
@@ -2177,7 +2224,7 @@ class ReaderActivityTest {
         // Previews are genuinely off — the early return in onScrubMoved never even schedules a
         // decode — not merely a decode still in flight. Idling confirms nothing shows up later.
         shadowOf(Looper.getMainLooper()).idle()
-        assertThat(preview.visibility).isEqualTo(View.GONE)
+        assertThat(previewFrame.visibility).isEqualTo(View.GONE)
     }
 
     @Test
@@ -2225,13 +2272,12 @@ class ReaderActivityTest {
         // ...and the real Aa-sheet open (settings_button -> toggleSettings -> settings.refresh())
         // shows the delete control despite the progress row having nothing to report.
         activity.findViewById<View>(R.id.settings_button).performClick()
-        assertThat(activity.findViewById<View>(R.id.previews_status_row).visibility).isEqualTo(View.GONE)
-        assertThat(activity.findViewById<View>(R.id.previews_delete).visibility).isEqualTo(View.VISIBLE)
+        assertThat(activity.findViewById<View>(R.id.previews_delete_row).visibility).isEqualTo(View.VISIBLE)
 
         // Deleting removes the strip and, on the next refresh, hides the control again.
         activity.findViewById<View>(R.id.previews_delete).performClick()
         assertThat(activity.hasPreviewsForCurrentBookForTest()).isFalse()
-        assertThat(activity.findViewById<View>(R.id.previews_delete).visibility).isEqualTo(View.GONE)
+        assertThat(activity.findViewById<View>(R.id.previews_delete_row).visibility).isEqualTo(View.GONE)
     }
 
     // -- Task 6: strip-generation triggers -------------------------------------------------------
@@ -2277,7 +2323,7 @@ class ReaderActivityTest {
         // Drive a real typography change through the Aa sheet — same seam the settings tests use
         // (see "bumping the text size..." and "a settings change drops the now-stale preview strip").
         activity.findViewById<View>(R.id.settings_button).performClick()
-        activity.findViewById<View>(R.id.size_plus).performClick()
+        cellAt(activity, R.id.size_cells, 3).performClick()
 
         idleUntil { activity.stripGenerationsScheduledForTest == 2 }
     }
@@ -2308,12 +2354,12 @@ class ReaderActivityTest {
         activity.findViewById<View>(R.id.settings_button).performClick()
         // First toggle: justified flips away from the strip's config — a genuine miss, correctly
         // scheduling generation (mocked to a count in TestableReaderActivity).
-        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        flipCells(activity, R.id.justify_cells)
         idleUntil { activity.stripGenerationsScheduledForTest == 2 }
         assertThat(activity.previewStripLoadedForTest).isFalse()
 
         // Second toggle: back to the exact config the strip on disk was generated for.
-        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        flipCells(activity, R.id.justify_cells)
 
         // The still-valid strip is reloaded from disk, not thrown away and rebuilt. The reload's
         // disk read now runs on Dispatchers.IO (see the fix-pass report's Finding 2), so it no
@@ -2345,7 +2391,7 @@ class ReaderActivityTest {
         // REAL generation for it (bypassing TestableReaderActivity's counting override), so there
         // is an actual coroutine captured on this ABANDONED config once we flip back.
         activity.findViewById<View>(R.id.settings_button).performClick()
-        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        flipCells(activity, R.id.justify_cells)
         val abandonedConfig = activity.configForTest!!
         assertThat(abandonedConfig).isNotEqualTo(originalConfig)
 
@@ -2373,7 +2419,7 @@ class ReaderActivityTest {
         // Second toggle: back to the exact config the strip on disk was generated for — a genuine
         // hit — while the real generation above is still blocked mid-flight for the abandoned
         // config.
-        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        flipCells(activity, R.id.justify_cells)
 
         // Let the abandoned generation proceed to whatever completion cancellation allows, and wait
         // for it to actually finish — one way or another — before checking the outcome. Without
@@ -2423,7 +2469,7 @@ class ReaderActivityTest {
 
         // The real Aa-sheet control, so this exercises togglePreviews() itself, not just the pref.
         activity.findViewById<View>(R.id.settings_button).performClick()
-        activity.findViewById<View>(R.id.toggle_previews).performClick()
+        flipCells(activity, R.id.previews_cells)
         shadowOf(Looper.getMainLooper()).idle()
 
         // This only proves cancel() was requested, not that the coroutine has stopped running —
@@ -2511,7 +2557,7 @@ class ReaderActivityTest {
         // Change the render config for real (a real Aa-sheet control), so the second generation
         // below is a genuine cache miss rather than short-circuiting on A's just-written strip.
         activity.findViewById<View>(R.id.settings_button).performClick()
-        activity.findViewById<View>(R.id.toggle_justify).performClick()
+        flipCells(activity, R.id.justify_cells)
         val newConfig = activity.configForTest!!
         assertThat(newConfig).isNotEqualTo(originalConfig)
 
@@ -2735,29 +2781,41 @@ class ReaderActivityTest {
         return runBlocking { app.database.highlightDao().highlightsForBook(path) }
     }
 
-    /** Lays out the Highlights RecyclerView and clicks the tap-to-jump body of the row at [position]. */
-    private fun clickHighlightBody(activity: ReaderActivity, position: Int) {
-        layOutHighlightRow(activity, position).findViewById<View>(R.id.highlight_body).performClick()
+    /** Lays out the Notes RecyclerView and taps the row at [position] to jump to it. The whole row
+     *  is the target now — the inner tap-to-jump body went with the trailing ✕. */
+    private fun clickHighlightBody(activity: ReaderActivity, noteIndex: Int) {
+        layOutHighlightRow(activity, noteIndex).performClick()
     }
 
-    /** Lays out the Highlights RecyclerView and clicks the ✕ (delete) of the row at [position]. */
-    private fun clickHighlightDelete(activity: ReaderActivity, position: Int) {
-        layOutHighlightRow(activity, position).findViewById<View>(R.id.highlight_delete).performClick()
+    /** Long-presses the row at [position] to remove it. The trailing ✕ is gone: it sat a
+     *  finger's width from the panel's own dismiss, and a mis-tap destroyed a note with no undo. */
+    private fun clickHighlightDelete(activity: ReaderActivity, noteIndex: Int) {
+        layOutHighlightRow(activity, noteIndex).performLongClick()
     }
 
-    /** Measures/lays out the Highlights list (Robolectric does not on its own) and returns the row's
-     *  itemView, so a child click lands on a real holder. */
-    private fun layOutHighlightRow(activity: ReaderActivity, position: Int): View {
+    /**
+     * Measures/lays out the Notes list (Robolectric does not on its own) and returns the itemView of
+     * the [noteIndex]-th *note*.
+     *
+     * Adapter position is not note index: the list interleaves a chapter sidehead above each group,
+     * so position 0 is a head, not the first note. Counting note holders rather than positions keeps
+     * these tests indexing the thing they mean, whatever the grouping does.
+     */
+    private fun layOutHighlightRow(activity: ReaderActivity, noteIndex: Int): View {
         val list = activity.findViewById<RecyclerView>(R.id.highlights_list)
         list.measure(
             View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
         )
         list.layout(0, 0, 800, 600)
-        return (
-            list.findViewHolderForAdapterPosition(position)
-                ?: error("no highlight row at position $position after layout")
-            ).itemView
+        var seen = 0
+        for (position in 0 until (list.adapter?.itemCount ?: 0)) {
+            val holder = list.findViewHolderForAdapterPosition(position) ?: continue
+            if (holder !is HighlightAdapter.HighlightViewHolder) continue
+            if (seen == noteIndex) return holder.itemView
+            seen++
+        }
+        error("no note at index $noteIndex after layout")
     }
 
     /** A reader opened on a real multi-chapter book carrying a nav TOC, driven until its first page
@@ -2929,6 +2987,35 @@ class ReaderActivityTest {
 
     /** The reading overlay root — visibility is the observable overlay state. */
     private fun overlayOf(activity: ReaderActivity): View = activity.findViewById(R.id.reader_overlay)
+
+    // -- The cell ---------------------------------------------------------------------------------
+    // Every choice in the app is a CellRowView: a row of cells of which exactly one is filled. These
+    // read and drive one the way a reader does — by which cell is filled and which one is tapped.
+
+    private fun cellsOf(activity: ReaderActivity, id: Int): CellRowView = activity.findViewById(id)
+
+    /** Chooses a back-matter segment (0 chapters, 1 marks, 2 notes) the way a reader does — by
+     *  tapping its cell in the segmented header. Back matter opens on whichever segment the book
+     *  was last left on, so a test wanting a particular list has to ask for it. */
+    private fun showSegment(activity: ReaderActivity, index: Int) {
+        cellAt(activity, R.id.back_matter_segment, index).performClick()
+    }
+
+    private fun cellAt(activity: ReaderActivity, id: Int, index: Int): View =
+        cellsOf(activity, id).getChildAt(index)
+
+    /** Taps whichever cell is not currently filled — a boolean's "flip", in the cell vocabulary. */
+    private fun flipCells(activity: ReaderActivity, id: Int) {
+        val cells = cellsOf(activity, id)
+        cellAt(activity, id, if (cells.chosen() == 0) 1 else 0).performClick()
+    }
+
+    /** How many cells in the group carry the reversed fill. Must always be exactly one: the bug
+     *  this guards is a selection that fails to clear, so every option ends up looking chosen. */
+    private fun filledCells(activity: ReaderActivity, id: Int): Int {
+        val cells = cellsOf(activity, id)
+        return (0 until cells.childCount).count { cells.getChildAt(it).background != null }
+    }
 
     private fun scrubberTextOf(activity: ReaderActivity): String =
         activity.findViewById<TextView>(R.id.scrubber).text.toString()
