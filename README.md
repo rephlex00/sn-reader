@@ -17,7 +17,7 @@ you ask for the next one. Nothing animates. Nothing polls. Sitting on a page wit
 app uses **no measurable CPU at all**.
 
 <p align="center">
-  <img src="docs/screenshots/02-reading.png" width="440" alt="A page of Frankenstein: centered chapter title, justified text with hyphenation, and a running foot">
+  <img src="docs/screenshots/02-reading.png" width="440" alt="A page of Project Hail Mary: justified text with real hyphenation, generous margins, a first-line indent on each paragraph, and a running foot naming the chapter and the page">
 </p>
 
 ## What you get
@@ -30,7 +30,7 @@ app uses **no measurable CPU at all**.
 * **Pen highlighting** that knows your stylus from your palm
 * **Bookmarks, a contents page set like a printed one, and search** by title or author
 * **A chapter scrubber**, with a tick for every chapter, a preview of the page you'd land on as you
-  drag, and **↩** to jump back — a progress bar at the foot of the page marks where the current
+  drag, and a **Return** control to jump back — a progress bar at the foot of the page marks where the current
   chapter ends
 * **One typeface throughout**, the book's own: the shelf, the chrome and the page are set in the
   same face, and every choice in the app is the same bordered cell
@@ -72,7 +72,7 @@ app's own storage, not in the APK.
 This one is not optional. Your books sit in shared storage and Android will not hand them over
 without it.
 
-**4. Add books.** Drop `.epub`, `.cbz` or `.cbr` files into the **Document** folder, where Supernote
+**4. Add books.** Drop `.epub`, `.mobi`, `.cbz` or `.cbr` files into the **Document** folder, where Supernote
 keeps its own. Reader finds them next time you open it, and you can point it somewhere else from
 its settings. Scanning is incremental, so a big library does not mean a slow start.
 
@@ -81,7 +81,7 @@ its settings. Scanning is incremental, so a big library does not mean a slow sta
 ### Your shelf
 
 <p align="center">
-  <img src="docs/screenshots/01-library.png" width="580" alt="The shelf: a half-title with the book count, a search field, cells for view, filter and sort, and three columns of covers in a uniform frame">
+  <img src="docs/screenshots/01-library.png" width="580" alt="The shelf: a half-title reading BOOKS with the book count, search and settings marks at the right, and three rows of four covers, each carrying its progress as a small badge inside the artwork">
 </p>
 
 Tap a book to open it exactly where you stopped. Anything you have started shows how far in you are.
@@ -108,7 +108,7 @@ Forward is the largest of the three, so reading is one unhurried tap after anoth
 ### Turning it sideways
 
 <p align="center">
-  <img src="docs/screenshots/07-landscape.png" width="580" alt="Landscape: the same chapter as two side-by-side columns with a gutter, the running foot reading pages 1–2 of 18">
+  <img src="docs/screenshots/07-landscape.png" width="580" alt="Landscape: the chapter as two side-by-side columns with a gutter, the chrome folded to a single row with the chapter beside the controls, and the foot reading page 25 of 50">
 </p>
 
 Rotate the tablet and the page becomes two columns with a gutter between them. One column across a
@@ -123,26 +123,33 @@ Rotating keeps your place. Not your page *number* — the text reflows into narr
 numbering changes — but the words you were reading stay on screen. The book is not reopened, and it
 costs a single clean refresh.
 
-If you would rather it stayed put, **Lock rotation** in **Type** pins the reader to whichever
+If you would rather it stayed put, **Lock rotation**, under **Aa › Screen**, pins the reader to whichever
 way it is currently facing, which is what you want when reading on your side. Your shelf and the
 settings screens stay upright either way.
 
 ### The toolbar
 
 <p align="center">
-  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: ‹ Library, Contents and Type on the first row, the book and chapter as a running head on the second; below the page, the return control, a page readout, and the chapter timeline">
+  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: the way out, the book's title, a mark ribbon, Aa and CONTENTS on the first row; the chapter centred as a running head on the second; below the page, a readout and the chapter timeline">
 </p>
 
-The chrome is two rows. The first carries **‹ Library**, which returns you to your shelf, and the
-two places you can go from a book. The second is a running head: the book on the left, the chapter
-you are in on the right, where a printed page puts them.
+The chrome is two rows. The first is the book you are in and everything you can do about it: a
+**‹** back to your shelf, the book's title beside it, then a **mark ribbon**, **Aa**, and
+**Contents**. The second is a running head carrying the chapter, centred, where a printed page
+puts it — and standing down on a chapter opener, because the page below is already carrying its
+own heading.
+
+The ribbon is the one control here whose look is a fact rather than a door: outlined when the page
+you are on is unmarked, filled when it is. Tap it to mark the page in place, without leaving what
+you are reading.
 
 **Contents** is one surface holding three lists behind a **Chapters · Marks · Notes** header —
 where you are in the book, the pages you have marked, and the passages you have marked with the
-pen. It opens on whichever of the three you left it on, per book. **Type** is how the page looks.
+pen. It opens on whichever of the three you left it on, per book. **Aa** is how the page looks.
 
-Both close with the **‹** at the top-left, in the same place on each. The Supernote has no back
-button of its own, so nothing here is a dead end.
+Both close with the **‹** at the top-left, in the same place on each. That mark is drawn rather
+than typed, at the screen's own edge: it is the only way out of a book on a device with no back
+button of its own, so its tap target runs to the glass rather than stopping at the text margin.
 
 ### Marking passages
 
@@ -156,18 +163,20 @@ chapter and how far into the book it sits.
 ### Chapters
 
 <p align="center">
-  <img src="docs/screenshots/05-contents.png" width="440" alt="The contents page, set like a printed one: leader dots running from each chapter to its percentage, the current chapter in bold">
+  <img src="docs/screenshots/05-contents.png" width="440" alt="The contents page, set like a printed one: a CHAPTERS · MARKS · NOTES header, then leader dots running from each chapter across to its percentage">
 </p>
 
 **Contents** sets the book's chapters as a printed contents page — leader dots carrying the eye
 across to each percentage — with the one you are in bold and marked in the margin. Tap to go there.
 **Marks** and **Notes** sit behind the same header: the pages you have marked, and the passages you
-have marked with the pen, grouped under the chapter they came from.
+have marked with the pen, grouped under the chapter they came from. A mark carries the opening
+words of the page it saved, so the list reads as places in the book rather than as a column of
+chapter numbers.
 
 ### Skimming the whole book
 
 <p align="center">
-  <img src="docs/screenshots/06-scrubbing.png" width="580" alt="Mid-scrub: a floating window previews the destination page while the timeline's thumb sits under the finger, the readout showing Chapter 10 · 38%">
+  <img src="docs/screenshots/06-scrubbing.png" width="580" alt="Mid-scrub: a floating window previews the destination page under a reversed caption bar reading CHAPTER 14 · 49%, while the timeline's thumb sits under the finger">
 </p>
 
 The timeline along the bottom of the toolbar has a tick for every chapter. Drag it and a floating
@@ -175,21 +184,29 @@ window shows the page you would land on — instantly, from thumbnails prepared 
 background the first time a book is opened — while a readout names the chapter and percentage.
 The page itself never repaints during a drag; it is drawn once, when you let go. The thumb snaps
 to chapter starts like a detent, bookmarks sit on the track as small glyphs, and after any jump
-**↩** returns you to exactly where you were.
+**Return** appears beside the readout to take you back to exactly where you were.
 
 ### How the page looks
 
 <p align="center">
-  <img src="docs/screenshots/04-settings.png" width="580" alt="Type: sections for the face, the page, this book and the screen, each choice a row of cells with the chosen one filled">
+  <img src="docs/screenshots/04-settings.png" width="580" alt="Aa: a sheet across the foot of the screen with the book still showing above it, three tabs reading TEXT, PAGE and SCREEN, and the face, size and spacing each set as a row of cells">
 </p>
 
-**Type** groups what it changes: **the face** (three bundled typefaces — Literata, Bitter, Atkinson
-Hyperlegible, each with proper italics and bold), **the page** (size, line spacing, margins,
-justification, hyphenation), **this book**, **the screen**, and **previews**.
+**Aa** opens a sheet across the bottom of the screen, with your book still showing above it, behind
+three tabs: **Text** (the face, the size, the spacing), **Page** (margins, justification,
+hyphenation, and what this book is allowed to do to itself), and **Screen** (page turns, the
+progress bar, rotation, previews).
+
+The sheet stops short of the top on purpose. Every control in **Text** reflows the chapter under
+it, so you choose a typeface and a size by watching your own book change rather than by picking
+blind and finding out afterwards. **Text** is the shortest of the three tabs for exactly that
+reason — it is the one you judge by looking up.
 
 Every choice in the app is the same shape: a row of bordered cells with the chosen one filled in.
 A typeface, a margin and a plain on/off are all that one control, so there is a single thing to
-learn. Text size is five cells drawn at the sizes they produce, so you pick one by looking at it.
+learn. Text size is five cells drawn at the sizes they produce, and the three typefaces are each
+set in themselves, at the size your page is currently using — so you pick by looking, not by
+reading a name.
 
 **Publisher styling** decides whether a book keeps its own formatting or gets tidied into Reader's
 consistent look. Changing anything reflows the text and keeps your place.
@@ -214,7 +231,7 @@ Comics sit in the same library as your books, with the first page as the cover a
 progress badge. Your place is kept per comic, and bookmarks work by page.
 
 The reading chrome is the one you already know: a timeline along the bottom that you drag to move
-through the comic, a floating preview of the page you would land on, the page readout above it, **↩**
+through the comic, a floating preview of the page you would land on, the page readout above it, **Return**
 to jump back after a scrub or a mark, and the same marks surface. A comic has no chapters, so
 the track is one plain run rather than a ticked one, and previews are decoded as you drag instead of
 rendered ahead of time.
@@ -231,12 +248,12 @@ suits manga and line art well; dense colour lettering can be marginal at that si
 ### Settings
 
 <p align="center">
-  <img src="docs/screenshots/09-colophon.png" width="580" alt="Settings as a colophon: the book folder with a Change folder cell, and the version set with leader dots above the no-network statement">
+  <img src="docs/screenshots/09-colophon.png" width="580" alt="Settings as a colophon: the book folder with a Change folder cell, a folders-or-flat choice, and the version set with leader dots above the no accounts, no sync, no network statement">
 </p>
 
 Settings is the same surface again, and holds what belongs to the app rather than to a book: which
 folder your books live in, and a colophon naming the version you are running. Everything about how
-a page looks lives in **Type**, beside the page it changes.
+a page looks lives in **Aa**, beside the page it changes.
 
 ## Worth knowing
 
