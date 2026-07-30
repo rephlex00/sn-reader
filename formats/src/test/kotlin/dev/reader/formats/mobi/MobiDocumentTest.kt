@@ -79,14 +79,36 @@ class MobiDocumentTest {
     }
 
     @Test
-    fun `blockquote is the paragraph, not a pull-quote`() {
-        // The defect this guards is total: mobi7 writes body text as blockquote, so mapping it
-        // the way EPUB does renders an entire novel as one quotation.
-        val file = TestMobi.write(tempFolder.newFile("book.mobi"), tocBook(), recordSize = 128)
+    fun `each blockquote is its own paragraph, not a pull-quote and not merged`() {
+        // Two failure modes, and absence-of-Quote alone catches only the first:
+        //  * mapped as EPUB does, a novel of blockquotes renders as one long pull-quote;
+        //  * treated as a bare container, consecutive blockquotes run together into a single
+        //    paragraph — no Quote in sight, but every paragraph break in the book gone.
+        val html = "<html><body><div>" +
+            "<blockquote width=\"2em\">First.</blockquote>" +
+            "<blockquote width=\"2em\">Second.</blockquote>" +
+            "<blockquote width=\"2em\">Third.</blockquote>" +
+            "</div></body></html>"
+        val file = TestMobi.write(tempFolder.newFile("q.mobi"), html, recordSize = 128)
         MobiDocument.open(file, measurer).use { doc ->
             val blocks = doc.blocksForTest(0, config)
             assertThat(blocks.filterIsInstance<Block.Quote>()).isEmpty()
-            assertThat(blocks.filterIsInstance<Block.Paragraph>()).isNotEmpty()
+            assertThat(blocks.filterIsInstance<Block.Paragraph>().map { it.text.text })
+                .containsExactly("First.", "Second.", "Third.").inOrder()
+        }
+    }
+
+    @Test
+    fun `a blockquote's width attribute becomes the first-line indent`() {
+        // mobi7's only way of saying "indent this paragraph". Dropped, every paragraph in the
+        // book loses its indent under publisher styling.
+        val html = "<html><body><div><blockquote height=\"1em\" width=\"2em\">Indented.</blockquote>" +
+            "</div></body></html>"
+        val file = TestMobi.write(tempFolder.newFile("i.mobi"), html, recordSize = 128)
+        MobiDocument.open(file, measurer).use { doc ->
+            val para = doc.blocksForTest(0, config).filterIsInstance<Block.Paragraph>().single()
+            assertThat(para.style.textIndentEm).isWithin(0.01f).of(2f)
+            assertThat(para.style.marginTopEm).isWithin(0.01f).of(1f)
         }
     }
 
