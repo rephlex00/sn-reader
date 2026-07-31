@@ -1490,16 +1490,19 @@ class ReaderActivityTest {
         // BEFORE cancelling anything — this is the synchronous write, unaffected by the repair.
         scrubber.onScrubCommit?.invoke(0.9f, null)
 
-        // Not idling pins the commit at its pagination suspension, so the row read here can only
-        // be the down-payment — see [waitWithoutIdling]. Idling instead let the refined write win
-        // the race and the offset-0 assertion below read a real page offset.
-        var downPayment: BookEntity? = null
-        waitWithoutIdling {
-            downPayment = rowFor(app, book.path)
-            downPayment != null && downPayment!!.spineIndex != originChapter
-        }
-        assertThat(downPayment!!.spineIndex).isGreaterThan(originChapter)
-        assertThat(downPayment!!.charOffset).isEqualTo(0)
+        // What was asked for, read at the source. The down-payment is synchronous — onScrubCommitted
+        // calls persistPosition on this thread, before the coroutine suspends — so the request is
+        // knowable here exactly, with nothing pumped and nothing raced. This used to poll the row
+        // for the gap between the down-payment and the refinement, which is a race the test lost on
+        // a loaded CI runner: both writes are asynchronous, and a poll that arrives after the second
+        // one reads a real page offset where offset 0 is the whole claim.
+        val requested = activity.lastPersistRequestForTest!!
+        assertThat(requested.spineIndex).isGreaterThan(originChapter)
+        assertThat(requested.charOffset).isEqualTo(0)
+
+        // ...and it is DURABLE, which is the other half of the claim: the row itself moves to the
+        // committed chapter. Monotonic, so waiting for it races with nothing.
+        waitWithoutIdling { rowFor(app, book.path)!!.spineIndex == requested.spineIndex }
         // The page itself never moved — guaranteed, not merely observed: showPage lives in the
         // commit coroutine, which the un-pumped looper above has kept from running at all.
         assertThat(activity.currentStateForTest.spineIndex).isEqualTo(originChapter)

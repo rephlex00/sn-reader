@@ -1293,6 +1293,11 @@ open class ReaderActivity : AppCompatActivity() {
      */
     private fun persistPosition(locator: Locator) {
         val path = bookPath ?: return
+        // Recorded here, on the thread that asked, because the write below is not. A test asserting
+        // the ORDER of two writes cannot sample the row for the gap between them — the down-payment
+        // and the refinement both land asynchronously, and on a loaded machine the poll arrives
+        // after both. What was REQUESTED is knowable exactly; what is stored at any instant is not.
+        lastPersistRequestForTest = locator
         val app = application as ReaderApplication
         val dao = app.database.bookDao()
         val now = System.currentTimeMillis()
@@ -2179,6 +2184,10 @@ open class ReaderActivity : AppCompatActivity() {
      *  "idle" while the repair write below is still in flight. `isCompleted` only goes true once the
      *  coroutine (finally included) has actually finished. */
     internal val scrubIdleForTest: Boolean get() = scrubJob?.isCompleted ?: true
+
+    /** The last position [persistPosition] was asked to store, captured at the call. */
+    internal var lastPersistRequestForTest: Locator? = null
+        private set
 
     /** The reader's current position — a test's "did the page actually move" probe. */
     internal val currentStateForTest: ReadingState get() = state

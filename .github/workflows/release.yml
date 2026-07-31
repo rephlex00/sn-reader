@@ -118,6 +118,20 @@ jobs:
       - name: Run tests
         run: ./gradlew test
 
+      - name: Keep the test reports when they fail
+        # Gradle prints a class name and a line number and leaves the expected-vs-actual in an HTML
+        # report on the runner, which is thrown away with the runner. A test that fails only here —
+        # a race that loses on two contended cores and never loses on a laptop — is then diagnosed
+        # by guesswork. Costs nothing on a green run, because it only fires on a red one.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            **/build/reports/tests/
+            **/build/test-results/
+          retention-days: 14
+
       - name: Decode signing keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
