@@ -111,34 +111,37 @@
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_bookmark" />
 
-            <!-- Opens the Type surface. -->
-            <TextView
-                android:id="@+id/settings_button"
-                style="@style/ChromeGlyph.Type"
-                android:contentDescription="@string/reader_type" />
-
-            <!-- Opens the back-matter surface (chapters, marks, notes): a contents page drawn at
-                 the size of the ribbon beside it (see ic_contents). It closes the row rather than
-                 ending it in a word — the three controls here are now one run of marks, and the
-                 page under them is not asked to hold a caption it did not write.
-
-                 Trailing edge, the chevron's idiom mirrored: the negative end margin reaches the
-                 right edge of the glass while paddingEnd puts the ink back on the screen margin,
-                 the line the ‹ starts on at the other end. See dimens.xml, "The contents glyph". -->
+            <!-- Opens the back-matter surface (chapters, marks, notes): a contents page drawn (see
+                 ic_contents), in the ribbon's own box so the two read as a pair of marks about the
+                 BOOK — where you have been, and where you are going. Aa follows them because it is
+                 about the PAGE, not the book, and a row that groups its like things is easier to
+                 aim at than one that alternates. -->
             <ImageView
                 android:id="@+id/contents_button"
-                android:layout_width="@dimen/tap_target_glyph_edge"
-                android:layout_height="@dimen/tap_target_glyph"
+                android:layout_width="@dimen/tap_target_min"
+                android:layout_height="@dimen/tap_target_min"
                 android:clickable="true"
                 android:contentDescription="@string/reader_contents"
                 android:focusable="true"
-                android:layout_marginEnd="@dimen/edge_reach_pull"
-                android:paddingStart="@dimen/contents_pad_inboard"
-                android:paddingEnd="@dimen/edge_reach"
-                android:paddingTop="@dimen/contents_pad_v"
-                android:paddingBottom="@dimen/contents_pad_v"
+                android:padding="@dimen/glyph_inset"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_contents" />
+
+            <!-- Opens the Type surface, and closes the row.
+
+                 Trailing edge, the chevron's idiom mirrored: the negative end margin reaches the
+                 right edge of the glass while paddingEnd puts the ink back on the screen margin —
+                 the line the ‹ starts on at the other end. `end` gravity rather than the style's
+                 `center` is what carries the last letter out to that padding; centred, the word
+                 would float in the middle of a box that is 32dp wider than it looks. -->
+            <TextView
+                android:id="@+id/settings_button"
+                style="@style/ChromeGlyph.Type"
+                android:layout_width="@dimen/tap_target_glyph_edge"
+                android:layout_marginEnd="@dimen/edge_reach_pull"
+                android:paddingEnd="@dimen/edge_reach"
+                android:gravity="end|center_vertical"
+                android:contentDescription="@string/reader_type" />
 
         </LinearLayout>
 

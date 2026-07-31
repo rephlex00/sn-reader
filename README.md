@@ -130,14 +130,14 @@ settings screens stay upright either way.
 ### The toolbar
 
 <p align="center">
-  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: the way out, the book's title, then a mark ribbon, Aa and a drawn contents mark on the first row; the chapter centred as a running head on the second; below the page, a readout and the chapter timeline. The page between the two bars sits a shade darker than they do">
+  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: the way out, the book's title, then a mark ribbon, a drawn contents mark and Aa on the first row; the chapter centred as a running head on the second; below the page, a readout and the chapter timeline. The page between the two bars sits a shade darker than they do">
 </p>
 
 The chrome is two rows. The first is the book you are in and everything you can do about it: a
-**‹** back to your shelf, the book's title beside it, then a **mark ribbon**, **Aa**, and
-**Contents**. The second is a running head carrying the chapter, centred, where a printed page
-puts it — and standing down on a chapter opener, because the page below is already carrying its
-own heading.
+**‹** back to your shelf, the book's title beside it, then a **mark ribbon**, **Contents**, and
+**Aa** — the two marks about the book together, then the one about the page. The second row is a
+running head carrying the chapter, centred, where a printed page puts it — and standing down on a
+chapter opener, because the page below is already carrying its own heading.
 
 While the chrome is up, the page steps back by one level of the sixteen this display can hold — the
 smallest change it can make without dithering. The bars are paper and the page was paper too, so

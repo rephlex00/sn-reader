@@ -1773,11 +1773,13 @@ class ReaderActivityTest {
     }
 
     @Test
-    fun `the contents glyph reaches the other edge, and its mark stops on the same margin`() {
-        // The chevron's idiom, mirrored: the row's trailing control has to own the corner too, and
-        // its ink has to land on the screen margin so the row is bounded by the same line at both
-        // ends. Written as a geometry test because the negative margin and the padding must stay
-        // equal and opposite — drop either and the box either misses the edge or shoves the ink.
+    fun `Aa closes the row at the other edge, with the two book marks paired before it`() {
+        // Two things at once, because they are one decision. The row runs ribbon, contents, Aa:
+        // the two marks about the BOOK together, then the one about the PAGE. And whichever
+        // control ends the row has to own the corner the way the ‹ owns the other one — its box
+        // out to the glass, its ink back on the screen margin. Written as geometry because the
+        // negative margin and the padding must stay equal and opposite; drop either and the box
+        // misses the edge or the word floats.
         val controller = openedMultiPage()
         val activity = controller.get()
         activity.showOverlayForTest()
@@ -1787,20 +1789,29 @@ class ReaderActivityTest {
             View.MeasureSpec.makeMeasureSpec(1872, View.MeasureSpec.EXACTLY),
         )
         overlay.layout(0, 0, overlay.measuredWidth, overlay.measuredHeight)
+        val ribbon = activity.findViewById<ImageView>(R.id.bookmark_button)
         val contents = activity.findViewById<ImageView>(R.id.contents_button)
+        val type = activity.findViewById<TextView>(R.id.settings_button)
         val back = activity.findViewById<ImageView>(R.id.back)
         val margin = activity.resources.getDimensionPixelSize(R.dimen.margin_screen)
 
-        assertThat(contents.right).isEqualTo(1404) // reaches the physical edge
-        assertThat(contents.paddingEnd).isEqualTo(margin)
-        // The two ends of the row are the same distance in from their own edge.
-        assertThat(1404 - (contents.right - contents.paddingEnd)).isEqualTo(back.left + back.paddingStart)
+        // The order, read off the laid-out row rather than off the file.
+        assertThat(ribbon.left).isLessThan(contents.left)
+        assertThat(contents.left).isLessThan(type.left)
 
-        // The mark itself is the ribbon's size, so the row's pictograms are one size, not two.
-        val ribbon = activity.resources.getDimensionPixelSize(R.dimen.tap_target_min) -
-            2 * activity.resources.getDimensionPixelSize(R.dimen.glyph_inset)
-        assertThat(contents.width - contents.paddingStart - contents.paddingEnd).isEqualTo(ribbon)
-        assertThat(contents.height - contents.paddingTop - contents.paddingBottom).isEqualTo(ribbon)
+        assertThat(type.right).isEqualTo(1404) // reaches the physical edge
+        assertThat(type.paddingEnd).isEqualTo(margin)
+        // The two ends of the row are the same distance in from their own edge.
+        assertThat(1404 - (type.right - type.paddingEnd)).isEqualTo(back.left + back.paddingStart)
+        // ...and the word actually sits against that padding. The box reaching the edge is only
+        // half of it: centred inside a box 32dp wider than it looks, "Aa" would drift inboard.
+        assertThat(type.layout.getLineRight(0))
+            .isWithin(1f).of((type.width - type.paddingStart - type.paddingEnd).toFloat())
+
+        // The two book marks are one box and one mark size, not two.
+        assertThat(contents.width).isEqualTo(ribbon.width)
+        assertThat(contents.height).isEqualTo(ribbon.height)
+        assertThat(contents.paddingStart).isEqualTo(ribbon.paddingStart)
     }
 
     @Test

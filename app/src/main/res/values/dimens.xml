@@ -210,7 +210,7 @@
          The two paddings place it inside the 88 x 56dp target (see "Reach" above). Vertical is the
          slack halved. Inboard is what is left after the mark's box: 88 - 32 - 14. The 14dp is the
          mark's own width rounded up, so paddingStart can be edge_reach exactly and the ink lands on
-         the screen margin — the same line the contents glyph ends on at the other end of the row. -->
+         the screen margin — the same line Aa ends on at the other end of the row. -->
     <dimen name="chevron_mark">28dp</dimen>
     <dimen name="chevron_pad_v">14dp</dimen>
     <dimen name="chevron_pad_inboard">42dp</dimen>
@@ -221,14 +221,4 @@
          if either term above changes, change this one with it. -->
     <dimen name="tap_target_glyph_edge">88dp</dimen>
 
-    <!-- ===== The contents glyph =====
-
-         The chevron's mirror image at the trailing end of the same row, and the same arithmetic
-         inside the same 88 x 56dp target: paddingEnd is edge_reach exactly, so the glyph's ink
-         stops on the screen margin, and what is left over goes inboard. The mark is 30dp square —
-         the size the ribbon beside it renders at (tap_target_min less glyph_inset on each side), so
-         the row's two pictograms are one size. Inboard is 88 - 32 - 30; vertical is the slack
-         halved, 56 - 30 over two. -->
-    <dimen name="contents_pad_inboard">26dp</dimen>
-    <dimen name="contents_pad_v">13dp</dimen>
 </resources>
