@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/screenshots/icon.png" width="96" alt="Reader app icon: a page with a bound edge">
+  <img src="docs/screenshots/icon.png" width="96" alt="Reader app icon: the tablet drawn in black on white as a plain bezel, a serif capital R filling its screen, the pen docked at the right">
 </p>
 
 <h1 align="center">Reader</h1>
@@ -108,7 +108,7 @@ Forward is the largest of the three, so reading is one unhurried tap after anoth
 ### Turning it sideways
 
 <p align="center">
-  <img src="docs/screenshots/07-landscape.png" width="580" alt="Landscape: the chapter as two side-by-side columns with a gutter, the chrome folded to a single row with the chapter beside the controls, and the foot reading page 25 of 50">
+  <img src="docs/screenshots/07-landscape.png" width="580" alt="Landscape: the chapter as two side-by-side columns with a gutter, the chrome folded to a single row with the chapter beside the controls, and the foot reading page 19 of 44">
 </p>
 
 Rotate the tablet and the page becomes two columns with a gutter between them. One column across a
@@ -130,7 +130,7 @@ settings screens stay upright either way.
 ### The toolbar
 
 <p align="center">
-  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: the way out, the book's title, a mark ribbon, Aa and CONTENTS on the first row; the chapter centred as a running head on the second; below the page, a readout and the chapter timeline">
+  <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: the way out, the book's title, then a mark ribbon, Aa and a drawn contents mark on the first row; the chapter centred as a running head on the second; below the page, a readout and the chapter timeline. The page between the two bars sits a shade darker than they do">
 </p>
 
 The chrome is two rows. The first is the book you are in and everything you can do about it: a
@@ -138,6 +138,11 @@ The chrome is two rows. The first is the book you are in and everything you can 
 **Contents**. The second is a running head carrying the chapter, centred, where a printed page
 puts it — and standing down on a chapter opener, because the page below is already carrying its
 own heading.
+
+While the chrome is up, the page steps back by one level of the sixteen this display can hold — the
+smallest change it can make without dithering. The bars are paper and the page was paper too, so
+nothing said which of the two you were meant to touch. Only the ground moves; the words are still
+black, and still readable at a glance.
 
 The ribbon is the one control here whose look is a fact rather than a door: outlined when the page
 you are on is unmarked, filled when it is. Tap it to mark the page in place, without leaving what
@@ -176,7 +181,7 @@ chapter numbers.
 ### Skimming the whole book
 
 <p align="center">
-  <img src="docs/screenshots/06-scrubbing.png" width="580" alt="Mid-scrub: a floating window previews the destination page under a reversed caption bar reading CHAPTER 14 · 49%, while the timeline's thumb sits under the finger">
+  <img src="docs/screenshots/06-scrubbing.png" width="580" alt="Mid-scrub: a floating window previews the destination page under a reversed caption bar reading CHAPTER 19 · 64%, while the timeline's thumb sits under the finger">
 </p>
 
 The timeline along the bottom of the toolbar has a tick for every chapter. Drag it and a floating
@@ -189,7 +194,7 @@ to chapter starts like a detent, bookmarks sit on the track as small glyphs, and
 ### How the page looks
 
 <p align="center">
-  <img src="docs/screenshots/04-settings.png" width="580" alt="Aa: a sheet across the foot of the screen with the book still showing above it, three tabs reading TEXT, PAGE and SCREEN, and the face, size and spacing each set as a row of cells">
+  <img src="docs/screenshots/04-settings.png" width="580" alt="Aa: a sheet across the foot of the screen with the book still showing, a shade darker, above it; three tabs reading TEXT, PAGE and SCREEN, and the face, size and spacing each set as a row of cells">
 </p>
 
 **Aa** opens a sheet across the bottom of the screen, with your book still showing above it, behind
