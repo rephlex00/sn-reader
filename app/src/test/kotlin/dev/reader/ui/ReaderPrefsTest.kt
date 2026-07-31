@@ -23,6 +23,114 @@ class ReaderPrefsTest {
         context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
+    // -- Portrait and landscape keep their own typography -----------------------------------------
+    // A landscape page is two columns, so the measure is roughly half a portrait line. A size and
+    // margin that read well across one do not across the other, which is the whole reason these are
+    // stored twice. Everything below the layout settings stays shared.
+
+    /** A ReaderPrefs reading the landscape set, via a context whose configuration says landscape. */
+    private fun landscapePrefs(): ReaderPrefs {
+        val landscapeConfig = android.content.res.Configuration(context.resources.configuration).apply {
+            orientation = android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        }
+        return ReaderPrefs(context.createConfigurationContext(landscapeConfig))
+    }
+
+    @Test
+    fun `a landscape change does not move the portrait setting`() {
+        val portrait = ReaderPrefs(context)
+        portrait.textSizePx = 34f
+        portrait.marginPx = 120
+
+        landscapePrefs().apply {
+            textSizePx = 26f
+            marginPx = 40
+        }
+
+        assertThat(ReaderPrefs(context).textSizePx).isEqualTo(34f)
+        assertThat(ReaderPrefs(context).marginPx).isEqualTo(120)
+        assertThat(landscapePrefs().textSizePx).isEqualTo(26f)
+        assertThat(landscapePrefs().marginPx).isEqualTo(40)
+    }
+
+    @Test
+    fun `a portrait change does not move the landscape setting`() {
+        landscapePrefs().textSizePx = 26f
+
+        ReaderPrefs(context).textSizePx = 45f
+
+        assertThat(landscapePrefs().textSizePx).isEqualTo(26f)
+        assertThat(ReaderPrefs(context).textSizePx).isEqualTo(45f)
+    }
+
+    @Test
+    fun `landscape inherits what was already set before the split, until it is changed there`() {
+        // The upgrade path, and the reason this needed no migration: someone who has been reading
+        // in portrait at 45px must not find landscape reset to the shipped default the first time
+        // they turn the device.
+        ReaderPrefs(context).apply {
+            textSizePx = 45f
+            marginPx = 120
+            fontFamily = "bitter"
+            justified = false
+            hyphenated = false
+            lineSpacingMultiplier = 1.6f
+        }
+
+        landscapePrefs().apply {
+            assertThat(textSizePx).isEqualTo(45f)
+            assertThat(marginPx).isEqualTo(120)
+            assertThat(fontFamily).isEqualTo("bitter")
+            assertThat(justified).isFalse()
+            assertThat(hyphenated).isFalse()
+            assertThat(lineSpacingMultiplier).isEqualTo(1.6f)
+        }
+
+        // ...and once landscape is given its own answer, the two stop tracking.
+        landscapePrefs().textSizePx = 26f
+        assertThat(ReaderPrefs(context).textSizePx).isEqualTo(45f)
+    }
+
+    @Test
+    fun `settings that are not about the page stay shared across orientations`() {
+        // "This book" is a fact about the book, and the Screen settings are device behaviour.
+        // Splitting either would mean a publisher's formatting turning itself on when you rotate.
+        landscapePrefs().apply {
+            publisherStyling = false
+            inferHeadings = false
+            showProgressBar = false
+            fasterPageTurns = true
+            fullRefreshEveryN = 10
+            rotationLocked = true
+            previewsEnabled = false
+        }
+
+        ReaderPrefs(context).apply {
+            assertThat(publisherStyling).isFalse()
+            assertThat(inferHeadings).isFalse()
+            assertThat(showProgressBar).isFalse()
+            assertThat(fasterPageTurns).isTrue()
+            assertThat(fullRefreshEveryN).isEqualTo(10)
+            assertThat(rotationLocked).isTrue()
+            assertThat(previewsEnabled).isFalse()
+        }
+    }
+
+    @Test
+    fun `each orientation paginates with its own typography`() {
+        // The end of the chain: the split is only real if renderConfig carries it through.
+        ReaderPrefs(context).apply { textSizePx = 45f; marginPx = 120 }
+        landscapePrefs().apply { textSizePx = 26f; marginPx = 40 }
+
+        val portraitConfig = ReaderPrefs(context).renderConfig(1404, 1872)
+        val landscapeConfig = landscapePrefs().renderConfig(1872, 1404)
+
+        assertThat(portraitConfig.textSizePx).isEqualTo(45f)
+        assertThat(portraitConfig.marginPx).isEqualTo(120)
+        assertThat(landscapeConfig.textSizePx).isEqualTo(26f)
+        assertThat(landscapeConfig.marginPx).isEqualTo(40)
+    }
+
     @Test
     fun `defaults are the shipped reader baseline on a fresh install`() {
         val prefs = ReaderPrefs(context)

@@ -29,6 +29,27 @@ class ReaderPrefs(context: Context) {
     private val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
 
     /**
+     * Whether this instance is reading the landscape set of typography. Taken from the context's
+     * own configuration rather than passed in, so every existing `ReaderPrefs(this)` call site
+     * lands on the right set with no argument to forget — and [ReaderActivity], which handles
+     * `configChanges` itself, still gets an updated Configuration on rotation, so an instance
+     * built after the turn reads the new orientation.
+     */
+    private val landscape =
+        context.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+    /**
+     * The storage key for [base] in the orientation this instance is reading.
+     *
+     * Portrait keeps the bare key — it IS the key every install has been writing since before the
+     * split — and landscape gets a suffixed twin. That asymmetry is what makes the change free of
+     * a migration: see the properties below, which read the bare key as the FALLBACK for the
+     * suffixed one, so a reader who has never touched an Aa control in landscape simply sees the
+     * settings they already had, and only diverges once they change something there.
+     */
+    private fun scoped(base: String): String = if (landscape) base + LANDSCAPE_SUFFIX else base
+
+    /**
      * The panel's device-pixels-per-CSS-pixel, read once here rather than at each render:
      * it cannot change without the process being recreated. Not a stored preference — like
      * the viewport it is a property of the screen, not a choice — but unlike the viewport it
@@ -37,32 +58,51 @@ class ReaderPrefs(context: Context) {
      */
     private val density: Float = context.resources.displayMetrics.density
 
+    // ===== Per orientation =====
+    // Everything below re-lays-out the page, and a landscape page is two columns rather than one.
+    // A size that reads well across a full portrait measure is too large in a half-width column;
+    // margins, justification and hyphenation all want different answers at a different measure.
+    // So each is stored twice, and the Aa sheet edits whichever orientation you are holding.
+    //
+    // Each getter reads the orientation's own key and falls back to the bare (portrait) one, which
+    // is what makes this free on upgrade — see [scoped]. In portrait the two are the same key, so
+    // the read is exactly what it was before the split.
+
     /** A bundled reader face — one of [BundledTypefaceProvider.FAMILIES] ("literata"/"bitter"/
      * "atkinson"). A legacy or unknown value resolves to the default face at render time (see
      * [BundledTypefaceProvider.fontResFor]); the store itself is a dumb string. */
     var fontFamily: String
-        get() = prefs.getString(KEY_FONT_FAMILY, null) ?: DEFAULT_FONT_FAMILY
-        set(value) = prefs.edit().putString(KEY_FONT_FAMILY, value).apply()
+        get() = prefs.getString(scoped(KEY_FONT_FAMILY), null)
+            ?: prefs.getString(KEY_FONT_FAMILY, null)
+            ?: DEFAULT_FONT_FAMILY
+        set(value) = prefs.edit().putString(scoped(KEY_FONT_FAMILY), value).apply()
 
     var textSizePx: Float
-        get() = prefs.getFloat(KEY_TEXT_SIZE_PX, DEFAULT_TEXT_SIZE_PX)
-        set(value) = prefs.edit().putFloat(KEY_TEXT_SIZE_PX, value).apply()
+        get() = prefs.getFloat(scoped(KEY_TEXT_SIZE_PX), prefs.getFloat(KEY_TEXT_SIZE_PX, DEFAULT_TEXT_SIZE_PX))
+        set(value) = prefs.edit().putFloat(scoped(KEY_TEXT_SIZE_PX), value).apply()
 
     var lineSpacingMultiplier: Float
-        get() = prefs.getFloat(KEY_LINE_SPACING, DEFAULT_LINE_SPACING)
-        set(value) = prefs.edit().putFloat(KEY_LINE_SPACING, value).apply()
+        get() = prefs.getFloat(scoped(KEY_LINE_SPACING), prefs.getFloat(KEY_LINE_SPACING, DEFAULT_LINE_SPACING))
+        set(value) = prefs.edit().putFloat(scoped(KEY_LINE_SPACING), value).apply()
 
     var marginPx: Int
-        get() = prefs.getInt(KEY_MARGIN_PX, DEFAULT_MARGIN_PX)
-        set(value) = prefs.edit().putInt(KEY_MARGIN_PX, value).apply()
+        get() = prefs.getInt(scoped(KEY_MARGIN_PX), prefs.getInt(KEY_MARGIN_PX, DEFAULT_MARGIN_PX))
+        set(value) = prefs.edit().putInt(scoped(KEY_MARGIN_PX), value).apply()
 
     var justified: Boolean
-        get() = prefs.getBoolean(KEY_JUSTIFIED, DEFAULT_JUSTIFIED)
-        set(value) = prefs.edit().putBoolean(KEY_JUSTIFIED, value).apply()
+        get() = prefs.getBoolean(scoped(KEY_JUSTIFIED), prefs.getBoolean(KEY_JUSTIFIED, DEFAULT_JUSTIFIED))
+        set(value) = prefs.edit().putBoolean(scoped(KEY_JUSTIFIED), value).apply()
 
     var hyphenated: Boolean
-        get() = prefs.getBoolean(KEY_HYPHENATED, DEFAULT_HYPHENATED)
-        set(value) = prefs.edit().putBoolean(KEY_HYPHENATED, value).apply()
+        get() = prefs.getBoolean(scoped(KEY_HYPHENATED), prefs.getBoolean(KEY_HYPHENATED, DEFAULT_HYPHENATED))
+        set(value) = prefs.edit().putBoolean(scoped(KEY_HYPHENATED), value).apply()
+
+    // ===== Shared by both orientations =====
+    // Below this line nothing is about the shape of the page. "This book" (heading detection,
+    // publisher styling) is a fact about the BOOK, and wanting a publisher's formatting in portrait
+    // but not in landscape is not a thing anyone means. The Screen settings are device behaviour —
+    // and Lock rotation in particular would be circular, since it is the control that decides which
+    // orientation you are in.
 
     var inferHeadings: Boolean
         get() = prefs.getBoolean(KEY_INFER_HEADINGS, DEFAULT_INFER_HEADINGS)
@@ -202,6 +242,9 @@ class ReaderPrefs(context: Context) {
         const val KEY_FULL_REFRESH_EVERY_N = "full_refresh_every_n"
         const val KEY_ROTATION_LOCKED = "rotation_locked"
         const val KEY_PREVIEWS_ENABLED = "previews_enabled"
+
+        /** Appended to a per-orientation key's portrait name to make its landscape twin. */
+        const val LANDSCAPE_SUFFIX = "_land"
 
         // The reader's standing typography baseline. All but the font matched openFirstBook's old
         // hardcoded literals; the font default became "literata" when bundled fonts shipped.
