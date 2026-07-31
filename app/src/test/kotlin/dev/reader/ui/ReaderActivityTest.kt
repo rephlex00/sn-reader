@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.math.ceil
 
 /**
  * Robolectric coverage for [ReaderActivity]'s three documented load-bearing behaviors — the
@@ -1803,10 +1804,13 @@ class ReaderActivityTest {
         assertThat(type.paddingEnd).isEqualTo(margin)
         // The two ends of the row are the same distance in from their own edge.
         assertThat(1404 - (type.right - type.paddingEnd)).isEqualTo(back.left + back.paddingStart)
-        // ...and the word actually sits against that padding. The box reaching the edge is only
-        // half of it: centred inside a box 32dp wider than it looks, "Aa" would drift inboard.
-        assertThat(type.layout.getLineRight(0))
-            .isWithin(1f).of((type.width - type.paddingStart - type.paddingEnd).toFloat())
+        // ...and the box hugs the word, so the space in FRONT of it is paddingStart and nothing
+        // else. Give this a fixed width instead and the leftover sits ahead of the word as dead
+        // space, which is what made the gap before Aa read 44dp against the row's own 28dp.
+        assertThat(type.width - type.paddingStart - type.paddingEnd)
+            .isEqualTo(ceil(type.paint.measureText(type.text.toString())).toInt())
+        assertThat(type.paddingStart)
+            .isEqualTo(activity.resources.getDimensionPixelSize(R.dimen.type_pad_inboard))
 
         // The two book marks are one box and one mark size, not two.
         assertThat(contents.width).isEqualTo(ribbon.width)

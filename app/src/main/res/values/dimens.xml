@@ -221,4 +221,21 @@
          if either term above changes, change this one with it. -->
     <dimen name="tap_target_glyph_edge">88dp</dimen>
 
+    <!-- ===== The Type control =====
+
+         What sits in front of the word Aa, which closes the chrome row.
+
+         Set OPTICALLY — measured off the panel, ink to ink, not box to box. Boxes lie here: each
+         mark is centred in its box with slack either side, and how much slack depends on how wide
+         that particular mark happens to be drawn, so equal boxes give unequal gaps. Measured, this
+         row's own gaps are ~28dp — the landscape divider to the ribbon, and the ribbon to the
+         contents mark — so 28dp is the value the row already states, and this is what makes the
+         third gap agree with the first two.
+
+         15dp, because the contents mark's ink stops ~13dp short of its own box (its 9dp inset plus
+         the drawable's own margin), and 13 + 15 = 28. If either the mark or the inset changes,
+         RE-MEASURE rather than re-deriving: the point of an optical value is that it comes off the
+         glass. -->
+    <dimen name="type_pad_inboard">15dp</dimen>
+
 </resources>

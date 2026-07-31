@@ -131,16 +131,20 @@
 
                  Trailing edge, the chevron's idiom mirrored: the negative end margin reaches the
                  right edge of the glass while paddingEnd puts the ink back on the screen margin —
-                 the line the ‹ starts on at the other end. `end` gravity rather than the style's
-                 `center` is what carries the last letter out to that padding; centred, the word
-                 would float in the middle of a box that is 32dp wider than it looks. -->
+                 the line the ‹ starts on at the other end.
+
+                 The width is wrap_content, NOT the chevron's fixed 88dp box. A fixed box has to be
+                 wide enough for the word, and the slack then sits in front of it as dead space no
+                 layout inspector shows but every eye does: it read as a 44dp gap where the marks
+                 before it sit 28dp apart. Hugging the word puts that space under paddingStart,
+                 where it is a number that can be set. See dimens.xml, "The Type control". -->
             <TextView
                 android:id="@+id/settings_button"
                 style="@style/ChromeGlyph.Type"
-                android:layout_width="@dimen/tap_target_glyph_edge"
+                android:layout_width="wrap_content"
                 android:layout_marginEnd="@dimen/edge_reach_pull"
+                android:paddingStart="@dimen/type_pad_inboard"
                 android:paddingEnd="@dimen/edge_reach"
-                android:gravity="end|center_vertical"
                 android:contentDescription="@string/reader_type" />
 
         </LinearLayout>
