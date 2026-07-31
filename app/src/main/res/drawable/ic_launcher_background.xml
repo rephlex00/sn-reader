@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher icon, background: white paper, bleeding to all 108dp edges. The
+     hardware is drawn over it in black by the foreground layer. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -6,5 +8,5 @@
     android:viewportHeight="108">
     <path
         android:pathData="M0,0 H108 V108 H0 Z"
-        android:fillColor="#FFCFCFCF" />
+        android:fillColor="#FFFFFFFF" />
 </vector>
