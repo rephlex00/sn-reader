@@ -5,9 +5,12 @@
      running-head row beneath, the same EDGE rule and foot — so a reader who has learned the book
      surface has already learned this one. The differences follow from what a comic actually is:
 
-       * The destinations are the ribbon and MARKS, not the ribbon, Aa and CONTENTS. A comic has no
-         chapters (the back-matter surface offers marks alone) and no type to set, so those words
-         would be dead. The ribbon marks the page in place, exactly as the book's does.
+       * The destinations are the ribbon and MARKS, where the book has the ribbon, Aa and the
+         contents glyph. A comic has no chapters (the back-matter surface offers marks alone) and
+         no type to set, so those two would be dead here. MARKS stays a WORD rather than borrowing
+         the book's contents glyph: that glyph draws a contents page, which is precisely the thing
+         a comic does not have, and with only one destination on the row there is width to name it.
+         The ribbon marks the page in place, exactly as the book's does.
        * The running-head row carries the reading direction where a book carries its chapter. It is
          the one fact about a comic that is not obvious from the page, and the one setting people
          flip per book. Tapping it flips it.

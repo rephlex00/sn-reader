@@ -220,8 +220,18 @@ class PageView(context: Context) : View(context) {
     private var pendingSelection: Pair<Int, Int>? = null
     private var lastPreviewOffset = -1
 
+    /**
+     * The page's two grounds: paper at rest, and paper one panel level darker while the chrome is
+     * over it. See [setObscuredInsets], which is what switches between them.
+     */
+    private val paperColor = context.getColor(R.color.reader_surface)
+    private val shadedColor = context.getColor(R.color.reader_page_shaded)
+
+    /** Test-visible readout of the ground currently under the text. */
+    internal val groundColorForTest: Int get() = (background as android.graphics.drawable.ColorDrawable).color
+
     init {
-        setBackgroundColor(Color.WHITE)
+        setBackgroundColor(paperColor)
         // No hardware layer, no animation: e-ink wants one clean full redraw per turn.
         //
         // Deliberately NOT isClickable: View's clickable path posts a CheckForTap and a
@@ -295,6 +305,16 @@ class PageView(context: Context) : View(context) {
      * Sets the obscured bands — the heights of the overlay's top chrome and its bottom bar or Type
      * sheet — and invalidates on change. (0, 0) restores the full page.
      *
+     * A non-zero band also means the chrome is on screen, so this is where the ground drops to
+     * SHADE and back. The chrome's bars are paper; against a paper page they were two white
+     * surfaces meeting, and nothing said which one was the thing to touch. One panel level is
+     * enough to say it and is the smallest step this glass renders without dither. Only the ground
+     * moves — the text stays INK, so a page read at a glance under the chrome is not degraded.
+     * Deriving it from the insets rather than from a second flag is deliberate: the shade and the
+     * clipping answer the same question, and one signal cannot disagree with itself. The band
+     * behind the bars is repainted too, but the bars are opaque, so the panel only changes where
+     * the page actually shows.
+     *
      * This invalidates ITSELF, and must: the caller's clean-refresh path
      * ([ReaderActivity.hideOverlay] → [fullRefresh]) skips [invalidate] when the hardware refresh
      * succeeds, so a hardware flash without this redraw would flash the still-clipped frame.
@@ -303,6 +323,7 @@ class PageView(context: Context) : View(context) {
         if (topPx == obscuredTopPx && bottomPx == obscuredBottomPx) return
         obscuredTopPx = topPx
         obscuredBottomPx = bottomPx
+        setBackgroundColor(if (topPx > 0 || bottomPx > 0) shadedColor else paperColor)
         invalidate()
     }
 

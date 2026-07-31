@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Opens the back matter — chapters, marks, notes. A contents page, drawn: three entries whose
+     titles run to different lengths on the left, with their figures ranged right, exactly as the
+     panel behind it sets them. The ragged left and the flush right are what make it a contents
+     page rather than a list of anything; a plain stack of equal rules would say nothing.
+
+     Not to be confused with ic_settings, which is also three rows: that one carries round thumbs
+     sitting on its rails and its lines run the full width. The two never share a screen — this
+     is reader chrome, that is the shelf's half-title — but they are drawn apart anyway.
+
+     Stroked at 2 in a 24 viewport, round caps and joins (see ic_bookmark), so the app's few
+     pictograms read as one hand. At the 30dp the chrome renders it, 2 is ~4px on the panel, which
+     clears the weight below which a line dithers into grey on this glass. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/reader_text_primary">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M4,6 L13,6 M17,6 L20,6 M4,12 L10,12 M17,12 L20,12 M4,18 L12,18 M17,18 L20,18"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2" />
+</vector>

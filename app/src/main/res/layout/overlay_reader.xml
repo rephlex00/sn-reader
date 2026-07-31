@@ -97,10 +97,9 @@
 
             <!-- Marks or unmarks the page on screen, and says which it is: outlined ribbon, or the
                  same ribbon flooded. It is the one control here whose look is a FACT about the page
-                 rather than a door, which is exactly why it earns a glyph where CONTENTS gets a
-                 word — a glyph can hold a state, a word can only be tapped. The full sentence
-                 version ("Mark this page", with the page named under it) still leads the Marks
-                 segment for the reader who wants to see what they are acting on. -->
+                 rather than a door — the others are tapped, this one is also read. The full
+                 sentence version ("Mark this page", with the page named under it) still leads the
+                 Marks segment for the reader who wants to see what they are acting on. -->
             <ImageView
                 android:id="@+id/bookmark_button"
                 android:layout_width="@dimen/tap_target_min"
@@ -118,25 +117,28 @@
                 style="@style/ChromeGlyph.Type"
                 android:contentDescription="@string/reader_type" />
 
-            <!-- Opens the back-matter surface (chapters, marks, notes). Reads "Marks" in a comic,
-                 which has no chapters — set in ComicActivity. -->
-            <!-- wrap_content height with a minHeight, not match_parent: a match_parent child is
-                 exempt from the row's baseline alignment (see the ChromeGlyph style), and this word
-                 must sit on the same line as the ‹ and the title. -->
-            <!-- Trailing edge: the negative end margin reaches the right edge of the glass while
-                 paddingEnd keeps the word's last letter on the margin. See dimens.xml, "Reach". -->
-            <TextView
+            <!-- Opens the back-matter surface (chapters, marks, notes): a contents page drawn at
+                 the size of the ribbon beside it (see ic_contents). It closes the row rather than
+                 ending it in a word — the three controls here are now one run of marks, and the
+                 page under them is not asked to hold a caption it did not write.
+
+                 Trailing edge, the chevron's idiom mirrored: the negative end margin reaches the
+                 right edge of the glass while paddingEnd puts the ink back on the screen margin,
+                 the line the ‹ starts on at the other end. See dimens.xml, "The contents glyph". -->
+            <ImageView
                 android:id="@+id/contents_button"
-                style="@style/Text.Mark.Destination"
+                android:layout_width="@dimen/tap_target_glyph_edge"
+                android:layout_height="@dimen/tap_target_glyph"
                 android:clickable="true"
+                android:contentDescription="@string/reader_contents"
                 android:focusable="true"
-                android:gravity="center"
                 android:layout_marginEnd="@dimen/edge_reach_pull"
-                android:minHeight="@dimen/tap_target_glyph"
-                android:minWidth="@dimen/tap_target_min"
-                android:paddingStart="@dimen/space_snug"
+                android:paddingStart="@dimen/contents_pad_inboard"
                 android:paddingEnd="@dimen/edge_reach"
-                android:text="@string/reader_contents" />
+                android:paddingTop="@dimen/contents_pad_v"
+                android:paddingBottom="@dimen/contents_pad_v"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_contents" />
 
         </LinearLayout>
 
@@ -257,11 +259,12 @@
                  scrub commit or contents/mark/note jump. GONE whenever the stack is empty — see
                  ReaderActivity.updateBackControl.
 
-                 A WORD, in the same tracked caps as CONTENTS and MARKS. It was a ↩ seated on a
-                 drawn ring, which made it the only circle in an app built out of rules, words and
-                 paper — and a ring is a heavy way to say "this glyph is a button" on a surface
-                 where every other button says so by being a word. RETURN also distinguishes itself
-                 from the ‹ one row above: ‹ leaves the book, this comes back from a jump.
+                 A WORD, in the same tracked caps as the CHAPTERS / MARKS / NOTES segment it sits
+                 under. It was a ↩ seated on a drawn ring, which made it the only circle in an app
+                 built out of rules, words and paper — and a ring is a heavy way to say "this glyph
+                 is a button" on a surface where every other label is a word. A word is also what
+                 tells it apart from the ‹ one row above: ‹ leaves the book, this comes back from
+                 a jump, and two chevrons a row apart meaning different things would not.
 
                  paddingStart alone puts the word on the screen margin, with NO negative margin:
                  this sits in an unpadded FrameLayout, so its box already starts at the glass. (The

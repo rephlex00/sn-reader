@@ -177,7 +177,7 @@ open class ReaderActivity : AppCompatActivity() {
     /**
      * The chrome's mark ribbon: outlined when the page on screen carries no mark, flooded when it
      * does. It is the one control on that bar whose appearance is a FACT about the page rather than
-     * a door, which is why it is a glyph where CONTENTS is a word — a glyph can hold a state.
+     * a door: the marks and contents glyphs beside it are tapped, this one is also read.
      *
      * Its state comes from [BookmarksPanel] (see [showMarkState]), so the ribbon and the panel's own
      * "Mark this page" cell can never disagree about the same page.

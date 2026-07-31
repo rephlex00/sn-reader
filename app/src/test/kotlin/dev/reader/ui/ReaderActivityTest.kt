@@ -1773,6 +1773,37 @@ class ReaderActivityTest {
     }
 
     @Test
+    fun `the contents glyph reaches the other edge, and its mark stops on the same margin`() {
+        // The chevron's idiom, mirrored: the row's trailing control has to own the corner too, and
+        // its ink has to land on the screen margin so the row is bounded by the same line at both
+        // ends. Written as a geometry test because the negative margin and the padding must stay
+        // equal and opposite — drop either and the box either misses the edge or shoves the ink.
+        val controller = openedMultiPage()
+        val activity = controller.get()
+        activity.showOverlayForTest()
+        val overlay = overlayOf(activity)
+        overlay.measure(
+            View.MeasureSpec.makeMeasureSpec(1404, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1872, View.MeasureSpec.EXACTLY),
+        )
+        overlay.layout(0, 0, overlay.measuredWidth, overlay.measuredHeight)
+        val contents = activity.findViewById<ImageView>(R.id.contents_button)
+        val back = activity.findViewById<ImageView>(R.id.back)
+        val margin = activity.resources.getDimensionPixelSize(R.dimen.margin_screen)
+
+        assertThat(contents.right).isEqualTo(1404) // reaches the physical edge
+        assertThat(contents.paddingEnd).isEqualTo(margin)
+        // The two ends of the row are the same distance in from their own edge.
+        assertThat(1404 - (contents.right - contents.paddingEnd)).isEqualTo(back.left + back.paddingStart)
+
+        // The mark itself is the ribbon's size, so the row's pictograms are one size, not two.
+        val ribbon = activity.resources.getDimensionPixelSize(R.dimen.tap_target_min) -
+            2 * activity.resources.getDimensionPixelSize(R.dimen.glyph_inset)
+        assertThat(contents.width - contents.paddingStart - contents.paddingEnd).isEqualTo(ribbon)
+        assertThat(contents.height - contents.paddingTop - contents.paddingBottom).isEqualTo(ribbon)
+    }
+
+    @Test
     fun `a scrub commit arms the back control and tapping it returns and disarms when empty`() {
         val controller = openedWithToc()
         val activity = controller.get()

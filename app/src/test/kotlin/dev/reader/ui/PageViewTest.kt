@@ -7,6 +7,7 @@ import android.text.TextPaint
 import android.view.MotionEvent
 import android.view.View.MeasureSpec
 import com.google.common.truth.Truth.assertThat
+import dev.reader.R
 import dev.reader.engine.Page
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -281,6 +282,40 @@ class PageViewTest {
         assertThat(view.obscuredInsetsForTest).isEqualTo(184 to 236)
         view.setObscuredInsets(0, 0)
         assertThat(view.obscuredInsetsForTest).isEqualTo(0 to 0)
+    }
+
+    @Test
+    fun `the ground drops to shade while the chrome covers the page, and comes back`() {
+        // The chrome's bars are paper. Against a paper page they were two white surfaces meeting
+        // and nothing said which one was live, so the ground goes one panel level down for as long
+        // as the chrome is up. Only the ground: the text is still drawn in INK.
+        val view = PageView(context)
+        val paper = context.getColor(R.color.reader_surface)
+        val shade = context.getColor(R.color.reader_page_shaded)
+
+        assertThat(view.groundColorForTest).isEqualTo(paper)
+        view.setObscuredInsets(184, 236)
+        assertThat(view.groundColorForTest).isEqualTo(shade)
+        view.setObscuredInsets(0, 0)
+        assertThat(view.groundColorForTest).isEqualTo(paper)
+    }
+
+    @Test
+    fun `one band alone is still the chrome, and shade is one panel level, not a wash`() {
+        // Either band on its own means a bar is over the page — the Type sheet leaves the top
+        // chrome up and the bottom band is the sheet, and back matter can leave one stale.
+        val view = PageView(context)
+        view.setObscuredInsets(184, 0)
+        assertThat(view.groundColorForTest).isEqualTo(context.getColor(R.color.reader_page_shaded))
+        view.setObscuredInsets(0, 236)
+        assertThat(view.groundColorForTest).isEqualTo(context.getColor(R.color.reader_page_shaded))
+
+        // The panel resolves ~16 levels at multiples of 17; a value off that lattice dithers, and
+        // more than one level stops being "very slightly" and starts reading as a grey page.
+        val shade = context.getColor(R.color.reader_page_shaded)
+        val paper = context.getColor(R.color.reader_surface)
+        assertThat(android.graphics.Color.red(shade) % 17).isEqualTo(0)
+        assertThat(android.graphics.Color.red(paper) - android.graphics.Color.red(shade)).isEqualTo(17)
     }
 
     @Test

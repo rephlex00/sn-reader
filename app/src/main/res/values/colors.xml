@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The app's whole palette: five greys and paper.
+  The app's whole palette: six greys and paper.
 
   It is greys because the display is greyscale — a hue here would only ever be seen as the grey it
   collapses to, so the values ARE the design.
@@ -39,7 +39,13 @@
          a highlight's ground. Never text, never a stroke, areas of 8dp+ only. -->
     <color name="veil">#FFCCCCCC</color>
 
-    <!-- L15. The ground, and reversed text sitting on INK. There is no off-white anywhere. -->
+    <!-- L14. The page while the chrome is over it, and nothing else. One panel level below PAPER
+         — the smallest step this glass can hold flat — which is the whole point: enough to say the
+         page is not the thing being touched, not enough to be seen as a colour. A state, not a
+         surface: nothing is ever laid out on SHADE. -->
+    <color name="shade">#FFEEEEEE</color>
+
+    <!-- L15. The ground, and reversed text sitting on INK. No surface in this app is off-white. -->
     <color name="paper">#FFFFFFFF</color>
 
     <!-- ===== Duties =====
@@ -51,6 +57,8 @@
     <color name="reader_text_secondary">@color/slate</color>
     <color name="reader_text_disabled">@color/mist</color>
     <color name="reader_surface">@color/paper</color>
+    <!-- The reading page's ground while the chrome covers it. See PageView.setObscuredInsets. -->
+    <color name="reader_page_shaded">@color/shade</color>
     <color name="reader_rule">@color/ink</color>
 
     <!-- Fills. The cover mat stands in for artwork that has not decoded; the comic mat is the
