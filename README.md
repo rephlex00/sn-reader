@@ -4,48 +4,30 @@
 
 <h1 align="center">Reader</h1>
 
-<p align="center">A quiet reader for EPUB, MOBI and comics, built for Supernote e-ink tablets.</p>
+<p align="center">A reader for EPUB, MOBI and comics, built for Supernote e-ink tablets.</p>
 
 ---
 
-Reading apps are usually designed for phones, where redrawing the screen is free and an animation
-costs nothing. E-ink is the opposite. Every redraw is visible, slow, and paid for in battery, and
-motion leaves a ghost of itself behind on the glass.
-
-So Reader is built backwards from the usual. It draws a page once, then does nothing at all until
-you ask for the next one. Nothing animates. Nothing polls. Sitting on a page with a book open, the
-app uses **no measurable CPU at all**.
+Reader is built for e-ink and for low power use. It draws a page once, then does nothing until you ask for the next one. Nothing animates, nothing polls. Sitting on an open page, the app uses **no measurable CPU**.
 
 <p align="center">
   <img src="docs/screenshots/02-reading.png" width="440" alt="A page of Project Hail Mary: justified text with real hyphenation, generous margins, a first-line indent on each paragraph, and a running foot naming the chapter and the page">
 </p>
 
-## What you get
+## Features
 
-* **Your books, with covers**, scanned from a folder on the device and remembered where you left
-  off; how far in you are shows as a small badge on the cover
-* **Typography that behaves like a book**: justified text with real hyphenation, generous margins,
-  centered chapter openings, three bundled typefaces
-* **Two columns when you turn the tablet sideways**, a spread rather than one very wide column
-* **Pen highlighting** that knows your stylus from your palm
-* **Bookmarks, a contents page set like a printed one, and search** by title or author
-* **A chapter scrubber**, with a tick for every chapter, a preview of the page you'd land on as you
-  drag, and a **Return** control to jump back — a progress bar at the foot of the page marks where the current
-  chapter ends
-* **One typeface throughout**, the book's own: the shelf, the chrome and the page are set in the
-  same face, and every choice in the app is the same bordered cell
-* **Comics too** — CBZ and zip-backed CBR, one page per screen with per-book reading direction for
-  manga, in the same library as your books and with the same timeline, previews and bookmarks
-* **A clean page every turn**, with a faster mode when you would rather trade a little ghosting for
-  speed; menus repaint quickly too, without touching the page's own crisp refresh
+* **A library with covers**, scanned from a folder on the device; each book reopens where you left off, with progress shown as a badge on the cover
+* **Justified text with real hyphenation**, adjustable margins, centered chapter openings, three bundled typefaces
+* **Two columns in landscape**
+* **Pen highlighting** with palm rejection
+* **Bookmarks, a contents page, and search** by title or author
+* **A chapter scrubber** with a tick per chapter, a preview of the destination page as you drag, and a **Return** control to jump back
+* **Comics**: CBZ and zip-backed CBR, one page per screen, per-book reading direction for manga, in the same library as your books
+* **A full refresh on every page turn**, or a faster mode with periodic clean-up flashes
 
-Reader opens **EPUB**, **MOBI**, **CBZ**, and **CBR** files that are really zips (many are). A genuine RAR
-archive does not open yet. No PDF.
+Reader opens **EPUB**, **MOBI**, **CBZ**, and **CBR** files that are really zips (many are). Genuine RAR archives do not open. No PDF.
 
-MOBI support covers the un-DRMed mobi7 books that make up most sideloaded `.mobi` files, and they
-read exactly as EPUBs do — same chrome, same Contents, same marks and typography. Two kinds are
-refused, by name rather than silently: anything with DRM, and **AZW3/KF8**, which is what Amazon
-ships today. Those say so on the shelf instead of appearing broken.
+MOBI support covers un-DRMed mobi7 books, which is most sideloaded `.mobi` files; they read exactly as EPUBs do. Two kinds are refused with a message on the shelf: anything with DRM, and **AZW3/KF8**, which is what Amazon ships today.
 
 ## Getting it on your Supernote
 
@@ -58,44 +40,29 @@ ships today. Those say so on the shelf instead of appearing broken.
 adb install -r sn-reader-2026.07.6.apk
 ```
 
-Debug mode needs to be on first. It lives in the Supernote's own Settings under security and
-privacy, though the exact wording moves between firmware versions. Check `adb devices` lists your
-tablet before installing.
-
-Updating later keeps everything. Your library, positions, bookmarks, and highlights live in the
-app's own storage, not in the APK.
+Turn on Debug mode first, in the Supernote's own Settings under security and privacy (the exact wording moves between firmware versions), and check `adb devices` lists your tablet. Updating later keeps everything: your library, positions, bookmarks, and highlights live in the app's own storage, not the APK.
 
 **3. Let it read your files.** Reader asks on first launch. If you miss the prompt:
 
 > Settings > Apps > Special access > All files access > Reader
 
-This one is not optional. Your books sit in shared storage and Android will not hand them over
-without it.
+This is required. Your books sit in shared storage and Android will not hand them over without it.
 
-**4. Add books.** Drop `.epub`, `.mobi`, `.cbz` or `.cbr` files into the **Document** folder, where Supernote
-keeps its own. Reader finds them next time you open it, and you can point it somewhere else from
-its settings. Scanning is incremental, so a big library does not mean a slow start.
+**4. Add books.** Drop `.epub`, `.mobi`, `.cbz` or `.cbr` files into the **Document** folder, where Supernote keeps its own. Reader finds them next time you open it, and you can point it at another folder in its settings. Scanning is incremental, so a big library does not mean a slow start.
 
 ## Reading
 
-### Your shelf
+### The library
 
 <p align="center">
   <img src="docs/screenshots/01-library.png" width="580" alt="The shelf: a half-title reading BOOKS with the book count, search and settings marks at the right, and three rows of four covers, each carrying its progress as a small badge inside the artwork">
 </p>
 
-Tap a book to open it exactly where you stopped. Anything you have started shows how far in you are.
-
-Above the shelf is a search field that filters by title or author as you type and reports how many
-books matched, and a row of controls for what you are looking at: covers or a list, all books or
-just the new / part-read / finished ones, folders or flat, and the sort order. Nothing is hidden
-behind a menu. Search looks across the whole library at once, ignoring whichever folder you happen
-to be in.
+Tap a book to open it where you stopped. Search filters by title or author as you type, across the whole library regardless of folder. A row of controls covers the rest: covers or a list, all books or just the new / part-read / finished ones, folders or flat, and the sort order.
 
 ### Turning pages
 
-No swiping. A sliding page is precisely the thing that smears on e-ink. The screen is three tap
-zones instead:
+There is no swiping. The screen is three tap zones:
 
 | Where you tap | What happens |
 | --- | --- |
@@ -103,29 +70,15 @@ zones instead:
 | The right side, roughly the last 40% | Forward a page |
 | The strip between them | Show or hide the chrome |
 
-Forward is the largest of the three, so reading is one unhurried tap after another.
-
-### Turning it sideways
+### Landscape
 
 <p align="center">
   <img src="docs/screenshots/07-landscape.png" width="580" alt="Landscape: the chapter as two side-by-side columns with a gutter, the chrome folded to a single row with the chapter beside the controls, and the foot reading page 19 of 44">
 </p>
 
-Rotate the tablet and the page becomes two columns with a gutter between them. One column across a
-landscape screen would run to about a hundred characters a line, far past what is comfortable, so
-Reader gives you a spread instead, the shape of an open book.
+Rotate the tablet and the page becomes two columns. A tap turns both pages at once, and the foot reads `pages 3–4 of 12`. A spread never crosses a chapter boundary, so a chapter with an odd number of pages ends with a blank right-hand column.
 
-A tap turns both pages at once, and the foot tells you where you are: `pages 3–4 of 12`. A spread
-never runs across a chapter boundary, so a chapter with an odd number of pages ends with a blank
-right-hand column, exactly as a printed one does.
-
-Rotating keeps your place. Not your page *number* — the text reflows into narrower columns, so the
-numbering changes — but the words you were reading stay on screen. The book is not reopened, and it
-costs a single clean refresh.
-
-If you would rather it stayed put, **Lock rotation**, under **Aa › Screen**, pins the reader to whichever
-way it is currently facing, which is what you want when reading on your side. Your shelf and the
-settings screens stay upright either way.
+Rotating keeps your place: the page numbering changes because the text reflows, but the words you were reading stay on screen. **Lock rotation**, under **Aa › Screen**, pins the reader to its current orientation. The library and settings screens stay upright either way.
 
 ### The toolbar
 
@@ -133,122 +86,55 @@ settings screens stay upright either way.
   <img src="docs/screenshots/03-toolbar.png" width="580" alt="The reading chrome: the way out, the book's title, then a mark ribbon, a drawn contents mark and Aa on the first row; the chapter centred as a running head on the second; below the page, a readout and the chapter timeline. The page between the two bars sits a shade darker than they do">
 </p>
 
-The chrome is two rows. The first is the book you are in and everything you can do about it: a
-**‹** back to your shelf, the book's title beside it, then a **mark ribbon**, **Contents**, and
-**Aa** — the two marks about the book together, then the one about the page. The second row is a
-running head carrying the chapter, centred, where a printed page puts it — and standing down on a
-chapter opener, because the page below is already carrying its own heading.
+The toolbar is two rows: a **‹** back to the library, the book's title, a **bookmark ribbon**, **Contents**, and **Aa** on the first; the current chapter on the second. While the toolbar is up, the page dims by one grey level.
 
-While the chrome is up, the page steps back by one level of the sixteen this display can hold — the
-smallest change it can make without dithering. The bars are paper and the page was paper too, so
-nothing said which of the two you were meant to touch. Only the ground moves; the words are still
-black, and still readable at a glance.
+The ribbon is outlined when the current page is unbookmarked, filled when it is. Tap it to bookmark the page in place.
 
-The ribbon is the one control here whose look is a fact rather than a door: outlined when the page
-you are on is unmarked, filled when it is. Tap it to mark the page in place, without leaving what
-you are reading.
+**Contents** holds three lists behind a **Chapters · Marks · Notes** header: the chapter list, your bookmarks, and your highlights. It opens on whichever list you last used, per book. **Aa** holds the display settings. Both close with the **‹** at the top-left; its tap target extends to the edge of the glass.
 
-**Contents** is one surface holding three lists behind a **Chapters · Marks · Notes** header —
-where you are in the book, the pages you have marked, and the passages you have marked with the
-pen. It opens on whichever of the three you left it on, per book. **Aa** is how the page looks.
+### Highlighting
 
-Both close with the **‹** at the top-left, in the same place on each. That mark is drawn rather
-than typed, at the screen's own edge: it is the only way out of a book on a device with no back
-button of its own, so its tap target runs to the glass rather than stopping at the text margin.
+Highlights are made with the **pen**; palm rejection keeps a resting hand from leaving marks. Drag the pen across a passage and the highlight follows the nib. Tap an existing highlight for a delete button. The **Highlights** panel lists them all, each with its chapter and position in the book.
 
-### Marking passages
-
-Highlights are made with the **pen**. Reader tells the stylus from your finger, so you can rest a
-hand on the glass without leaving marks behind.
-
-Drag the pen across a passage and the highlight follows the nib as you draw. Tap one you have
-already made and a delete button appears. The **Highlights** panel lists them all, each with its
-chapter and how far into the book it sits.
-
-### Chapters
+### Contents
 
 <p align="center">
   <img src="docs/screenshots/05-contents.png" width="440" alt="The contents page, set like a printed one: a CHAPTERS · MARKS · NOTES header, then leader dots running from each chapter across to its percentage">
 </p>
 
-**Contents** sets the book's chapters as a printed contents page — leader dots carrying the eye
-across to each percentage — with the one you are in bold and marked in the margin. Tap to go there.
-**Marks** and **Notes** sit behind the same header: the pages you have marked, and the passages you
-have marked with the pen, grouped under the chapter they came from. A mark carries the opening
-words of the page it saved, so the list reads as places in the book rather than as a column of
-chapter numbers.
+**Chapters** lists each chapter with its percentage, the current one bold and marked in the margin; tap to go there. **Marks** and **Notes** list your bookmarks and highlights, grouped by chapter. A bookmark shows the opening words of the page it saved.
 
-### Skimming the whole book
+### The chapter scrubber
 
 <p align="center">
   <img src="docs/screenshots/06-scrubbing.png" width="580" alt="Mid-scrub: a floating window previews the destination page under a reversed caption bar reading CHAPTER 19 · 64%, while the timeline's thumb sits under the finger">
 </p>
 
-The timeline along the bottom of the toolbar has a tick for every chapter. Drag it and a floating
-window shows the page you would land on — instantly, from thumbnails prepared once in the
-background the first time a book is opened — while a readout names the chapter and percentage.
-The page itself never repaints during a drag; it is drawn once, when you let go. The thumb snaps
-to chapter starts like a detent, bookmarks sit on the track as small glyphs, and after any jump
-**Return** appears beside the readout to take you back to exactly where you were.
+The timeline along the bottom of the toolbar has a tick for every chapter. Drag it and a floating window shows the destination page, from thumbnails prepared once in the background, while a readout names the chapter and percentage. The page itself is drawn once, when you let go. The thumb snaps to chapter starts, bookmarks appear on the track as glyphs, and after any jump **Return** appears beside the readout to take you back to where you were.
 
-### How the page looks
+### Display settings
 
 <p align="center">
   <img src="docs/screenshots/04-settings.png" width="580" alt="Aa: a sheet across the foot of the screen with the book still showing, a shade darker, above it; three tabs reading TEXT, PAGE and SCREEN, and the face, size and spacing each set as a row of cells">
 </p>
 
-**Aa** opens a sheet across the bottom of the screen, with your book still showing above it, behind
-three tabs: **Text** (the face, the size, the spacing), **Page** (margins, justification,
-hyphenation, and what this book is allowed to do to itself), and **Screen** (page turns, the
-progress bar, rotation, previews).
+**Aa** opens a sheet across the bottom of the screen, with three tabs: **Text** (typeface, size, spacing), **Page** (margins, justification, hyphenation, publisher styling), and **Screen** (page turns, the progress bar, rotation, previews). The book stays visible above the sheet, and **Text** controls reflow it live as you change them.
 
-The sheet stops short of the top on purpose. Every control in **Text** reflows the chapter under
-it, so you choose a typeface and a size by watching your own book change rather than by picking
-blind and finding out afterwards. **Text** is the shortest of the three tabs for exactly that
-reason — it is the one you judge by looking up.
+**Publisher styling** decides whether a book keeps its own formatting or is normalized to Reader's defaults. Changing any setting reflows the text and keeps your place.
 
-Every choice in the app is the same shape: a row of bordered cells with the chosen one filled in.
-A typeface, a margin and a plain on/off are all that one control, so there is a single thing to
-learn. Text size is five cells drawn at the sizes they produce, and the three typefaces are each
-set in themselves, at the size your page is currently using — so you pick by looking, not by
-reading a name.
+### Page refresh
 
-**Publisher styling** decides whether a book keeps its own formatting or gets tidied into Reader's
-consistent look. Changing anything reflows the text and keeps your place.
-
-### The flash between pages
-
-By default every page turn does a full e-ink refresh. That is the brief black blink you know from
-other e-readers, and it leaves the next page perfectly clean with nothing of the last one left
-behind.
-
-If you would rather turn pages quickly, switch on **Faster page turns**. Pages then update with a
-light, fast refresh and Reader does a full clean-up flash every few pages instead, every 3, 6, or
-10 as you prefer. You trade a little ghosting between flashes for speed.
+By default every page turn does a full e-ink refresh, which leaves the next page clean of ghosting. **Faster page turns** switches to a light, fast refresh with a full clean-up flash every 3, 6, or 10 pages as you prefer.
 
 ### Comics
 
-Reader opens **CBZ** comic archives, and **CBR** files that are really zips (many are). Pages are
-shown one at a time, fit to the screen, turned with the same taps as a book. Reading direction
-follows the archive's `ComicInfo.xml`, and you can flip it per book for manga.
+Reader opens **CBZ** archives, and **CBR** files that are really zips (many are). Pages show one at a time, fit to the screen, turned with the same taps as a book. Reading direction follows the archive's `ComicInfo.xml`, and you can flip it per book for manga.
 
-Comics sit in the same library as your books, with the first page as the cover and the same
-progress badge. Your place is kept per comic, and bookmarks work by page.
+Comics sit in the same library, with the first page as the cover and the same progress badge; your place is kept per comic, and bookmarks work by page. The toolbar is the same, with two differences: a comic has no chapters, so the timeline has no ticks, and scrub previews are decoded as you drag instead of prepared ahead of time.
 
-The reading chrome is the one you already know: a timeline along the bottom that you drag to move
-through the comic, a floating preview of the page you would land on, the page readout above it, **Return**
-to jump back after a scrub or a mark, and the same marks surface. A comic has no chapters, so
-the track is one plain run rather than a ticked one, and previews are decoded as you drag instead of
-rendered ahead of time.
+File type is detected by content, not extension, so a zip named `.cbr` opens without complaint. A genuine RAR archive does not open; Reader shows a message rather than failing silently.
 
-Reader decides what a file really is by looking inside it, not by trusting the extension — so a
-comic named `.cbr` that was actually written as a zip opens without complaint. A **genuine RAR**
-archive does not open yet; Reader says so plainly rather than failing silently. Support can be
-added later without changing anything else.
-
-Two limits worth knowing. Comics are **portrait only** — turning the tablet sideways does not give
-you a two-page spread the way a book does. And pages are **fit to the screen with no zoom**, which
-suits manga and line art well; dense colour lettering can be marginal at that size.
+Two limits: comics are **portrait only** (no two-page spread in landscape), and pages are **fit to the screen with no zoom**.
 
 ### Settings
 
@@ -256,9 +142,7 @@ suits manga and line art well; dense colour lettering can be marginal at that si
   <img src="docs/screenshots/09-colophon.png" width="580" alt="Settings as a colophon: the book folder with a Change folder cell, a folders-or-flat choice, and the version set with leader dots above the no accounts, no sync, no network statement">
 </p>
 
-Settings is the same surface again, and holds what belongs to the app rather than to a book: which
-folder your books live in, and a colophon naming the version you are running. Everything about how
-a page looks lives in **Aa**, beside the page it changes.
+Settings holds app-level options: which folder your books live in, and the version you are running. All display options live in **Aa** inside the reader.
 
 ## Worth knowing
 
@@ -269,19 +153,13 @@ a page looks lives in **Aa**, beside the page it changes.
 
 ## License
 
-[Apache 2.0](LICENSE). Use it, change it, redistribute it, including commercially. If you plan to
-package or redistribute, read [`NOTICE`](NOTICE) first for the third-party details.
+[Apache 2.0](LICENSE). Use it, change it, redistribute it, including commercially. If you plan to package or redistribute, read [`NOTICE`](NOTICE) first for the third-party details.
 
 ---
 
 ## Building it yourself
 
-Kotlin, Gradle, and plain Android Views on purpose. Not Compose, not a WebView: both redraw far more
-than a still page needs, which is the whole thing this project is trying to avoid.
-
-Four modules. `:engine` is pure Kotlin with no Android dependency, holding the pagination logic so it
-can be tested on an ordinary JVM. `:formats` parses EPUB and MOBI and measures text. `:data` is the
-Room-backed book index. `:app` is the interface.
+Kotlin, Gradle, and plain Android Views (no Compose, no WebView). Four modules: `:engine` is pure Kotlin pagination logic with no Android dependency, testable on an ordinary JVM; `:formats` parses EPUB and MOBI and measures text; `:data` is the Room-backed book index; `:app` is the interface.
 
 You need JDK 21 and the Android SDK, including one package that is easy to miss:
 
@@ -289,9 +167,7 @@ You need JDK 21 and the Android SDK, including one package that is easy to miss:
 sdkmanager "platform-tools" "platforms;android-36" "platforms;android-37.1" "build-tools;36.0.0"
 ```
 
-`platforms;android-37.1` is not a typo. The build sets `compileSdk = 37` because a dependency
-demands it. Without that package the build fails with an error naming an AAR file rather than the
-missing platform, which is a confusing hour if you have not hit it before.
+`platforms;android-37.1` is not a typo. A dependency forces `compileSdk = 37`, and without that package the build fails with an error naming an AAR file rather than the missing platform.
 
 Point Gradle at your SDK with a `local.properties` in the repo root:
 
@@ -307,7 +183,4 @@ Then:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Two things to leave alone unless you want a bad afternoon: the Android Gradle Plugin brings its own
-Kotlin compiler, so do not apply the Kotlin Android plugin separately, and do not move Kotlin past
-2.2.10. A mismatch there crashes compiler-plugin startup rather than failing with anything you can
-read.
+Two things to leave alone: the Android Gradle Plugin brings its own Kotlin compiler, so do not apply the Kotlin Android plugin separately, and do not move Kotlin past 2.2.10. A mismatch there crashes compiler-plugin startup rather than failing with anything you can read.
